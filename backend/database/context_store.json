@@ -1,0 +1,26 @@
+{
+  "total_stored_tokens": 31,
+  "compress_count": 0,
+  "messages": [
+    {
+      "id": "8f2e8fd72412",
+      "role": "user",
+      "content": "hi",
+      "level": 0,
+      "summary": "",
+      "token_count": 0,
+      "timestamp": 1781778011.9107313,
+      "topics": []
+    },
+    {
+      "id": "a9055ad207d6",
+      "role": "assistant",
+      "content": "你好！我是 OpenClaw，你的 AI 研究助手。很高兴见到你！有什么问题或需要帮助的地方，请随时告诉我。无论是科研",
+      "level": 0,
+      "summary": "",
+      "token_count": 31,
+      "timestamp": 1781778013.1276026,
+      "topics": []
+    }
+  ]
+}

@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 员工 — 你的一人公司AI助手</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<div class="app">
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="logo">
+      <h1>🤖 AI 员工</h1>
+      <p>你的一人公司助手</p>
+    </div>
+    <div class="nav-item active" data-page="home" onclick="switchPage('home')">
+      <span class="icon">🏠</span><span>首页</span>
+    </div>
+    <div class="nav-item" data-page="chat" onclick="switchPage('chat')">
+      <span class="icon">💬</span><span>直接对话</span>
+    </div>
+    <div class="nav-item" data-page="templates" onclick="switchPage('templates')">
+      <span class="icon">📋</span><span>场景模板</span>
+    </div>
+    <div style="border-top:1px solid var(--border);margin:8px 0;padding-top:8px">
+      <div style="font-size:10px;color:var(--text2);padding:0 12px;margin-bottom:4px">我能帮你</div>
+      <div class="nav-item" data-page="marketing" onclick="switchPage('marketing')">
+        <span class="icon">📝</span><span>写文案</span>
+      </div>
+      <div class="nav-item" data-page="image" onclick="switchPage('image')">
+        <span class="icon">🎨</span><span>生成图片</span>
+      </div>
+      <div class="nav-item" data-page="data" onclick="switchPage('data')">
+        <span class="icon">📊</span><span>分析数据</span>
+      </div>
+      <div class="nav-item" data-page="research" onclick="switchPage('research')">
+        <span class="icon">🔍</span><span>做调研</span>
+      </div>
+      <div class="nav-item" data-page="website" onclick="switchPage('website')">
+        <span class="icon">🌐</span><span>建网站</span>
+      </div>
+    </div>
+    <div style="border-top:1px solid var(--border);margin:8px 0;padding-top:8px">
+      <div class="nav-item" data-page="history" onclick="switchPage('history')">
+        <span class="icon">📦</span><span>历史记录</span>
+      </div>
+      <div class="nav-item" data-page="settings" onclick="switchPage('settings')">
+        <span class="icon">⚙️</span><span>设置</span>
+      </div>
+    </div>
+    <div style="border-top:1px solid var(--border);margin:8px 0;padding-top:8px">
+      <details style="padding:0 12px">
+        <summary style="font-size:10px;color:var(--text2);cursor:pointer">高级功能</summary>
+        <div class="nav-item" data-page="commander" onclick="switchPage('commander')" style="margin-top:4px">
+          <span class="icon">🧠</span><span>任务编排</span>
+        </div>
+        <div class="nav-item" data-page="marketplace" onclick="switchPage('marketplace')">
+          <span class="icon">🏪</span><span>技能商店</span>
+        </div>
+        <div class="nav-item" data-page="plugin-mgr" onclick="switchPage('plugin-mgr')">
+          <span class="icon">🧩</span><span>自定义技能</span>
+        </div>
+        <div class="nav-item" data-page="dashboard" onclick="switchPage('dashboard')">
+          <span class="icon">📈</span><span>系统状态</span>
+        </div>
+      </details>
+    </div>
+  </nav>
+
+  <!-- Main Content -->
+  <main class="main">
+
+    <!-- ===== 💎 套餐定价 ===== -->
+    <div class="page" id="page-pricing">
+      <div style="max-width:900px;margin:0 auto">
+        <h2 style="text-align:center;margin-bottom:4px">选择适合你的套餐</h2>
+        <p style="text-align:center;color:var(--text2);margin-bottom:24px">按需升级，随时取消</p>
+        <div id="pricing-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-bottom:24px">
+          <div class="card" style="text-align:center;padding:32px 24px">
+            <div style="font-size:14px;color:var(--text2);margin-bottom:8px">免费版</div>
+            <div style="font-size:36px;font-weight:800;margin-bottom:4px">¥0</div>
+            <div style="color:var(--text2);margin-bottom:16px">永久免费</div>
+            <div style="text-align:left;font-size:13px;line-height:2">
+              <div>✅ 每天 20 次对话</div>
+              <div>✅ 基础文案生成</div>
+              <div>✅ 简单问答</div>
+            </div>
+            <button class="btn btn-outline" style="width:100%;margin-top:16px" onclick="switchPage('home')">开始使用</button>
+          </div>
+          <div class="card" style="text-align:center;padding:32px 24px;border:2px solid var(--accent)">
+            <div style="font-size:14px;color:var(--accent);margin-bottom:8px">专业版 (推荐)</div>
+            <div style="font-size:36px;font-weight:800;margin-bottom:4px">¥99</div>
+            <div style="color:var(--text2);margin-bottom:16px">/月</div>
+            <div style="text-align:left;font-size:13px;line-height:2">
+              <div>✅ 每天 200 次使用</div>
+              <div>✅ 全部功能解锁</div>
+              <div>✅ 图片生成 + 数据分析</div>
+              <div>✅ 深度调研 + 网页抓取</div>
+              <div>✅ 优先响应</div>
+            </div>
+            <button class="btn btn-primary" style="width:100%;margin-top:16px" onclick="subscribeToPlan('pro')">立即订阅</button>
+          </div>
+          <div class="card" style="text-align:center;padding:32px 24px">
+            <div style="font-size:14px;color:var(--text2);margin-bottom:8px">企业版</div>
+            <div style="font-size:36px;font-weight:800;margin-bottom:4px">¥499</div>
+            <div style="color:var(--text2);margin-bottom:16px">/月</div>
+            <div style="text-align:left;font-size:13px;line-height:2">
+              <div>✅ 不限使用次数</div>
+              <div>✅ 全部功能</div>
+              <div>✅ 自定义专属技能</div>
+              <div>✅ 专属客服支持</div>
+              <div>✅ 私有部署</div>
+            </div>
+            <button class="btn btn-outline" style="width:100%;margin-top:16px" onclick="subscribeToPlan('enterprise')">联系我们</button>
+          </div>
+        </div>
+        <p style="text-align:center;color:var(--text2);font-size:11px">所有套餐均含 7 天免费试用，无需信用卡</p>
+        <div id="pricing-status" style="text-align:center;margin-top:12px"></div>
+      </div>
+    </div>
+
+    <!-- ===== 📊 Dashboard ===== -->
+    <div class="page active" id="page-dashboard">
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px">
+        <h2 style="margin:0">📊 系统概览</h2>
+        <span id="dash-refresh-time" style="font-size:11px;color:var(--text2)"></span>
+        <button class="btn btn-outline btn-sm" onclick="loadDashboard()">🔄 刷新</button>
+      </div>
+      <div id="dash-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:16px"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="card" id="dash-agents"><h4>🤖 Agent 健康</h4><div id="dash-agent-list" style="font-size:12px;line-height:2"></div></div>
+        <div class="card" id="dash-stats"><h4>📈 用量统计</h4><div id="dash-usage" style="font-size:12px"></div></div>
+      </div>
+      <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="card" id="dash-db"><h4>🗄️ 数据库</h4><div id="dash-db-stats" style="font-size:12px;line-height:2"></div></div>
+        <div class="card" id="dash-infra"><h4>⚡ 基础设施</h4><div id="dash-infra-stats" style="font-size:12px;line-height:2"></div></div>
+      </div>
+    </div>
+
+    <!-- ===== 🏠 首页 (场景引导) ===== -->
+    <div class="page active" id="page-home">
+      <!-- 欢迎区 -->
+      <div style="text-align:center;padding:24px 0 16px">
+        <h2 style="margin-bottom:4px">👋 你好！我是你的AI员工</h2>
+        <p style="color:var(--text2);font-size:14px">告诉我你想做什么，我来帮你完成</p>
+      </div>
+
+      <!-- 快速对话 -->
+      <div class="card" style="margin-bottom:20px">
+        <div style="display:flex;gap:10px;align-items:flex-end">
+          <textarea id="home-input" rows="2" placeholder="随便说什么都行，比如：帮我写一条小红书文案，产品是手工耳环..." style="flex:1;min-height:48px;font-size:14px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);resize:none;font-family:inherit"></textarea>
+          <button class="btn btn-primary" onclick="homeQuickSend()" style="height:48px;padding:0 20px;flex-shrink:0">发送</button>
+        </div>
+        <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-outline btn-sm" onclick="homeQuickFill('帮我写5条小红书文案，产品是手工耳环')">写文案</button>
+          <button class="btn btn-outline btn-sm" onclick="homeQuickFill('分析这份销售数据，找出最畅销的产品')">分析数据</button>
+          <button class="btn btn-outline btn-sm" onclick="homeQuickFill('帮我做一个产品落地页')">做网站</button>
+          <button class="btn btn-outline btn-sm" onclick="homeQuickFill('调研一下竞品的价格和特点')">做调研</button>
+        </div>
+      </div>
+
+      <!-- 场景卡片 -->
+      <h3 style="margin-bottom:12px">🎯 我能帮你做这些</h3>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-bottom:20px">
+        <div class="card" style="padding:20px;cursor:pointer;transition:transform .2s" onclick="switchPage('marketing')" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='none'">
+          <div style="font-size:32px;margin-bottom:8px">📝</div>
+          <div style="font-weight:600;margin-bottom:4px">写文案</div>
+          <div style="font-size:13px;color:var(--text2)">小红书、淘宝、朋友圈、公众号...一键生成</div>
+          <div style="margin-top:8px;font-size:11px;color:var(--accent)">点击开始 →</div>
+        </div>
+        <div class="card" style="padding:20px;cursor:pointer;transition:transform .2s" onclick="switchPage('image')" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='none'">
+          <div style="font-size:32px;margin-bottom:8px">🎨</div>
+          <div style="font-weight:600;margin-bottom:4px">生成图片</div>
+          <div style="font-size:13px;color:var(--text2)">产品图、海报、Logo、社交媒体配图</div>
+          <div style="margin-top:8px;font-size:11px;color:var(--accent)">点击开始 →</div>
+        </div>
+        <div class="card" style="padding:20px;cursor:pointer;transition:transform .2s" onclick="switchPage('data')" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='none'">
+          <div style="font-size:32px;margin-bottom:8px">📊</div>
+          <div style="font-weight:600;margin-bottom:4px">分析数据</div>
+          <div style="font-size:13px;color:var(--text2)">销售报表、用户数据、市场趋势分析</div>
+          <div style="margin-top:8px;font-size:11px;color:var(--accent)">点击开始 →</div>
+        </div>
+        <div class="card" style="padding:20px;cursor:pointer;transition:transform .2s" onclick="switchPage('website')" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='none'">
+          <div style="font-size:32px;margin-bottom:8px">🌐</div>
+          <div style="font-weight:600;margin-bottom:4px">建网站</div>
+          <div style="font-size:13px;color:var(--text2)">落地页、产品页、预约页，一句话搞定</div>
+          <div style="margin-top:8px;font-size:11px;color:var(--accent)">点击开始 →</div>
+        </div>
+        <div class="card" style="padding:20px;cursor:pointer;transition:transform .2s" onclick="switchPage('cto')" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='none'">
+          <div style="font-size:32px;margin-bottom:8px">🔍</div>
+          <div style="font-weight:600;margin-bottom:4px">做调研</div>
+          <div style="font-size:13px;color:var(--text2)">竞品分析、市场调研、行业报告</div>
+          <div style="margin-top:8px;font-size:11px;color:var(--accent)">点击开始 →</div>
+        </div>
+        <div class="card" style="padding:20px;cursor:pointer;transition:transform .2s" onclick="switchPage('chat')" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='none'">
+          <div style="font-size:32px;margin-bottom:8px">💬</div>
+          <div style="font-weight:600;margin-bottom:4px">直接对话</div>
+          <div style="font-size:13px;color:var(--text2)">有任何问题？直接问我就行</div>
+          <div style="margin-top:8px;font-size:11px;color:var(--accent)">点击开始 →</div>
+        </div>
+      </div>
+
+      <!-- 使用提示 -->
+      <div class="card" style="background:var(--bg);border:1px dashed var(--border);padding:16px">
+        <div style="font-size:13px;color:var(--text2)">
+          <strong>💡 小提示：</strong>你可以直接告诉我你想做什么，不用想格式。比如：
+          <ul style="margin:8px 0 0 20px;line-height:1.8">
+            <li>"帮我写一条朋友圈文案，推广我的手工皂"</li>
+            <li>"分析一下我上个月的销售数据"</li>
+            <li>"帮我做一个产品介绍页面"</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 🧠 任务编排 (高级) ===== -->
+    <div class="page" id="page-commander">
+      <div style="margin-bottom:16px">
+        <h2 style="margin-bottom:4px">🧠 任务编排</h2>
+        <p style="color:var(--text2);font-size:13px">输入复杂目标，AI自动拆解成多个步骤执行</p>
+      </div>
+      <div class="card">
+        <div style="display:flex;gap:10px;align-items:flex-end">
+          <textarea id="cmd-goal" rows="2" placeholder="描述你的目标，越详细越好..." style="flex:1;min-height:48px;font-size:14px;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);resize:none;font-family:inherit"></textarea>
+          <button class="btn btn-primary" onclick="runCommanderPipeline()" id="cmd-run-btn" style="height:48px;padding:0 20px;flex-shrink:0">开始执行</button>
+        </div>
+      </div>
+      <div id="cmd-pipeline" style="display:none;margin:16px 0">
+        <div class="pipeline-phase" id="phase-decompose"><div class="phase-icon">🔍</div><div class="phase-body"><div class="phase-title">分析目标</div><div class="phase-status" id="phase1-status">...</div></div></div>
+        <div class="pipeline-phase" id="phase-execute"><div class="phase-icon">⚙️</div><div class="phase-body"><div class="phase-title">执行中</div><div class="progress-bar-container"><div class="progress-bar-fill" id="cmd-progress-bar" style="width:0%"></div></div><div class="phase-status" id="phase2-status">...</div><div id="cmd-steps-live"></div></div></div>
+        <div class="pipeline-phase" id="phase-result"><div class="phase-icon">✅</div><div class="phase-body"><div class="phase-title">完成</div><div class="phase-status" id="phase3-status">...</div><div id="cmd-final-result" style="margin-top:8px"></div></div></div>
+      </div>
+      <div id="cmd-error" class="card" style="display:none;border-left:3px solid var(--red)"><div id="cmd-error-msg"></div></div>
+    </div>
+
+    <!-- ===== 💬 直接对话 ===== -->
+    <div class="page" id="page-chat">
+      <div class="card" style="display:flex;flex-direction:column;height:calc(100vh - 100px)">
+        <div id="chat-messages" style="flex:1;overflow-y:auto;padding:12px 40px;max-width:900px;width:100%;margin:0 auto;box-sizing:border-box">
+          <div class="empty" style="padding:40px">
+            <p style="font-size:18px;margin-bottom:8px">👋 你好！有什么可以帮你的？</p>
+            <p style="color:var(--text2);font-size:14px">随便问什么都行，比如：</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:12px">
+              <button class="btn btn-outline btn-sm" onclick="document.getElementById('chat-input').value='帮我写一条推广手工耳环的朋友话文案';chatSend()">写朋友圈文案</button>
+              <button class="btn btn-outline btn-sm" onclick="document.getElementById('chat-input').value='给我一些小红书爆款标题的建议';chatSend()">小红书标题建议</button>
+              <button class="btn btn-outline btn-sm" onclick="document.getElementById('chat-input').value='帮我分析一下手工饰品的目标客户群体';chatSend()">客户群体分析</button>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;padding-top:12px;border-top:1px solid var(--border)">
+          <textarea id="chat-input" rows="3" placeholder="随便说什么都行..." style="flex:1;padding:14px;background:var(--bg);border:1px solid var(--border);border-radius:12px;color:var(--text);font-size:15px;resize:vertical;font-family:inherit;min-height:56px;max-height:200px"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();chatSend()}"></textarea>
+          <button class="btn btn-primary" onclick="chatSend()" style="flex-shrink:0;height:56px;padding:0 20px">发送</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 📋 场景模板 ===== -->
+    <div class="page" id="page-templates">
+      <div id="tpl-list"></div>
+      <div class="loading" id="tpl-loading"><div class="spinner"></div></div>
+      <div id="tpl-form" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <h3 id="tpl-form-title"></h3>
+          <button class="btn btn-outline btn-sm" onclick="backToTplList()">← 返回</button>
+        </div>
+        <div class="card" id="tpl-form-card"></div>
+        <button class="btn btn-primary" id="tpl-run-btn" onclick="runTemplate()">🚀 执行</button>
+      </div>
+      <div id="tpl-result" style="display:none">
+        <div id="tpl-result-summary" class="card"></div>
+      </div>
+    </div>
+
+    <!-- ===== 🧩 资源中心 ===== -->
+    <div class="page" id="page-ai-registry">
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <button class="btn btn-primary btn-sm" onclick="scanAIRegistry()">🔄 扫描</button>
+        <button class="btn btn-outline btn-sm" onclick="loadAICapabilities()">📋 能力</button>
+      </div>
+      <div id="ai-scan-result"><div class="empty"><p>点击扫描发现本机 AI</p></div></div>
+      <div class="card" style="margin-top:10px">
+        <h3>🎯 路由测试</h3>
+        <div style="display:flex;gap:8px">
+          <input id="ai-route-goal" placeholder="输入目标" style="flex:1;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" value="帮我抓取网页">
+          <button class="btn btn-primary btn-sm" onclick="routeAIRegistry()">匹配</button>
+        </div>
+        <div id="ai-route-result" style="margin-top:8px"></div>
+      </div>
+    </div>
+
+    <!-- ===== 🔍 做调研 ===== -->
+    <div class="page" id="page-research">
+      <h2 style="margin-bottom:16px">🔍 做调研</h2>
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin-bottom:12px">你想调研什么？</h3>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:16px">
+          <div class="card" style="padding:16px;cursor:pointer;text-align:center" onclick="researchQuickFill('竞品分析', '帮我分析竞品的价格、产品特点、营销策略')">
+            <div style="font-size:28px;margin-bottom:4px">🏪</div>
+            <div style="font-weight:600;font-size:14px">竞品分析</div>
+            <div style="font-size:12px;color:var(--text2)">了解竞争对手</div>
+          </div>
+          <div class="card" style="padding:16px;cursor:pointer;text-align:center" onclick="researchQuickFill('市场调研', '帮我调研手工饰品市场的规模、趋势、目标客户')">
+            <div style="font-size:28px;margin-bottom:4px">📈</div>
+            <div style="font-weight:600;font-size:14px">市场调研</div>
+            <div style="font-size:12px;color:var(--text2)">了解市场机会</div>
+          </div>
+          <div class="card" style="padding:16px;cursor:pointer;text-align:center" onclick="researchQuickFill('用户画像', '帮我分析目标客户的年龄、喜好、消费习惯')">
+            <div style="font-size:28px;margin-bottom:4px">👥</div>
+            <div style="font-weight:600;font-size:14px">用户画像</div>
+            <div style="font-size:12px;color:var(--text2)">了解你的客户</div>
+          </div>
+          <div class="card" style="padding:16px;cursor:pointer;text-align:center" onclick="researchQuickFill('行业报告', '帮我整理手工饰品行业的最新趋势和机会')">
+            <div style="font-size:28px;margin-bottom:4px">📋</div>
+            <div style="font-weight:600;font-size:14px">行业报告</div>
+            <div style="font-size:12px;color:var(--text2)">了解行业趋势</div>
+          </div>
+        </div>
+        <div style="margin-bottom:12px">
+          <input id="research-topic" placeholder="调研主题，比如：手工饰品市场" style="width:100%;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;font-family:inherit">
+        </div>
+        <div style="display:flex;gap:8px">
+          <textarea id="research-input" rows="2" placeholder="具体想了解什么？" style="flex:1;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;resize:none;font-family:inherit"></textarea>
+          <button class="btn btn-primary" onclick="runResearch()">开始调研</button>
+        </div>
+      </div>
+      <div id="research-result" style="display:none"></div>
+    </div>
+
+    <!-- ===== 📊 数据分析 ===== -->
+    <div class="page" id="page-data">
+      <h2 style="margin-bottom:16px">📊 数据分析</h2>
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin-bottom:12px">上传你的数据</h3>
+        <div style="border:2px dashed var(--border);border-radius:12px;padding:40px;text-align:center;cursor:pointer" onclick="document.getElementById('data-file-input').click()">
+          <div style="font-size:40px;margin-bottom:8px">📁</div>
+          <div style="font-weight:600;margin-bottom:4px">点击上传文件</div>
+          <div style="font-size:13px;color:var(--text2)">支持 CSV、Excel、JSON 格式</div>
+        </div>
+        <input type="file" id="data-file-input" style="display:none" accept=".csv,.xlsx,.xls,.json" onchange="handleDataFile(this)">
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin-bottom:12px">或者直接告诉我你想分析什么</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+          <button class="btn btn-outline btn-sm" onclick="dataQuickFill('分析我的销售数据，找出最畅销的产品')">畅销产品分析</button>
+          <button class="btn btn-outline btn-sm" onclick="dataQuickFill('分析用户数据，找出高价值客户')">客户分析</button>
+          <button class="btn btn-outline btn-sm" onclick="dataQuickFill('分析上月收入和支出，计算利润')">利润分析</button>
+          <button class="btn btn-outline btn-sm" onclick="dataQuickFill('分析市场趋势，预测下季度走向')">趋势预测</button>
+        </div>
+        <div style="display:flex;gap:8px">
+          <textarea id="data-input" rows="2" placeholder="描述你想分析的数据..." style="flex:1;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;resize:none;font-family:inherit"></textarea>
+          <button class="btn btn-primary" onclick="runDataAnalysis()">开始分析</button>
+        </div>
+      </div>
+      <div id="data-result" style="display:none"></div>
+    </div>
+
+    <!-- ===== 🌐 建网站 ===== -->
+    <div class="page" id="page-website">
+      <h2 style="margin-bottom:16px">🌐 一句话建网站</h2>
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin-bottom:12px">告诉我你想要什么样的网站</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+          <button class="btn btn-outline btn-sm" onclick="websiteQuickFill('做一个手工饰品的产品展示页，风格简约文艺')">产品展示页</button>
+          <button class="btn btn-outline btn-sm" onclick="websiteQuickFill('做一个预约页面，客户可以预约我的手工课程')">预约页面</button>
+          <button class="btn btn-outline btn-sm" onclick="websiteQuickFill('做一个个人作品集页面，展示我的设计作品')">作品集</button>
+          <button class="btn btn-outline btn-sm" onclick="websiteQuickFill('做一个活动报名页，下周六有线下手工市集')">活动报名页</button>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <textarea id="website-input" rows="3" placeholder="描述你想要的网站，比如：做一个产品落地页，卖手工耳环，风格要小清新..." style="flex:1;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;resize:none;font-family:inherit"></textarea>
+          <button class="btn btn-primary" onclick="runWebsiteBuild()">生成网站</button>
+        </div>
+        <div style="font-size:12px;color:var(--text2)">💡 生成后可以直接在浏览器打开，也可以下载 HTML 文件</div>
+      </div>
+      <div id="website-result" style="display:none"></div>
+    </div>
+
+    <!-- ===== 📦 运行记录 ===== -->
+    <div class="page" id="page-history">
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <button class="btn btn-primary btn-sm" onclick="loadHistory()">刷新</button>
+        <button class="btn btn-outline btn-sm" onclick="clearHistory()" style="color:var(--red);border-color:var(--red)">清空</button>
+        <span id="history-count" style="font-size:12px;color:var(--text2)"></span>
+      </div>
+      <div id="history-list"><div class="empty"><p>暂无记录</p></div></div>
+    </div>
+
+    <!-- ===== 🔍 CTO 技术审查 ===== -->
+    <div class="page" id="page-cto">
+      <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+        <select id="cto-task-type" style="width:160px">
+          <option value="code_review">🔍 代码审查</option>
+          <option value="tech_choice">💡 技术选型</option>
+          <option value="architecture_review">🏗️ 架构评审</option>
+          <option value="task_decompose">📋 任务拆解</option>
+          <option value="effort_estimate">⏱️ 工作量评估</option>
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="runCTO()">▶️ 执行</button>
+        <span id="cto-status" style="font-size:12px;color:var(--text2)"></span>
+      </div>
+      <textarea id="cto-input" class="input" style="width:100%;height:200px;font-family:monospace;font-size:13px" placeholder="输入代码或技术需求...&#10;&#10;代码审查：粘贴源码&#10;技术选型：描述需求场景&#10;架构评审：描述系统架构&#10;任务拆解：描述技术目标&#10;工作量评估：描述开发任务"></textarea>
+      <div id="cto-result" style="display:none;margin-top:12px">
+        <div class="card" id="cto-result-card"></div>
+      </div>
+    </div>
+
+    <!-- ===== 📚 技能库 ===== -->
+    <div class="page" id="page-skills">
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <button class="btn btn-primary btn-sm" onclick="loadSkills()">🔄 刷新</button>
+        <input type="text" id="skills-match-input" class="input" placeholder="输入目标，匹配相关技能..." style="flex:1" onkeypress="if(event.key==='Enter')matchSkills()">
+        <button class="btn btn-outline btn-sm" onclick="matchSkills()">🎯 匹配</button>
+      </div>
+      <div id="skills-list"><div class="empty"><p>加载中...</p></div></div>
+      <div id="skills-match-result" style="display:none;margin-top:12px">
+        <div class="card" id="skills-match-card"></div>
+      </div>
+    </div>
+
+    <!-- ===== 🎨 图片生成 ===== -->
+    <div class="page" id="page-image">
+      <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <select id="img-size" style="width:130px">
+          <option value="1024x1024">1:1 方形</option>
+          <option value="1792x1024">16:9 横版</option>
+          <option value="1024x1792">9:16 竖版</option>
+        </select>
+        <select id="img-style" style="width:120px">
+          <option value="vivid">生动 vivid</option>
+          <option value="natural">自然 natural</option>
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="runImageGen()">🎨 生成</button>
+        <span id="img-status" style="font-size:12px;color:var(--text2)"></span>
+      </div>
+      <textarea id="img-prompt" class="input" style="width:100%;height:120px" placeholder="描述你想生成的图片（英文效果更好）...&#10;例如: A cute orange tabby cat sitting on a windowsill, golden hour sunlight, digital illustration style, warm cozy mood"></textarea>
+      <div id="img-result" style="display:none;margin-top:12px">
+        <div class="card" id="img-result-card"></div>
+      </div>
+    </div>
+
+    <!-- ===== 📝 营销内容 ===== -->
+    <div class="page" id="page-marketing">
+      <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <select id="mkt-type" style="width:160px">
+          <option value="copywriting">✍️ 文案生成</option>
+          <option value="social_media">📱 社媒内容</option>
+          <option value="seo_article">🔍 SEO 文章</option>
+          <option value="email_campaign">📧 邮件营销</option>
+          <option value="brand_strategy">🎯 品牌策略</option>
+          <option value="campaign_plan">📊 活动策划</option>
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="runMarketing()">▶️ 生成</button>
+        <span id="mkt-status" style="font-size:12px;color:var(--text2)"></span>
+      </div>
+      <textarea id="mkt-input" class="input" style="width:100%;height:120px" placeholder="描述你的营销需求...&#10;例如: 为我们的 AI 写作助手产品写一篇小红书种草文案，目标用户是 25-35 岁的职场白领女性"></textarea>
+      <div id="mkt-result" style="display:none;margin-top:12px">
+        <div class="card" id="mkt-result-card"></div>
+      </div>
+    </div>
+
+    <!-- ===== 🌐 OpenClaw 研究 ===== -->
+    <div class="page" id="page-openclaw-chat">
+      <div class="card" style="display:flex;flex-direction:column;height:calc(100vh - 100px)">
+        <!-- Context Meter -->
+        <div style="display:flex;align-items:center;gap:12px;padding:8px 12px;background:#0a0a0a;border-radius:6px;margin-bottom:8px;font-size:12px;flex-wrap:wrap">
+          <span style="font-weight:700;color:var(--accent);white-space:nowrap">🌐 OpenClaw 1M 上下文</span>
+          <div style="flex:1;min-width:120px;height:6px;background:#222;border-radius:3px;overflow:hidden">
+            <div id="ctx-bar" style="height:100%;width:0%;background:linear-gradient(90deg,var(--green),var(--accent));transition:width 1.5s;border-radius:3px"></div>
+          </div>
+          <span id="ctx-stats" style="color:var(--text2);white-space:nowrap;font-size:11px">等待对话...</span>
+          <button class="btn btn-outline btn-sm" onclick="clearOpenClawContext()" style="color:var(--red);border-color:var(--red);font-size:11px;padding:2px 8px" title="清空上下文开始新对话">🗑️ 新对话</button>
+        </div>
+        <!-- Chat Area -->
+        <div id="oc-chat-messages" style="flex:1;overflow-y:auto;padding:8px 0">
+          <div class="empty" style="text-align:left;padding:20px">
+            <p style="font-size:14px;color:var(--accent)">🌐 OpenClaw v2 — 全能联网智能研究助手</p>
+            <p style="font-size:12px;color:var(--text2);line-height:1.8">
+              我可以帮你：<br>
+              🔍 <b>深度研究</b> — 搜索 "帮我调研最新AI Agent框架"<br>
+              💭 <b>深度思考</b> — 输入 "分析为什么RAG比微调更实用"<br>
+              ✅ <b>事实核查</b> — 输入 "验证 Python3.13是否已经发布"<br>
+              📚 <b>自主学习</b> — 搜索后自动记忆和总结<br>
+              💬 <b>多轮对话</b> — 支持 1M 虚拟上下文，不丢失记忆
+            </p>
+            <p style="font-size:11px;color:var(--text2);margin-top:8px">💡 提示：先输入 <b>/research 你的问题</b> 启动深度研究，或直接开始对话</p>
+          </div>
+        </div>
+        <!-- Input Area -->
+        <div style="display:flex;gap:8px;align-items:flex-end;margin-top:8px">
+          <select id="oc-mode" style="width:110px;font-size:12px">
+            <option value="chat">💬 对话</option>
+            <option value="deep_research">🔍 深度研究</option>
+            <option value="reason">💭 深度思考</option>
+            <option value="verify">✅ 事实核查</option>
+            <option value="learn">📚 自主学习</option>
+          </select>
+          <textarea id="oc-input" class="input" style="flex:1;height:60px;resize:none;font-size:14px"
+            placeholder="输入问题或指令... Enter发送, Shift+Enter换行"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendOpenClawChat()}"></textarea>
+          <button class="btn btn-primary" onclick="sendOpenClawChat()" style="height:60px;padding:0 20px">▶️ 发送</button>
+        </div>
+      </div>
+      <div id="oc-result" style="display:none;margin-top:12px">
+        <div class="card" id="oc-result-card"></div>
+      </div>
+    </div>
+
+    <!-- ===== ⚙️ 设置 ===== -->
+    <div class="page" id="page-settings">
+      <h2 style="margin-bottom:16px">设置</h2>
+
+      <!-- 当前主脑 -->
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin-bottom:12px">当前使用的AI</h3>
+        <div id="settings-current-brain" style="display:flex;align-items:center;gap:12px;padding:12px;background:var(--bg);border-radius:8px">
+          <span style="font-size:32px">🧠</span>
+          <div>
+            <div style="font-weight:600;font-size:16px">加载中...</div>
+            <div style="font-size:13px;color:var(--text2)">正在获取当前AI信息</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 切换主脑 -->
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin-bottom:12px">切换AI</h3>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:12px">选择你想使用的AI，系统会自动切换</p>
+        <div id="settings-brain-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px">
+          <div style="padding:16px;text-align:center;color:var(--text2)">加载中...</div>
+        </div>
+      </div>
+
+      <!-- 本机能力 -->
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin-bottom:12px">本机能力</h3>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:12px">系统自动检测到的可用工具</p>
+        <div id="settings-capabilities">
+          <div style="padding:16px;text-align:center;color:var(--text2)">加载中...</div>
+        </div>
+        <button class="btn btn-outline btn-sm" style="margin-top:12px" onclick="scanCapabilities()">重新扫描</button>
+      </div>
+
+      <!-- API Key 配置 -->
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin-bottom:12px">API Key 配置</h3>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:12px">如果你有API Key，可以在这里配置（可选）</p>
+        <div style="display:grid;gap:12px">
+          <div>
+            <label style="font-size:12px;color:var(--text2)">DeepSeek API Key</label>
+            <input id="settings-deepseek-key" type="password" placeholder="sk-..." style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--text2)">OpenAI API Key</label>
+            <input id="settings-openai-key" type="password" placeholder="sk-..." style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--text2)">Claude API Key</label>
+            <input id="settings-claude-key" type="password" placeholder="sk-ant-..." style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
+          </div>
+          <button class="btn btn-primary" onclick="saveApiKeys()">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 🏪 Agent 市场 ===== -->
+    <div class="page" id="page-marketplace">
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px">
+        <h2 style="margin:0">🏪 Agent 市场</h2>
+        <input id="market-search" class="input" style="flex:1;max-width:300px" placeholder="搜索 Agent..." onkeyup="if(event.key==='Enter')searchMarket()">
+        <button class="btn btn-outline btn-sm" onclick="searchMarket()">🔍 搜索</button>
+        <button class="btn btn-outline btn-sm" onclick="loadMarket()">刷新</button>
+      </div>
+      <div id="market-stats" style="display:flex;gap:12px;margin-bottom:16px"></div>
+      <div id="market-categories" style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap"></div>
+      <div id="market-agents" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px"></div>
+    </div>
+
+    <!-- ===== 🔄 指挥官管理 ===== -->
+    <div class="page" id="page-commander-mgr">
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px">
+        <h2 style="margin:0">🔄 指挥官管理</h2>
+        <button class="btn btn-outline btn-sm" onclick="loadCommanders()">刷新</button>
+      </div>
+      <div id="cmd-mgr-current" class="card" style="margin-bottom:16px"></div>
+      <h3>可用指挥官</h3>
+      <div id="cmd-mgr-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px"></div>
+      <div style="margin-top:24px">
+        <h3>注册自定义指挥官</h3>
+        <div class="card" id="cmd-mgr-register"></div>
+      </div>
+    </div>
+
+    <!-- ===== 🧩 插件管理 ===== -->
+    <div class="page" id="page-plugin-mgr">
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px">
+        <h2 style="margin:0">🧩 插件管理</h2>
+        <button class="btn btn-primary btn-sm" onclick="showCreatePlugin()">+ 创建插件</button>
+        <button class="btn btn-outline btn-sm" onclick="loadPlugins()">刷新</button>
+      </div>
+      <div id="plugin-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px"></div>
+      <div id="plugin-editor" style="display:none;margin-top:16px">
+        <h3 id="plugin-editor-title">创建插件</h3>
+        <div class="card">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+            <div>
+              <label style="font-size:12px;color:var(--text2)">插件名称</label>
+              <input id="plugin-name" class="input" style="width:100%" placeholder="我的插件">
+            </div>
+            <div>
+              <label style="font-size:12px;color:var(--text2)">描述</label>
+              <input id="plugin-desc" class="input" style="width:100%" placeholder="插件功能描述">
+            </div>
+          </div>
+          <div style="margin-bottom:12px">
+            <label style="font-size:12px;color:var(--text2)">能力标签 (逗号分隔)</label>
+            <input id="plugin-caps" class="input" style="width:100%" placeholder="chat, code, browser">
+          </div>
+          <div style="margin-bottom:12px">
+            <label style="font-size:12px;color:var(--text2)">Python 代码 (必须包含 run(task) 函数)</label>
+            <textarea id="plugin-code" class="input" style="width:100%;height:200px;font-family:monospace;font-size:13px" placeholder="def run(task: dict) -> dict:&#10;    goal = task.get('goal', '')&#10;    return {'output': f'处理: {goal}'}"></textarea>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary" onclick="savePlugin()">💾 保存</button>
+            <button class="btn btn-outline" onclick="testCurrentPlugin()">▶️ 测试</button>
+            <button class="btn btn-outline" onclick="hidePluginEditor()">取消</button>
+            <select id="plugin-template" style="margin-left:auto;font-size:12px" onchange="loadPluginTemplate()">
+              <option value="">加载模板...</option>
+              <option value="basic">基础模板</option>
+              <option value="ai_chat">AI 对话模板</option>
+              <option value="file_processor">文件处理模板</option>
+            </select>
+          </div>
+          <div id="plugin-test-result" style="margin-top:12px;display:none"></div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast"></div>
+
+<script src="/static/js/app.js"></script>
+
+<!-- 首次引导弹窗 -->
+<div id="onboarding-overlay" onclick="if(event.target===this)dismissOnboarding()" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);z-index:9999;display:none;align-items:center;justify-content:center;pointer-events:none">
+  <div onclick="event.stopPropagation()" style="pointer-events:auto;background:var(--card);border:1px solid var(--border);border-radius:16px;max-width:480px;width:90%;padding:32px;text-align:center">
+    <div style="font-size:48px;margin-bottom:16px">👋</div>
+    <h2 style="margin-bottom:8px">欢迎！我是你的AI员工</h2>
+    <p style="color:var(--text2);font-size:14px;margin-bottom:20px;line-height:1.6">
+      告诉我你想做什么，我来帮你完成。<br>
+      写文案、做网站、分析数据、做调研...都行！
+    </p>
+    <div style="display:flex;gap:8px;justify-content:center">
+      <button class="btn btn-primary" onclick="dismissOnboarding()">开始使用</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/i18n.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>
