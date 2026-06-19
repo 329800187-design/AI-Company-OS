@@ -16,9 +16,13 @@ class MiMoAdapter(BaseAdapter):
 
     def __init__(self):
         self.api_key = os.getenv("MIMO_API_KEY", "")
-        self.base_url = os.getenv("MIMO_BASE_URL", "https://api.mimo.com/v1")
-        self.model = os.getenv("MIMO_MODEL", "mimo-v2.5-pro")
+        self.base_url = os.getenv("MIMO_BASE_URL", "")
+        self.model = os.getenv("MIMO_MODEL", "mimo-v2-pro")  # 默认使用稳定版，避免 v2.5-pro 易 429
         self.web_search_enabled = os.getenv("MIMO_ENABLE_WEB_SEARCH", "true").lower() == "true"
+        # 健康检查缓存
+        self._health_cache = None
+        self._health_cache_ts = 0
+        self._health_cache_ttl = 300  # 5 分钟
 
     def can_handle(self, task_type: str, task: Dict[str, Any]) -> bool:
         """判断是否能处理此任务"""
@@ -26,22 +30,176 @@ class MiMoAdapter(BaseAdapter):
         return task_type in supported_types
 
     def health_check(self) -> Dict[str, Any]:
-        """健康检查"""
+        """健康检查 - 带缓存，避免频繁消耗额度"""
+        import time
+
+        # 使用缓存（5 分钟内不重复调用）
+        now = time.time()
+        if self._health_cache and (now - self._health_cache_ts) < self._health_cache_ttl:
+            return self._health_cache
+
+        # 检查 API Key
         if not self.api_key:
-            return {
+            result = {
                 "available": False,
                 "installed": False,
                 "error": "未配置 MIMO_API_KEY",
-                "fix_hint": "请配置 MIMO_API_KEY"
+                "fix_hint": "请在 .env 中配置 MIMO_API_KEY"
+            }
+            self._health_cache = result
+            self._health_cache_ts = now
+            return result
+
+        # 检查 Base URL
+        if not self.base_url:
+            result = {
+                "available": False,
+                "installed": True,
+                "error": "未配置 MIMO_BASE_URL",
+                "fix_hint": "请在 .env 中配置 MIMO_BASE_URL (MiMo API 端点)"
+            }
+            self._health_cache = result
+            self._health_cache_ts = now
+            return result
+
+        # 真实调用测试
+        try:
+            with httpx.Client(timeout=10) as client:
+                response = client.get(
+                    f"{self.base_url}/models",
+                    headers={"Authorization": f"Bearer {self.api_key}"}
+                )
+
+                result = self._evaluate_status(response.status_code, "GET /models")
+                self._health_cache = result
+                self._health_cache_ts = now
+                return result
+
+        except httpx.ConnectError:
+            result = {
+                "available": False,
+                "installed": True,
+                "error": "无法连接到 MiMo API",
+                "fix_hint": f"请检查 MIMO_BASE_URL ({self.base_url}) 是否可访问"
+            }
+            self._health_cache = result
+            self._health_cache_ts = now
+            return result
+        except httpx.ConnectTimeout:
+            result = {
+                "available": False,
+                "installed": True,
+                "error": "连接 MiMo API 超时",
+                "fix_hint": "请检查网络连接或稍后重试"
+            }
+            self._health_cache = result
+            self._health_cache_ts = now
+            return result
+        except Exception as e:
+            result = {
+                "available": False,
+                "installed": True,
+                "error": f"MiMo 健康检查失败: {str(e)[:100]}",
+                "fix_hint": "请检查 MiMo 配置和网络"
+            }
+            self._health_cache = result
+            self._health_cache_ts = now
+            return result
+
+    def _evaluate_status(self, status_code: int, action: str) -> Dict[str, Any]:
+        """评估 HTTP 状态码，返回统一的健康结果"""
+        if status_code == 200:
+            return {
+                "available": True,
+                "installed": True,
+                "running": True,
+                "model": self.model,
+                "web_search_enabled": self.web_search_enabled
+            }
+        elif status_code == 401:
+            return {
+                "available": False,
+                "installed": True,
+                "error": f"[401] MIMO_API_KEY 无效或已过期",
+                "fix_hint": "请检查 .env 中的 MIMO_API_KEY 是否正确，或重新生成一个"
+            }
+        elif status_code == 429:
+            return {
+                "available": False,
+                "installed": True,
+                "error": f"[429] 请求过频，上游限流",
+                "fix_hint": "请稍后重试，或切换到更稳定的模型 (如 mimo-v2-pro)"
+            }
+        elif status_code == 400:
+            return {
+                "available": False,
+                "installed": True,
+                "error": f"[400] 请求格式错误 — base_url/model/payload 可能不匹配",
+                "fix_hint": f"当前 model={self.model}, base_url={self.base_url}，请检查配置"
+            }
+        elif status_code == 404:
+            # /models 不存在，尝试用 chat completion 测试
+            return self._test_with_chat()
+        else:
+            return {
+                "available": False,
+                "installed": True,
+                "error": f"MiMo API 返回 HTTP {status_code}",
+                "fix_hint": f"请检查 MIMO_BASE_URL ({self.base_url}) 配置是否正确"
             }
 
-        return {
-            "available": True,
-            "installed": True,
-            "running": True,
-            "model": self.model,
-            "web_search_enabled": self.web_search_enabled
+    def _format_api_error(self, status_code: int, response_text: str = "") -> str:
+        """格式化 API 错误消息，提供明确的 fix_hint"""
+        hint_map = {
+            401: "[401] API Key 无效或已过期 — 请检查 .env 中的 MIMO_API_KEY",
+            429: "[429] 请求过频，上游限流 — 请稍后重试，或切换到更稳定的模型 (如 mimo-v2-pro)",
+            400: f"[400] 请求格式错误 — base_url={self.base_url}, model={self.model}，请检查配置",
         }
+        hint = hint_map.get(status_code, f"MiMo API error: HTTP {status_code}")
+        # 截断过长的 response text
+        if response_text and len(response_text) < 200:
+            hint += f" | 服务端响应: {response_text[:100]}"
+        return hint
+
+    def _test_with_chat(self) -> Dict[str, Any]:
+        """用最小 chat completion 测试（仅 /models 404 时调用）"""
+        try:
+            with httpx.Client(timeout=15) as client:
+                response = client.post(
+                    f"{self.base_url}/chat/completions",
+                    json={
+                        "model": self.model,
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "max_tokens": 5
+                    },
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json"
+                    }
+                )
+
+                return self._evaluate_status(response.status_code, "POST /chat/completions")
+        except httpx.ConnectError:
+            return {
+                "available": False,
+                "installed": True,
+                "error": "无法连接到 MiMo API",
+                "fix_hint": f"请检查 MIMO_BASE_URL ({self.base_url}) 是否可访问"
+            }
+        except httpx.ConnectTimeout:
+            return {
+                "available": False,
+                "installed": True,
+                "error": "连接 MiMo API 超时",
+                "fix_hint": "请检查网络连接或稍后重试"
+            }
+        except Exception as e:
+            return {
+                "available": False,
+                "installed": True,
+                "error": f"MiMo 测试失败: {str(e)[:100]}",
+                "fix_hint": "请检查 MiMo 配置和网络"
+            }
 
     def run(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """执行任务"""
@@ -89,11 +247,14 @@ class MiMoAdapter(BaseAdapter):
                 duration_ms=duration,
                 metadata={
                     "model": self.model,
-                    "used_web_search": need_web_search,
+                    "used_web_search": need_web_search and bool(result.get("sources")),
                     "search_mode": "mimo_web_search" if need_web_search else "none"
                 }
             )
         else:
+            # 遇到 429 时清除缓存，下次 health_check 可以重新探测
+            if "429" in result.get("error", ""):
+                self._health_cache = None
             return self._create_result(
                 ok=False,
                 error=result.get("error", "MiMo 调用失败"),
@@ -153,7 +314,8 @@ class MiMoAdapter(BaseAdapter):
                 )
 
                 if response.status_code != 200:
-                    return {"ok": False, "error": f"MiMo API error: {response.status_code}"}
+                    error_msg = self._format_api_error(response.status_code, response.text)
+                    return {"ok": False, "error": error_msg}
 
                 data = response.json()
 
@@ -161,17 +323,7 @@ class MiMoAdapter(BaseAdapter):
                 reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
                 # 提取 sources
-                sources = []
-                if need_web_search:
-                    # MiMo 返回的搜索结果可能在不同位置
-                    tool_calls = data.get("choices", [{}])[0].get("message", {}).get("tool_calls", [])
-                    for call in tool_calls:
-                        if call.get("function", {}).get("name") == "web_search":
-                            result = call.get("function", {}).get("result", {})
-                            if isinstance(result, dict):
-                                sources = result.get("sources", [])
-                            elif isinstance(result, list):
-                                sources = result
+                sources = self._extract_sources(data, need_web_search)
 
                 return {
                     "ok": True,
@@ -180,6 +332,60 @@ class MiMoAdapter(BaseAdapter):
                 }
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+    def _extract_sources(self, data: Dict, need_web_search: bool) -> List[Dict]:
+        """提取来源 - 支持多种格式"""
+        sources = []
+
+        if not need_web_search:
+            return sources
+
+        # 尝试从 tool_calls 提取
+        choices = data.get("choices", [])
+        if choices:
+            message = choices[0].get("message", {})
+            tool_calls = message.get("tool_calls", [])
+            for call in tool_calls:
+                func = call.get("function", {})
+                if func.get("name") == "web_search":
+                    result = func.get("result", {})
+                    if isinstance(result, dict):
+                        sources.extend(result.get("sources", []))
+                    elif isinstance(result, list):
+                        sources.extend(result)
+
+        # 尝试从 annotations 提取
+        if not sources:
+            annotations = data.get("annotations", [])
+            for ann in annotations:
+                if ann.get("type") == "citation":
+                    sources.append({
+                        "title": ann.get("title", ""),
+                        "url": ann.get("url", ""),
+                        "summary": ann.get("text", "")
+                    })
+
+        # 尝试从 citations 提取
+        if not sources:
+            citations = data.get("citations", [])
+            for cite in citations:
+                sources.append({
+                    "title": cite.get("title", ""),
+                    "url": cite.get("url", ""),
+                    "summary": cite.get("text", "")
+                })
+
+        # 尝试从 references 提取
+        if not sources:
+            references = data.get("references", [])
+            for ref in references:
+                sources.append({
+                    "title": ref.get("title", ""),
+                    "url": ref.get("url", ""),
+                    "summary": ref.get("snippet", "")
+                })
+
+        return sources
 
     def _get_system_prompt(self, task_type: str) -> str:
         """获取系统 prompt"""
