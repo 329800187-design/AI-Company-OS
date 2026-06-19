@@ -127,7 +127,12 @@ def test_registry_list_online():
 
 
 def test_cc_switch_execute():
-    """实际调一次 CC Switch → DeepSeek"""
+    """实际调一次 CC Switch → DeepSeek
+
+    注意：这是外部本机服务 integration test，不应阻塞离线单元回归。
+    当 CC Switch 不在线或上游 provider 返回 502/503/504 时自动 skip。
+    仅在返回结构错误、执行器代码异常等真正问题上 fail。
+    """
     reg = get_registry()
     reg.scan_all()
 
@@ -140,7 +145,18 @@ def test_cc_switch_execute():
         "max_tokens": 300,
     })
     print("CC Switch result:", json.dumps(result, indent=2, ensure_ascii=False))
-    assert result.get("success")
+
+    if not result.get("success"):
+        error_msg = str(result.get("error", ""))
+        # 上游 provider 暂时不可用 → skip（不阻塞离线回归）
+        if any(code in error_msg for code in ("502", "503", "504", "Service Unavailable")):
+            pytest.skip(f"CC Switch upstream provider unavailable: {error_msg[:120]}")
+        # 连接失败 → skip（本机服务可能未启动）
+        if any(code in error_msg for code in ("Connection refused", "ConnectError", "ConnectTimeout")):
+            pytest.skip(f"CC Switch connection failed: {error_msg[:120]}")
+        # 其他错误 → 真正的失败（结构错误、代码异常等）
+        assert False, f"CC Switch execute failed: {error_msg[:200]}"
+
     assert "result" in result
     assert len(result["result"]) > 0
 
