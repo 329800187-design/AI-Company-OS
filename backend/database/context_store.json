@@ -1,25 +1,25 @@
 {
-  "total_stored_tokens": 31,
+  "total_stored_tokens": 16,
   "compress_count": 0,
   "messages": [
     {
-      "id": "8f2e8fd72412",
+      "id": "0f8fa696d1b5",
       "role": "user",
       "content": "hi",
       "level": 0,
       "summary": "",
       "token_count": 0,
-      "timestamp": 1781778011.9107313,
+      "timestamp": 1781885529.7765586,
       "topics": []
     },
     {
-      "id": "a9055ad207d6",
+      "id": "b734a4ca0284",
       "role": "assistant",
-      "content": "你好！我是 OpenClaw，你的 AI 研究助手。很高兴见到你！有什么问题或需要帮助的地方，请随时告诉我。无论是科研",
+      "content": "你好！我是 OpenClaw，你的 AI 研究助手。有什么可以帮你的吗？",
       "level": 0,
       "summary": "",
-      "token_count": 31,
-      "timestamp": 1781778013.1276026,
+      "token_count": 16,
+      "timestamp": 1781885530.833441,
       "topics": []
     }
   ]

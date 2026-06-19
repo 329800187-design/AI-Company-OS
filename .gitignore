@@ -30,6 +30,11 @@ build/
 *.db
 *.sqlite
 *.sqlite3
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+backend/database/context_store.json
 
 # Logs
 logs/
