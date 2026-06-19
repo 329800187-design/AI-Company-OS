@@ -14,6 +14,7 @@ from .openclaw_adapter import OpenClawAdapter
 from .data_adapter import DataAdapter
 from .api_model_adapter import ApiModelAdapter
 from .mimo_adapter import MiMoAdapter
+from .local_module_adapter import LocalModuleAdapter, create_local_adapter
 
 __all__ = [
     "BaseAdapter",
@@ -23,5 +24,7 @@ __all__ = [
     "OpenClawAdapter",
     "DataAdapter",
     "ApiModelAdapter",
-    "MiMoAdapter"
+    "MiMoAdapter",
+    "LocalModuleAdapter",
+    "create_local_adapter",
 ]
