@@ -65,6 +65,55 @@ MODULE_DEFINITIONS = {
 
 MODULE_ORDER = ["strategy", "market", "marketing", "landing", "actions"]
 
+# ── 内置模板 ────────────────────────────────────────────
+MISSION_TEMPLATES = [
+    {
+        "id": "ecommerce_product_research",
+        "name": "电商选品调研",
+        "description": "从市场趋势、竞品分析到营销打法，一站式选品决策包。",
+        "default_goal": "调研一个适合新手入场的电商品类，分析竞品和利润空间，给出上架方案。",
+        "default_modules": ["strategy", "market", "marketing", "actions"],
+        "suggested_inputs": ["品类名称", "目标平台（淘宝/拼多多/抖音）", "预算范围"],
+        "expected_outputs": ["品类机会分析", "竞品对比表", "选品建议", "上架执行清单"],
+    },
+    {
+        "id": "xianyu_listing_pack",
+        "name": "闲鱼上架物料包",
+        "description": "针对闲鱼平台，生成选品策略、文案素材和执行清单。",
+        "default_goal": "帮我在闲鱼上架一个二手数码产品，生成完整的标题、描述、定价策略和上架清单。",
+        "default_modules": ["strategy", "marketing", "actions"],
+        "suggested_inputs": ["产品类型", "成色", "进货价"],
+        "expected_outputs": ["定价策略", "标题文案", "描述模板", "上架步骤"],
+    },
+    {
+        "id": "saas_feature_planning",
+        "name": "SaaS 功能规划",
+        "description": "从市场调研到落地页，规划一个新 SaaS 功能的 MVP。",
+        "default_goal": "规划一个面向中小团队的 AI 写作助手 SaaS，找到差异化切入点并生成落地页草稿。",
+        "default_modules": ["strategy", "market", "marketing", "landing", "actions"],
+        "suggested_inputs": ["目标用户画像", "竞品链接", "预算"],
+        "expected_outputs": ["差异化定位", "竞品分析", "MVP 功能列表", "落地页草稿", "开发排期"],
+    },
+    {
+        "id": "landing_page_offer",
+        "name": "落地页卖点方案",
+        "description": "围绕一个产品卖点，生成市场验证、营销文案和落地页。",
+        "default_goal": "为一款 AI 效率工具设计一个高转化落地页，包含卖点提炼、信任证明和 CTA。",
+        "default_modules": ["strategy", "marketing", "landing"],
+        "suggested_inputs": ["产品名称", "核心卖点", "目标用户"],
+        "expected_outputs": ["卖点提炼", "文案方案", "落地页结构", "CTA 建议"],
+    },
+    {
+        "id": "weekly_business_review",
+        "name": "周度经营复盘",
+        "description": "复盘本周业务数据，生成下周执行计划。",
+        "default_goal": "复盘本周业务运营情况，分析关键指标变化，给出下周优先执行的 3 件事。",
+        "default_modules": ["strategy", "market", "actions"],
+        "suggested_inputs": ["本周数据", "关键指标", "遇到的问题"],
+        "expected_outputs": ["复盘摘要", "问题诊断", "下周执行清单"],
+    },
+]
+
 
 def _init_boss_tables():
     """建表（幂等）— 含进度字段"""
@@ -173,6 +222,68 @@ class BossCommandCenterService:
             events.append(evt)
         return events
 
+    # ── 模板 ──────────────────────────────────────────────
+
+    def get_templates(self) -> List[Dict[str, Any]]:
+        """返回所有内置模板"""
+        return MISSION_TEMPLATES
+
+    def get_template(self, template_id: str) -> Optional[Dict[str, Any]]:
+        """获取单个模板"""
+        for tpl in MISSION_TEMPLATES:
+            if tpl["id"] == template_id:
+                return tpl
+        return None
+
+    def create_mission_from_template(
+        self, template_id: str, goal: str = None,
+        enabled_modules: List[str] = None, inputs: Dict[str, str] = None,
+        auto_run: bool = False
+    ) -> Dict[str, Any]:
+        """根据模板创建 Mission"""
+        template = self.get_template(template_id)
+        if not template:
+            return None
+
+        # 使用模板默认值，允许 overrides
+        actual_goal = goal or template["default_goal"]
+        actual_modules = enabled_modules or template["default_modules"]
+
+        # 将 inputs 追加到 goal 中（如果有）
+        if inputs:
+            inputs_text = "；".join(f"{k}: {v}" for k, v in inputs.items() if v)
+            if inputs_text:
+                actual_goal = f"{actual_goal}\n\n补充信息：{inputs_text}"
+
+        return self.create_mission(actual_goal, auto_run=auto_run, enabled_modules=actual_modules)
+
+    # ── 指标 ──────────────────────────────────────────────
+
+    def _compute_metrics(self, mission: Dict[str, Any]) -> Dict[str, Any]:
+        """计算 Mission 复盘指标"""
+        modules = mission.get("modules", [])
+        total = len(modules)
+        succeeded = sum(1 for m in modules if m.get("status") == "done")
+        failed = sum(1 for m in modules if m.get("status") == "failed")
+        skipped = sum(1 for m in modules if m.get("status") == "skipped")
+        active = total - skipped
+        completion_rate = succeeded / active if active > 0 else 0.0
+
+        duration_ms = sum(m.get("duration_ms", 0) for m in modules if m.get("duration_ms"))
+        warning_count = sum(len(m.get("warnings", [])) for m in modules)
+        next_action_count = sum(len(m.get("next_actions", [])) for m in modules)
+
+        return {
+            "total_modules": total,
+            "succeeded_modules": succeeded,
+            "failed_modules": failed,
+            "skipped_modules": skipped,
+            "duration_ms": duration_ms,
+            "warning_count": warning_count,
+            "next_action_count": next_action_count,
+            "completion_rate": round(completion_rate, 2),
+        }
+
     # ── Mission CRUD ──────────────────────────────────────
 
     def create_mission(self, goal: str, auto_run: bool = False, enabled_modules: List[str] = None) -> Dict[str, Any]:
@@ -264,6 +375,9 @@ class BossCommandCenterService:
                     except (json.JSONDecodeError, TypeError):
                         mod[field] = []
                 mission["modules"].append(mod)
+
+            # 动态计算 metrics
+            mission["metrics"] = self._compute_metrics(mission)
 
             return mission
 

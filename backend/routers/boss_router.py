@@ -1,5 +1,5 @@
 """Boss Router — 老板运营指挥台 API"""
-from typing import Optional, List
+from typing import Optional, List, Dict
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -14,6 +14,43 @@ class MissionCreateRequest(BaseModel):
     goal: str = Field(..., min_length=2, max_length=5000, description="业务目标")
     auto_run: bool = Field(default=False, description="创建后立即执行")
     enabled_modules: Optional[List[str]] = Field(default=None, description="启用的模块 ID 列表，None 表示全部")
+
+
+class MissionFromTemplateRequest(BaseModel):
+    """从模板创建 Mission 请求"""
+    template_id: str = Field(..., description="模板 ID")
+    goal: Optional[str] = Field(default=None, description="覆盖模板默认目标")
+    auto_run: bool = Field(default=False, description="创建后立即执行")
+    enabled_modules: Optional[List[str]] = Field(default=None, description="覆盖模板默认模块")
+    inputs: Optional[Dict[str, str]] = Field(default=None, description="补充输入信息")
+
+
+@router.get("/templates", summary="模板列表")
+def list_templates():
+    """返回所有内置任务模板"""
+    service = get_boss_command_center()
+    templates = service.get_templates()
+    return {"templates": templates, "total": len(templates)}
+
+
+@router.post("/missions/from-template", summary="从模板创建 Mission")
+def create_mission_from_template(request: MissionFromTemplateRequest):
+    """根据模板创建 Mission"""
+    is_allowed, rate_msg = rate_limiter.check("boss", max_requests=10, window_seconds=60)
+    if not is_allowed:
+        raise HTTPException(status_code=429, detail=rate_msg)
+
+    service = get_boss_command_center()
+    mission = service.create_mission_from_template(
+        template_id=request.template_id,
+        goal=request.goal,
+        enabled_modules=request.enabled_modules,
+        inputs=request.inputs,
+        auto_run=request.auto_run,
+    )
+    if not mission:
+        raise HTTPException(status_code=404, detail=f"模板 {request.template_id} 不存在")
+    return mission
 
 
 @router.post("/missions", summary="创建 Mission")
