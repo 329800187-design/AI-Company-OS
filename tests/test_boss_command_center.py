@@ -260,6 +260,14 @@ class TestBossCommandCenterService:
 class TestBossAPI:
     """Boss API 接口测试"""
 
+    @pytest.fixture(autouse=True)
+    def _bypass_rate_limit(self):
+        """绕过 API 速率限制，避免测试间互相干扰"""
+        from unittest.mock import patch
+        with patch("backend.routers.boss_router.rate_limiter") as mock_rl:
+            mock_rl.check.return_value = (True, "")
+            yield
+
     @pytest.fixture
     def client(self):
         from fastapi.testclient import TestClient
@@ -390,3 +398,156 @@ class TestBossAPI:
 
         resp = client.get(f"/boss/missions/{mission_id}/export?format=xml")
         assert resp.status_code == 422  # validation error
+
+
+# ── 事件日志测试 ─────────────────────────────────────────
+
+class TestMissionEvents:
+    """Mission 事件日志测试"""
+
+    @pytest.fixture
+    def service(self):
+        from backend.services.boss_command_center import BossCommandCenterService
+        return BossCommandCenterService()
+
+    @pytest.fixture(autouse=True)
+    def _bypass_rate_limit(self):
+        """绕过 API 速率限制"""
+        from unittest.mock import patch
+        with patch("backend.routers.boss_router.rate_limiter") as mock_rl:
+            mock_rl.check.return_value = (True, "")
+            yield
+
+    @pytest.fixture
+    def client(self):
+        from fastapi.testclient import TestClient
+        from backend.app import app
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_create_mission_logs_created(self, service):
+        """创建 mission 后应存在 mission_created event"""
+        mission = service.create_mission("事件测试")
+        events = service.get_events(mission["mission_id"])
+        types = [e["type"] for e in events]
+        assert "mission_created" in types
+
+    def test_create_mission_logs_skipped_modules(self, service):
+        """disabled module 应产生 module_skipped event"""
+        mission = service.create_mission("skipped 事件", enabled_modules=["strategy"])
+        events = service.get_events(mission["mission_id"])
+        skipped = [e for e in events if e["type"] == "module_skipped"]
+        assert len(skipped) >= 4  # market, marketing, landing, actions 被跳过
+        skipped_ids = [e["module_id"] for e in skipped]
+        assert "market" in skipped_ids
+
+    def test_run_mission_logs_events(self, service):
+        """run mission 后应包含 mission_started/mission_succeeded"""
+        mission = service.create_mission("运行事件测试", enabled_modules=["strategy"])
+        mission_id = mission["mission_id"]
+
+        mock_result = {
+            "ok": True, "final_answer": "结果", "confidence": 0.7,
+            "warnings": [], "used_tools": [], "mode": "local", "error": "",
+        }
+        with patch.object(service, '_get_runtime') as mock_get_runtime:
+            mock_runtime = MagicMock()
+            mock_runtime.execute.return_value = mock_result
+            mock_get_runtime.return_value = mock_runtime
+            service.run_mission(mission_id)
+
+        events = service.get_events(mission_id)
+        types = [e["type"] for e in events]
+        assert "mission_started" in types
+        assert "mission_succeeded" in types
+        assert "module_started" in types
+        assert "module_succeeded" in types
+
+    def test_run_module_logs_success(self, service):
+        """run module 成功后应产生 module_started + module_succeeded"""
+        mission = service.create_mission("模块事件测试")
+        mission_id = mission["mission_id"]
+
+        mock_result = {
+            "ok": True, "final_answer": "战略结果", "confidence": 0.8,
+            "warnings": [], "used_tools": ["mimo"], "mode": "local", "error": "",
+        }
+        with patch.object(service, '_get_runtime') as mock_get_runtime:
+            mock_runtime = MagicMock()
+            mock_runtime.execute.return_value = mock_result
+            mock_get_runtime.return_value = mock_runtime
+            service.run_module(mission_id, "strategy")
+
+        events = service.get_events(mission_id)
+        module_events = [e for e in events if e["module_id"] == "strategy"]
+        types = [e["type"] for e in module_events]
+        assert "module_started" in types
+        assert "module_succeeded" in types
+
+    def test_run_module_failure_logs_failed(self, service):
+        """module failed 时应产生 module_failed event"""
+        mission = service.create_mission("失败事件测试")
+        mission_id = mission["mission_id"]
+
+        mock_result = {
+            "ok": False, "final_answer": "", "confidence": 0.0,
+            "warnings": [], "used_tools": [], "mode": "error",
+            "error": "Adapter 不可用",
+        }
+        with patch.object(service, '_get_runtime') as mock_get_runtime:
+            mock_runtime = MagicMock()
+            mock_runtime.execute.return_value = mock_result
+            mock_get_runtime.return_value = mock_runtime
+            service.run_module(mission_id, "market")
+
+        events = service.get_events(mission_id)
+        failed_events = [e for e in events if e["type"] == "module_failed" and e["module_id"] == "market"]
+        assert len(failed_events) == 1
+        assert "Adapter 不可用" in failed_events[0]["message"]
+
+    def test_export_logs_event(self, service):
+        """export 后应产生 mission_exported event"""
+        mission = service.create_mission("导出事件测试")
+        mission_id = mission["mission_id"]
+
+        service.export_mission(mission_id, fmt="json")
+        events = service.get_events(mission_id)
+        exported = [e for e in events if e["type"] == "mission_exported"]
+        assert len(exported) == 1
+        assert exported[0]["payload"]["format"] == "json"
+
+    def test_events_chronological_order(self, service):
+        """事件应按时间升序返回"""
+        mission = service.create_mission("顺序测试")
+        mission_id = mission["mission_id"]
+
+        mock_result = {
+            "ok": True, "final_answer": "结果", "confidence": 0.5,
+            "warnings": [], "used_tools": [], "mode": "local", "error": "",
+        }
+        with patch.object(service, '_get_runtime') as mock_get_runtime:
+            mock_runtime = MagicMock()
+            mock_runtime.execute.return_value = mock_result
+            mock_get_runtime.return_value = mock_runtime
+            service.run_mission(mission_id)
+
+        events = service.get_events(mission_id)
+        ids = [e["id"] for e in events]
+        assert ids == sorted(ids), "事件 ID 应按升序排列"
+
+    def test_events_api(self, client):
+        """GET /boss/missions/{id}/events 返回事件列表"""
+        create_resp = client.post("/boss/missions", json={"goal": "事件 API 测试"})
+        mission_id = create_resp.json()["mission_id"]
+
+        resp = client.get(f"/boss/missions/{mission_id}/events")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["mission_id"] == mission_id
+        assert isinstance(data["events"], list)
+        assert data["total"] >= 1
+        assert any(e["type"] == "mission_created" for e in data["events"])
+
+    def test_events_api_nonexistent(self, client):
+        """GET /boss/missions/{id}/events 不存在返回 404"""
+        resp = client.get("/boss/missions/mission_nonexistent/events")
+        assert resp.status_code == 404
