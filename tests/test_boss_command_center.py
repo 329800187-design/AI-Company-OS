@@ -551,3 +551,184 @@ class TestMissionEvents:
         """GET /boss/missions/{id}/events 不存在返回 404"""
         resp = client.get("/boss/missions/mission_nonexistent/events")
         assert resp.status_code == 404
+
+
+# ── 模板测试 ─────────────────────────────────────────────
+
+class TestTemplates:
+    """模板 API 测试"""
+
+    @pytest.fixture(autouse=True)
+    def _bypass_rate_limit(self):
+        from unittest.mock import patch
+        with patch("backend.routers.boss_router.rate_limiter") as mock_rl:
+            mock_rl.check.return_value = (True, "")
+            yield
+
+    @pytest.fixture
+    def client(self):
+        from fastapi.testclient import TestClient
+        from backend.app import app
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_list_templates(self, client):
+        """GET /boss/templates 返回模板列表"""
+        resp = client.get("/boss/templates")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 5
+        ids = [t["id"] for t in data["templates"]]
+        assert "ecommerce_product_research" in ids
+        assert "xianyu_listing_pack" in ids
+        assert "saas_feature_planning" in ids
+        assert "landing_page_offer" in ids
+        assert "weekly_business_review" in ids
+
+    def test_from_template_default(self, client):
+        """POST /boss/missions/from-template 创建 mission"""
+        resp = client.post("/boss/missions/from-template", json={
+            "template_id": "xianyu_listing_pack",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["mission_id"].startswith("mission_")
+        # 使用模板默认模块（strategy, marketing, actions）
+        module_ids = [m["module_id"] for m in data["modules"]]
+        assert "strategy" in module_ids
+        assert "marketing" in module_ids
+        assert "actions" in module_ids
+        # market 和 landing 应该被 skipped
+        market = next(m for m in data["modules"] if m["module_id"] == "market")
+        assert market["status"] == "skipped"
+
+    def test_from_template_override_goal(self, client):
+        """from-template overrides goal 生效"""
+        resp = client.post("/boss/missions/from-template", json={
+            "template_id": "ecommerce_product_research",
+            "goal": "自定义目标：调研蓝牙耳机市场",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "蓝牙耳机" in data["goal"]
+
+    def test_from_template_override_modules(self, client):
+        """from-template overrides enabled_modules 生效"""
+        resp = client.post("/boss/missions/from-template", json={
+            "template_id": "weekly_business_review",
+            "enabled_modules": ["strategy", "actions"],
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        active = [m for m in data["modules"] if m["status"] != "skipped"]
+        assert len(active) == 2
+
+    def test_from_template_with_inputs(self, client):
+        """from-template with inputs 追加到 goal"""
+        resp = client.post("/boss/missions/from-template", json={
+            "template_id": "landing_page_offer",
+            "inputs": {"产品名称": "AI Writer", "目标用户": "内容创作者"},
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "AI Writer" in data["goal"]
+
+    def test_from_template_invalid_id(self, client):
+        """from-template 无效 template_id 返回 404"""
+        resp = client.post("/boss/missions/from-template", json={
+            "template_id": "nonexistent_template",
+        })
+        assert resp.status_code == 404
+
+
+# ── Metrics 测试 ─────────────────────────────────────────
+
+class TestMetrics:
+    """Mission Metrics 测试"""
+
+    @pytest.fixture
+    def service(self):
+        from backend.services.boss_command_center import BossCommandCenterService
+        return BossCommandCenterService()
+
+    @pytest.fixture(autouse=True)
+    def _bypass_rate_limit(self):
+        from unittest.mock import patch
+        with patch("backend.routers.boss_router.rate_limiter") as mock_rl:
+            mock_rl.check.return_value = (True, "")
+            yield
+
+    @pytest.fixture
+    def client(self):
+        from fastapi.testclient import TestClient
+        from backend.app import app
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_metrics_on_pending_mission(self, service):
+        """pending mission 的 metrics 全为 0"""
+        mission = service.create_mission("metrics 测试")
+        metrics = mission["metrics"]
+        assert metrics["total_modules"] == 5
+        assert metrics["succeeded_modules"] == 0
+        assert metrics["failed_modules"] == 0
+        assert metrics["skipped_modules"] == 0
+        assert metrics["completion_rate"] == 0.0
+        assert metrics["duration_ms"] == 0
+
+    def test_metrics_after_partial_run(self, service):
+        """部分执行后 metrics 正确"""
+        mission = service.create_mission("partial metrics", enabled_modules=["strategy", "market", "actions"])
+        mission_id = mission["mission_id"]
+
+        mock_result = {
+            "ok": True, "final_answer": "结果", "confidence": 0.7,
+            "warnings": ["w1"], "used_tools": [], "mode": "local", "error": "",
+            "next_actions": ["a1", "a2"],
+        }
+        with patch.object(service, '_get_runtime') as mock_get_runtime:
+            mock_runtime = MagicMock()
+            mock_runtime.execute.return_value = mock_result
+            mock_get_runtime.return_value = mock_runtime
+            service.run_module(mission_id, "strategy")
+            service.run_module(mission_id, "market")
+
+        mission = service.get_mission(mission_id)
+        metrics = mission["metrics"]
+        assert metrics["total_modules"] == 5
+        assert metrics["succeeded_modules"] == 2
+        assert metrics["failed_modules"] == 0
+        assert metrics["skipped_modules"] == 2  # marketing, landing
+        assert abs(metrics["completion_rate"] - 2 / 3) < 0.01  # 2 succeeded out of 3 active
+        assert metrics["warning_count"] >= 2
+        assert metrics["next_action_count"] >= 4
+
+    def test_metrics_includes_failed(self, service):
+        """failed module 计入 metrics"""
+        mission = service.create_mission("failed metrics", enabled_modules=["strategy"])
+        mission_id = mission["mission_id"]
+
+        mock_result = {
+            "ok": False, "final_answer": "", "confidence": 0.0,
+            "warnings": [], "used_tools": [], "mode": "error", "error": "boom",
+        }
+        with patch.object(service, '_get_runtime') as mock_get_runtime:
+            mock_runtime = MagicMock()
+            mock_runtime.execute.return_value = mock_result
+            mock_get_runtime.return_value = mock_runtime
+            service.run_module(mission_id, "strategy")
+
+        mission = service.get_mission(mission_id)
+        metrics = mission["metrics"]
+        assert metrics["failed_modules"] == 1
+        assert metrics["completion_rate"] == 0.0
+
+    def test_metrics_in_api_response(self, client):
+        """GET /boss/missions/{id} 返回 metrics"""
+        create_resp = client.post("/boss/missions", json={"goal": "API metrics 测试"})
+        mission_id = create_resp.json()["mission_id"]
+
+        resp = client.get(f"/boss/missions/{mission_id}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "metrics" in data
+        assert "completion_rate" in data["metrics"]
+        assert data["metrics"]["total_modules"] == 5
