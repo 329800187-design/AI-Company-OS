@@ -51,6 +51,7 @@ interface Mission {
   created_at?: string
   updated_at?: string
   modules: ModuleResult[]
+  metrics?: MissionMetrics
 }
 
 interface MissionSummary {
@@ -68,6 +69,27 @@ interface MissionEvent {
   message: string
   payload: Record<string, unknown>
   created_at: string
+}
+
+interface MissionTemplate {
+  id: string
+  name: string
+  description: string
+  default_goal: string
+  default_modules: string[]
+  suggested_inputs: string[]
+  expected_outputs: string[]
+}
+
+interface MissionMetrics {
+  total_modules: number
+  succeeded_modules: number
+  failed_modules: number
+  skipped_modules: number
+  duration_ms: number
+  warning_count: number
+  next_action_count: number
+  completion_rate: number
 }
 
 const MODULE_IDS = ["strategy", "market", "marketing", "landing", "actions"]
@@ -104,6 +126,9 @@ export default function BossPage() {
   const [enabledModules, setEnabledModules] = useState<string[]>([...MODULE_IDS])
   const [events, setEvents] = useState<MissionEvent[]>([])
   const [showEvents, setShowEvents] = useState(false)
+  const [templates, setTemplates] = useState<MissionTemplate[]>([])
+  const [showTemplates, setShowTemplates] = useState(false)
+  const [selectedTemplate, setSelectedTemplate] = useState<MissionTemplate | null>(null)
 
   const modules = currentMission?.modules || []
   const activeResult = modules.find((m) => m.module_id === activeModule) || null
@@ -123,7 +148,17 @@ export default function BossPage() {
 
   useEffect(() => {
     loadRecentMissions()
+    loadTemplates()
   }, [])
+
+  const loadTemplates = async () => {
+    try {
+      const data = await api.getTemplates()
+      setTemplates(data.templates || [])
+    } catch {
+      // 静默
+    }
+  }
 
   // 加载事件日志
   const loadEvents = async (missionId: string) => {
@@ -297,6 +332,34 @@ export default function BossPage() {
               导出
             </Button>
           )}
+
+          {/* Metrics 小面板 */}
+          {currentMission?.metrics && (currentMission.status === "done" || currentMission.status === "failed") && (
+            <div className="flex items-center gap-2">
+              <Badge variant="outline">
+                完成率 {Math.round(currentMission.metrics.completion_rate * 100)}%
+              </Badge>
+              <Badge variant="outline">
+                {currentMission.metrics.succeeded_modules}/{currentMission.metrics.total_modules} 成功
+              </Badge>
+              {currentMission.metrics.failed_modules > 0 && (
+                <Badge variant="destructive">{currentMission.metrics.failed_modules} 失败</Badge>
+              )}
+              {currentMission.metrics.skipped_modules > 0 && (
+                <Badge variant="secondary">{currentMission.metrics.skipped_modules} 跳过</Badge>
+              )}
+              {currentMission.metrics.warning_count > 0 && (
+                <Badge variant="warning">{currentMission.metrics.warning_count} 警告</Badge>
+              )}
+              {currentMission.metrics.duration_ms > 0 && (
+                <Badge variant="outline">
+                  {currentMission.metrics.duration_ms < 1000
+                    ? `${currentMission.metrics.duration_ms}ms`
+                    : `${(currentMission.metrics.duration_ms / 1000).toFixed(1)}s`}
+                </Badge>
+              )}
+            </div>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -362,24 +425,69 @@ export default function BossPage() {
               ))}
             </div>
 
-            {/* 模块选择 */}
+            {/* 模块选择 + 模板入口 */}
             {!currentMission && (
-              <div className="flex flex-wrap items-center gap-3 pt-2">
-                <span className="text-xs font-medium text-muted-foreground">执行模块：</span>
-                {MODULE_IDS.map((id) => (
-                  <label
-                    key={id}
-                    className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer"
+              <div className="space-y-3 pt-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="text-xs font-medium text-muted-foreground">执行模块：</span>
+                  {MODULE_IDS.map((id) => (
+                    <label
+                      key={id}
+                      className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={enabledModules.includes(id)}
+                        onChange={() => toggleModule(id)}
+                        className="h-3.5 w-3.5 rounded border-border accent-primary"
+                      />
+                      {id === "strategy" ? "战略" : id === "market" ? "市场" : id === "marketing" ? "营销" : id === "landing" ? "落地页" : "清单"}
+                    </label>
+                  ))}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  type="button"
+                  onClick={() => setShowTemplates(!showTemplates)}
+                  className="gap-1"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  {selectedTemplate ? `已选模板：${selectedTemplate.name}` : "从模板创建"}
+                </Button>
+              </div>
+            )}
+
+            {/* 模板选择面板 */}
+            {showTemplates && !currentMission && (
+              <div className="grid gap-3 pt-2 sm:grid-cols-2 lg:grid-cols-3">
+                {templates.map((tpl) => (
+                  <button
+                    key={tpl.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedTemplate(tpl)
+                      setGoal(tpl.default_goal)
+                      setEnabledModules(tpl.default_modules)
+                      setShowTemplates(false)
+                    }}
+                    className={cn(
+                      "rounded-lg border p-3 text-left transition-all",
+                      selectedTemplate?.id === tpl.id
+                        ? "border-primary/50 bg-primary/10"
+                        : "border-border hover:border-primary/30 hover:bg-accent/50"
+                    )}
                   >
-                    <input
-                      type="checkbox"
-                      checked={enabledModules.includes(id)}
-                      onChange={() => toggleModule(id)}
-                      className="h-3.5 w-3.5 rounded border-border accent-primary"
-                    />
-                    {moduleIcons[id] ? null : null}
-                    {id === "strategy" ? "战略" : id === "market" ? "市场" : id === "marketing" ? "营销" : id === "landing" ? "落地页" : "清单"}
-                  </label>
+                    <h4 className="text-sm font-medium">{tpl.name}</h4>
+                    <p className="mt-1 text-xs text-muted-foreground">{tpl.description}</p>
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {tpl.default_modules.map((m) => (
+                        <span key={m} className="rounded bg-background/60 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                          {m}
+                        </span>
+                      ))}
+                    </div>
+                  </button>
                 ))}
               </div>
             )}

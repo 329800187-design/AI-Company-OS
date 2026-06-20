@@ -169,6 +169,66 @@ class ApiClient {
   }
 
   // Boss Command Center APIs
+  async getTemplates() {
+    return this.request<{
+      templates: Array<{
+        id: string
+        name: string
+        description: string
+        default_goal: string
+        default_modules: string[]
+        suggested_inputs: string[]
+        expected_outputs: string[]
+      }>
+      total: number
+    }>("/boss/templates")
+  }
+
+  async createMissionFromTemplate(templateId: string, overrides?: {
+    goal?: string
+    enabledModules?: string[]
+    inputs?: Record<string, string>
+    autoRun?: boolean
+  }) {
+    return this.request<{
+      mission_id: string
+      goal: string
+      status: string
+      created_at: string
+      updated_at: string
+      metrics: {
+        total_modules: number
+        succeeded_modules: number
+        failed_modules: number
+        skipped_modules: number
+        duration_ms: number
+        warning_count: number
+        next_action_count: number
+        completion_rate: number
+      }
+      modules: Array<{
+        module_id: string
+        title: string
+        status: string
+        result: string
+        confidence: number
+        warnings: string[]
+        error: string
+        used_tools: string[]
+        mode?: string
+      }>
+    }>("/boss/missions/from-template", {
+      method: "POST",
+      body: {
+        template_id: templateId,
+        goal: overrides?.goal,
+        enabled_modules: overrides?.enabledModules,
+        inputs: overrides?.inputs,
+        auto_run: overrides?.autoRun,
+      },
+    })
+  }
+
   async createMission(goal: string, autoRun = false, enabledModules?: string[]) {
     return this.request<{
       mission_id: string
