@@ -167,6 +167,133 @@ class ApiClient {
       body: { message, context: context || {} },
     })
   }
+
+  // Boss Command Center APIs
+  async createMission(goal: string, autoRun = false, enabledModules?: string[]) {
+    return this.request<{
+      mission_id: string
+      goal: string
+      status: string
+      created_at: string
+      updated_at: string
+      modules: Array<{
+        module_id: string
+        title: string
+        status: string
+        prompt?: string
+        result: string
+        confidence: number
+        warnings: string[]
+        error: string
+        used_tools: string[]
+        mode?: string
+        started_at?: string
+        finished_at?: string
+        duration_ms?: number
+        next_actions?: string[]
+      }>
+    }>("/boss/missions", {
+      method: "POST",
+      body: { goal, auto_run: autoRun, enabled_modules: enabledModules },
+    })
+  }
+
+  async listMissions(limit = 20, offset = 0) {
+    return this.request<{
+      missions: Array<{
+        mission_id: string
+        goal: string
+        status: string
+        created_at: string
+        updated_at: string
+      }>
+      total: number
+    }>(`/boss/missions?limit=${limit}&offset=${offset}`)
+  }
+
+  async getMission(missionId: string) {
+    return this.request<{
+      mission_id: string
+      goal: string
+      status: string
+      created_at: string
+      updated_at: string
+      modules: Array<{
+        module_id: string
+        title: string
+        status: string
+        prompt?: string
+        result: string
+        confidence: number
+        warnings: string[]
+        error: string
+        used_tools: string[]
+        used_agents?: string[]
+        mode?: string
+      }>
+    }>(`/boss/missions/${missionId}`)
+  }
+
+  async runMission(missionId: string) {
+    return this.request<{
+      mission_id: string
+      goal: string
+      status: string
+      created_at: string
+      updated_at: string
+      modules: Array<{
+        module_id: string
+        title: string
+        status: string
+        result: string
+        confidence: number
+        warnings: string[]
+        error: string
+        used_tools: string[]
+        mode?: string
+      }>
+    }>(`/boss/missions/${missionId}/run`, { method: "POST" })
+  }
+
+  async runMissionModule(missionId: string, moduleId: string) {
+    return this.request<{
+      mission_id: string
+      goal: string
+      status: string
+      created_at: string
+      updated_at: string
+      modules: Array<{
+        module_id: string
+        title: string
+        status: string
+        result: string
+        confidence: number
+        warnings: string[]
+        error: string
+        used_tools: string[]
+        mode?: string
+      }>
+    }>(`/boss/missions/${missionId}/modules/${moduleId}/run`, { method: "POST" })
+  }
+
+  async exportMission(missionId: string, format: "json" | "markdown" = "json") {
+    const response = await fetch(`${API_BASE}/boss/missions/${missionId}/export?format=${format}`)
+    if (!response.ok) {
+      throw new Error(`Export failed: HTTP ${response.status}`)
+    }
+    const blob = await response.blob()
+    const ext = format === "markdown" ? "md" : "json"
+    const filename = `boss-mission-${missionId}.${ext}`
+    // 触发浏览器下载
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
 }
 
 export const api = new ApiClient()
