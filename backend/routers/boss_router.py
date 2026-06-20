@@ -66,6 +66,18 @@ def get_mission(mission_id: str):
     return mission
 
 
+@router.get("/missions/{mission_id}/events", summary="Mission 事件日志")
+def get_mission_events(mission_id: str):
+    """返回 Mission 的事件列表（时间升序）"""
+    service = get_boss_command_center()
+    mission = service.get_mission(mission_id)
+    if not mission:
+        raise HTTPException(status_code=404, detail=f"Mission {mission_id} 不存在")
+
+    events = service.get_events(mission_id)
+    return {"mission_id": mission_id, "events": events, "total": len(events)}
+
+
 @router.get("/missions/{mission_id}/export", summary="导出 Mission 报告")
 def export_mission(mission_id: str, format: str = Query(default="json", pattern="^(json|markdown)$")):
     """导出 Mission 为 JSON 或 Markdown"""

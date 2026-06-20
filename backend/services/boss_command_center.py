@@ -7,6 +7,7 @@ Boss Command Center Service — 老板运营指挥台业务引擎
 3. 持久化 Mission 结果（含进度字段 started_at/finished_at/duration_ms）
 4. 查询 Mission 历史
 5. 导出 Mission 报告（JSON / Markdown）
+6. 事件日志（mission_created/started/succeeded/failed, module_*, exported）
 """
 import uuid
 import json
@@ -107,6 +108,18 @@ def _init_boss_tables():
                 db.execute(f"ALTER TABLE boss_mission_modules ADD COLUMN {col}")
             except Exception:
                 pass
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS boss_mission_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mission_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                module_id TEXT,
+                message TEXT NOT NULL,
+                payload TEXT DEFAULT '{}',
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                FOREIGN KEY (mission_id) REFERENCES boss_missions(mission_id)
+            )
+        """)
         db.commit()
 
 
@@ -129,6 +142,36 @@ class BossCommandCenterService:
             from backend.services.local_agent_runtime import get_local_agent_runtime
             self._runtime = get_local_agent_runtime()
         return self._runtime
+
+    # ── 事件日志 ──────────────────────────────────────────
+
+    def _log_event(self, mission_id: str, event_type: str, message: str,
+                   module_id: str = None, payload: dict = None):
+        """写入事件日志"""
+        now = datetime.now().isoformat()
+        with get_db() as db:
+            db.execute(
+                "INSERT INTO boss_mission_events (mission_id, type, module_id, message, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (mission_id, event_type, module_id, message, json.dumps(payload or {}, ensure_ascii=False), now)
+            )
+            db.commit()
+
+    def get_events(self, mission_id: str) -> List[Dict[str, Any]]:
+        """获取 Mission 的事件列表（时间升序）"""
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT * FROM boss_mission_events WHERE mission_id = ? ORDER BY id ASC",
+                (mission_id,)
+            ).fetchall()
+        events = []
+        for row in rows:
+            evt = dict(row)
+            try:
+                evt["payload"] = json.loads(evt.get("payload", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                evt["payload"] = {}
+            events.append(evt)
+        return events
 
     # ── Mission CRUD ──────────────────────────────────────
 
@@ -175,6 +218,12 @@ class BossCommandCenterService:
             db.commit()
 
         logger.info(f"BossCommandCenter: Created mission {mission_id} for goal: {goal[:60]}")
+        self._log_event(mission_id, "mission_created", f"创建任务: {goal[:60]}",
+                        payload={"enabled_modules": active_modules})
+        for module_id in MODULE_ORDER:
+            if module_id not in active_modules:
+                self._log_event(mission_id, "module_skipped", f"模块 {MODULE_DEFINITIONS[module_id]['title']} 已跳过（未启用）",
+                                module_id=module_id)
         mission = self.get_mission(mission_id)
 
         if auto_run:
@@ -227,6 +276,7 @@ class BossCommandCenterService:
             return None
 
         self._update_mission_status(mission_id, "running")
+        self._log_event(mission_id, "mission_started", "开始执行任务")
 
         for module in mission["modules"]:
             # 跳过已完成或已跳过的模块
@@ -242,8 +292,10 @@ class BossCommandCenterService:
 
         if any_failed:
             self._update_mission_status(mission_id, "failed")
+            self._log_event(mission_id, "mission_failed", "任务执行失败（部分模块失败）")
         else:
             self._update_mission_status(mission_id, "done")
+            self._log_event(mission_id, "mission_succeeded", "任务执行完成")
 
         return self.get_mission(mission_id)
 
@@ -266,6 +318,8 @@ class BossCommandCenterService:
                 (now, now, mission_id, module_id)
             )
             db.commit()
+        self._log_event(mission_id, "module_started", f"开始执行模块 {MODULE_DEFINITIONS.get(module_id, {}).get('title', module_id)}",
+                        module_id=module_id)
 
         prompt = module["prompt"]
         goal = ""
@@ -314,6 +368,17 @@ class BossCommandCenterService:
                 used_tools, mode, next_actions, duration_ms
             )
 
+            if ok:
+                self._log_event(mission_id, "module_succeeded",
+                                f"模块 {MODULE_DEFINITIONS.get(module_id, {}).get('title', module_id)} 执行完成",
+                                module_id=module_id,
+                                payload={"confidence": confidence, "duration_ms": duration_ms})
+            else:
+                self._log_event(mission_id, "module_failed",
+                                f"模块 {MODULE_DEFINITIONS.get(module_id, {}).get('title', module_id)} 执行失败: {error[:100]}",
+                                module_id=module_id,
+                                payload={"error": error, "duration_ms": duration_ms})
+
             return self.get_mission(mission_id)
 
         except Exception as e:
@@ -323,6 +388,10 @@ class BossCommandCenterService:
                 mission_id, module_id, "failed",
                 "", 0.0, [], str(e), [], "error", [], duration_ms
             )
+            self._log_event(mission_id, "module_failed",
+                            f"模块 {MODULE_DEFINITIONS.get(module_id, {}).get('title', module_id)} 异常: {str(e)[:100]}",
+                            module_id=module_id,
+                            payload={"error": str(e), "duration_ms": duration_ms})
             return self.get_mission(mission_id)
 
     # ── 导出 ──────────────────────────────────────────────
@@ -343,6 +412,7 @@ class BossCommandCenterService:
 
         if fmt == "markdown":
             content = self._export_markdown(mission)
+            self._log_event(mission_id, "mission_exported", "导出 Markdown 报告", payload={"format": "markdown"})
             return {
                 "content": content,
                 "filename": f"boss-mission-{mission_id}.md",
@@ -350,6 +420,7 @@ class BossCommandCenterService:
             }
         else:
             content = json.dumps(mission, ensure_ascii=False, indent=2)
+            self._log_event(mission_id, "mission_exported", "导出 JSON 报告", payload={"format": "json"})
             return {
                 "content": content,
                 "filename": f"boss-mission-{mission_id}.json",
