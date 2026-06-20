@@ -276,6 +276,22 @@ class ApiClient {
     }>(`/boss/missions/${missionId}/modules/${moduleId}/run`, { method: "POST" })
   }
 
+  async getMissionEvents(missionId: string) {
+    return this.request<{
+      mission_id: string
+      events: Array<{
+        id: number
+        mission_id: string
+        type: string
+        module_id: string | null
+        message: string
+        payload: Record<string, unknown>
+        created_at: string
+      }>
+      total: number
+    }>(`/boss/missions/${missionId}/events`)
+  }
+
   async exportMission(missionId: string, format: "json" | "markdown" = "json") {
     const response = await fetch(`${API_BASE}/boss/missions/${missionId}/export?format=${format}`)
     if (!response.ok) {

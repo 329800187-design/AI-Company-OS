@@ -60,6 +60,16 @@ interface MissionSummary {
   created_at: string
 }
 
+interface MissionEvent {
+  id: number
+  mission_id: string
+  type: string
+  module_id: string | null
+  message: string
+  payload: Record<string, unknown>
+  created_at: string
+}
+
 const MODULE_IDS = ["strategy", "market", "marketing", "landing", "actions"]
 
 const moduleIcons: Record<string, React.ElementType> = {
@@ -92,6 +102,8 @@ export default function BossPage() {
   const [recentMissions, setRecentMissions] = useState<MissionSummary[]>([])
   const [showHistory, setShowHistory] = useState(false)
   const [enabledModules, setEnabledModules] = useState<string[]>([...MODULE_IDS])
+  const [events, setEvents] = useState<MissionEvent[]>([])
+  const [showEvents, setShowEvents] = useState(false)
 
   const modules = currentMission?.modules || []
   const activeResult = modules.find((m) => m.module_id === activeModule) || null
@@ -113,6 +125,16 @@ export default function BossPage() {
     loadRecentMissions()
   }, [])
 
+  // 加载事件日志
+  const loadEvents = async (missionId: string) => {
+    try {
+      const data = await api.getMissionEvents(missionId)
+      setEvents(data.events || [])
+    } catch {
+      setEvents([])
+    }
+  }
+
   // 创建并执行 mission
   const runMission = async () => {
     const trimmed = goal.trim()
@@ -127,6 +149,7 @@ export default function BossPage() {
         ...mission,
         modules: mission.modules || [],
       })
+      loadEvents(mission.mission_id)
 
       // 后端会按 enabled_modules 标记 skipped，这里只执行非 skipped 的
       const activeModuleIds = enabledModules
@@ -150,6 +173,7 @@ export default function BossPage() {
             ...updated,
             modules: updated.modules || [],
           })
+          loadEvents(mission.mission_id)
         } catch (err) {
           setCurrentMission((prev) => {
             if (!prev) return prev
@@ -197,6 +221,7 @@ export default function BossPage() {
       const mission = await api.getMission(missionId)
       setCurrentMission(mission)
       setGoal(mission.goal)
+      loadEvents(missionId)
       // 从 mission 恢复 enabled_modules
       const activeIds = mission.modules.filter((m) => m.status !== "skipped").map((m) => m.module_id)
       setEnabledModules(activeIds.length > 0 ? activeIds : [...MODULE_IDS])
@@ -567,6 +592,56 @@ export default function BossPage() {
             </GlowCard>
           </motion.div>
         </div>
+      )}
+
+      {/* 运行日志面板 */}
+      {currentMission && events.length > 0 && (
+        <GlowCard variant="glass" hover={false}>
+          <button
+            type="button"
+            onClick={() => setShowEvents(!showEvents)}
+            className="flex w-full items-center justify-between text-left"
+          >
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <FileText className="h-4 w-4 text-primary" />
+              运行日志
+              <Badge variant="secondary" className="ml-1">{events.length}</Badge>
+            </div>
+            <span className="text-xs text-muted-foreground">{showEvents ? "收起" : "展开"}</span>
+          </button>
+
+          {showEvents && (
+            <div className="mt-4 space-y-2 max-h-[400px] overflow-y-auto">
+              {events.map((evt) => (
+                <div
+                  key={evt.id}
+                  className="flex items-start gap-3 rounded-lg border border-border bg-background/40 p-3 text-sm"
+                >
+                  <div className="shrink-0 text-xs text-muted-foreground w-[70px]">
+                    {new Date(evt.created_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <Badge variant={
+                        evt.type.includes("failed") ? "destructive" :
+                        evt.type.includes("succeeded") ? "success" :
+                        evt.type.includes("started") ? "info" :
+                        evt.type.includes("skipped") ? "secondary" :
+                        "outline"
+                      } className="text-xs">
+                        {evt.type}
+                      </Badge>
+                      {evt.module_id && (
+                        <span className="text-xs text-muted-foreground">{evt.module_id}</span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-sm text-foreground">{evt.message}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </GlowCard>
       )}
 
       {/* 空状态（无 mission 时） */}
