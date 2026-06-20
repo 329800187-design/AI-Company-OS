@@ -19,6 +19,25 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 
+def _make_mock_executor(ok=True, final_answer="", confidence=0.0,
+                        warnings=None, used_tools=None, mode="local",
+                        error="", next_actions=None, structured_output=None):
+    """创建 mock executor"""
+    mock_exec = MagicMock()
+    mock_result = MagicMock()
+    mock_result.ok = ok
+    mock_result.final_answer = final_answer
+    mock_result.confidence = confidence
+    mock_result.warnings = warnings or []
+    mock_result.used_tools = used_tools or []
+    mock_result.mode = mode
+    mock_result.error = error
+    mock_result.next_actions = next_actions or []
+    mock_result.structured_output = structured_output or {}
+    mock_exec.execute.return_value = mock_result
+    return mock_exec
+
+
 # ── Service 层测试 ───────────────────────────────────────
 
 class TestBossCommandCenterService:
@@ -89,26 +108,25 @@ class TestBossCommandCenterService:
         assert result is None
 
     def test_run_module_mock(self, service):
-        """单模块执行（mock runtime）"""
+        """单模块执行（mock executor）"""
         mission = service.create_mission("mock 测试")
         mission_id = mission["mission_id"]
 
-        mock_result = {
-            "ok": True,
-            "final_answer": "这是战略分析结果",
-            "confidence": 0.85,
-            "warnings": [],
-            "used_tools": ["mimo"],
-            "mode": "local",
-            "error": "",
-            "next_actions": ["联系投资人", "写商业计划书"],
-        }
+        mock_exec_result = MagicMock()
+        mock_exec_result.ok = True
+        mock_exec_result.final_answer = "这是战略分析结果"
+        mock_exec_result.confidence = 0.85
+        mock_exec_result.warnings = []
+        mock_exec_result.used_tools = ["mimo"]
+        mock_exec_result.mode = "local"
+        mock_exec_result.error = ""
+        mock_exec_result.next_actions = ["联系投资人", "写商业计划书"]
+        mock_exec_result.structured_output = {}
 
-        with patch.object(service, '_get_runtime') as mock_get_runtime:
-            mock_runtime = MagicMock()
-            mock_runtime.execute.return_value = mock_result
-            mock_get_runtime.return_value = mock_runtime
+        mock_executor = MagicMock()
+        mock_executor.execute.return_value = mock_exec_result
 
+        with patch("backend.services.boss_module_executors.get_executor", return_value=mock_executor):
             updated = service.run_module(mission_id, "strategy")
             assert updated is not None
 
@@ -126,49 +144,28 @@ class TestBossCommandCenterService:
         mission = service.create_mission("失败测试")
         mission_id = mission["mission_id"]
 
-        mock_result = {
-            "ok": False,
-            "final_answer": "",
-            "confidence": 0.0,
-            "warnings": [],
-            "used_tools": [],
-            "mode": "error",
-            "error": "Adapter 不可用",
-        }
+        mock_executor = _make_mock_executor(ok=False, error="Adapter 不可用")
 
-        with patch.object(service, '_get_runtime') as mock_get_runtime:
-            mock_runtime = MagicMock()
-            mock_runtime.execute.return_value = mock_result
-            mock_get_runtime.return_value = mock_runtime
-
+        with patch("backend.services.boss_module_executors.get_executor", return_value=mock_executor):
             updated = service.run_module(mission_id, "market")
             assert updated is not None
 
             market = next(m for m in updated["modules"] if m["module_id"] == "market")
             assert market["status"] == "failed"
             assert "Adapter 不可用" in market["error"]
-            assert market["duration_ms"] >= 0  # mock 执行极快，duration 可能为 0
+            assert market["duration_ms"] >= 0
 
     def test_market_no_web_search_warning(self, service):
-        """market 模块无联网能力时应返回 warning"""
+        """market 模块无联网能力时应返回 warning（由 executor 产生）"""
         mission = service.create_mission("联网测试")
         mission_id = mission["mission_id"]
 
-        mock_result = {
-            "ok": True,
-            "final_answer": "市场分析结果（无联网）",
-            "confidence": 0.6,
-            "warnings": [],
-            "used_tools": ["api_models"],
-            "mode": "local",
-            "error": "",
-        }
+        # executor 负责添加联网 warning
+        mock_executor = _make_mock_executor(ok=True, final_answer="市场分析结果（无联网）",
+                                            confidence=0.6, used_tools=["api_models"],
+                                            warnings=["市场模块未获取到联网搜索结果，分析基于模型已有知识"])
 
-        with patch.object(service, '_get_runtime') as mock_get_runtime:
-            mock_runtime = MagicMock()
-            mock_runtime.execute.return_value = mock_result
-            mock_get_runtime.return_value = mock_runtime
-
+        with patch("backend.services.boss_module_executors.get_executor", return_value=mock_executor):
             updated = service.run_module(mission_id, "market")
             market = next(m for m in updated["modules"] if m["module_id"] == "market")
             assert market["status"] == "done"
@@ -185,30 +182,18 @@ class TestBossCommandCenterService:
         mission = service.create_mission("跳过测试")
         mission_id = mission["mission_id"]
 
-        mock_result = {
-            "ok": True,
-            "final_answer": "结果",
-            "confidence": 0.7,
-            "warnings": [],
-            "used_tools": [],
-            "mode": "local",
-            "error": "",
-        }
+        mock_executor = _make_mock_executor(ok=True, final_answer="结果", confidence=0.7)
 
-        with patch.object(service, '_get_runtime') as mock_get_runtime:
-            mock_runtime = MagicMock()
-            mock_runtime.execute.return_value = mock_result
-            mock_get_runtime.return_value = mock_runtime
-
+        with patch("backend.services.boss_module_executors.get_executor", return_value=mock_executor):
             # 先执行一次 strategy
             service.run_module(mission_id, "strategy")
 
             # 再执行整个 mission，strategy 不应重复执行
-            mock_runtime.execute.reset_mock()
+            mock_executor.execute.reset_mock()
             service.run_mission(mission_id)
 
-            # runtime.execute 应该只被调用 4 次（跳过已完成的 strategy）
-            assert mock_runtime.execute.call_count == 4
+            # executor.execute 应该只被调用 4 次（跳过已完成的 strategy）
+            assert mock_executor.execute.call_count == 4
 
     # ── Export 测试 ────────────────────────────────────────
 
@@ -445,14 +430,8 @@ class TestMissionEvents:
         mission = service.create_mission("运行事件测试", enabled_modules=["strategy"])
         mission_id = mission["mission_id"]
 
-        mock_result = {
-            "ok": True, "final_answer": "结果", "confidence": 0.7,
-            "warnings": [], "used_tools": [], "mode": "local", "error": "",
-        }
-        with patch.object(service, '_get_runtime') as mock_get_runtime:
-            mock_runtime = MagicMock()
-            mock_runtime.execute.return_value = mock_result
-            mock_get_runtime.return_value = mock_runtime
+        mock_executor = _make_mock_executor(ok=True, final_answer="结果", confidence=0.7)
+        with patch("backend.services.boss_module_executors.get_executor", return_value=mock_executor):
             service.run_mission(mission_id)
 
         events = service.get_events(mission_id)
@@ -467,14 +446,8 @@ class TestMissionEvents:
         mission = service.create_mission("模块事件测试")
         mission_id = mission["mission_id"]
 
-        mock_result = {
-            "ok": True, "final_answer": "战略结果", "confidence": 0.8,
-            "warnings": [], "used_tools": ["mimo"], "mode": "local", "error": "",
-        }
-        with patch.object(service, '_get_runtime') as mock_get_runtime:
-            mock_runtime = MagicMock()
-            mock_runtime.execute.return_value = mock_result
-            mock_get_runtime.return_value = mock_runtime
+        mock_executor = _make_mock_executor(ok=True, final_answer="战略结果", confidence=0.8, used_tools=["mimo"])
+        with patch("backend.services.boss_module_executors.get_executor", return_value=mock_executor):
             service.run_module(mission_id, "strategy")
 
         events = service.get_events(mission_id)
@@ -488,15 +461,8 @@ class TestMissionEvents:
         mission = service.create_mission("失败事件测试")
         mission_id = mission["mission_id"]
 
-        mock_result = {
-            "ok": False, "final_answer": "", "confidence": 0.0,
-            "warnings": [], "used_tools": [], "mode": "error",
-            "error": "Adapter 不可用",
-        }
-        with patch.object(service, '_get_runtime') as mock_get_runtime:
-            mock_runtime = MagicMock()
-            mock_runtime.execute.return_value = mock_result
-            mock_get_runtime.return_value = mock_runtime
+        mock_executor = _make_mock_executor(ok=False, error="Adapter 不可用")
+        with patch("backend.services.boss_module_executors.get_executor", return_value=mock_executor):
             service.run_module(mission_id, "market")
 
         events = service.get_events(mission_id)
@@ -520,14 +486,8 @@ class TestMissionEvents:
         mission = service.create_mission("顺序测试")
         mission_id = mission["mission_id"]
 
-        mock_result = {
-            "ok": True, "final_answer": "结果", "confidence": 0.5,
-            "warnings": [], "used_tools": [], "mode": "local", "error": "",
-        }
-        with patch.object(service, '_get_runtime') as mock_get_runtime:
-            mock_runtime = MagicMock()
-            mock_runtime.execute.return_value = mock_result
-            mock_get_runtime.return_value = mock_runtime
+        mock_executor = _make_mock_executor(ok=True, final_answer="结果", confidence=0.5)
+        with patch("backend.services.boss_module_executors.get_executor", return_value=mock_executor):
             service.run_mission(mission_id)
 
         events = service.get_events(mission_id)
@@ -679,15 +639,9 @@ class TestMetrics:
         mission = service.create_mission("partial metrics", enabled_modules=["strategy", "market", "actions"])
         mission_id = mission["mission_id"]
 
-        mock_result = {
-            "ok": True, "final_answer": "结果", "confidence": 0.7,
-            "warnings": ["w1"], "used_tools": [], "mode": "local", "error": "",
-            "next_actions": ["a1", "a2"],
-        }
-        with patch.object(service, '_get_runtime') as mock_get_runtime:
-            mock_runtime = MagicMock()
-            mock_runtime.execute.return_value = mock_result
-            mock_get_runtime.return_value = mock_runtime
+        mock_executor = _make_mock_executor(ok=True, final_answer="结果", confidence=0.7,
+                                            warnings=["w1"], next_actions=["a1", "a2"])
+        with patch("backend.services.boss_module_executors.get_executor", return_value=mock_executor):
             service.run_module(mission_id, "strategy")
             service.run_module(mission_id, "market")
 
@@ -706,14 +660,8 @@ class TestMetrics:
         mission = service.create_mission("failed metrics", enabled_modules=["strategy"])
         mission_id = mission["mission_id"]
 
-        mock_result = {
-            "ok": False, "final_answer": "", "confidence": 0.0,
-            "warnings": [], "used_tools": [], "mode": "error", "error": "boom",
-        }
-        with patch.object(service, '_get_runtime') as mock_get_runtime:
-            mock_runtime = MagicMock()
-            mock_runtime.execute.return_value = mock_result
-            mock_get_runtime.return_value = mock_runtime
+        mock_executor = _make_mock_executor(ok=False, error="boom")
+        with patch("backend.services.boss_module_executors.get_executor", return_value=mock_executor):
             service.run_module(mission_id, "strategy")
 
         mission = service.get_mission(mission_id)
