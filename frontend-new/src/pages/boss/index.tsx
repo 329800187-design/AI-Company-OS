@@ -42,6 +42,7 @@ interface ModuleResult {
   finished_at?: string
   duration_ms?: number
   next_actions?: string[]
+  structured_output?: Record<string, unknown>
 }
 
 interface Mission {
@@ -693,6 +694,56 @@ export default function BossPage() {
                           ))}
                         </div>
                       )}
+
+                      {/* 结构化输出 */}
+                      {activeResult.structured_output && Object.keys(activeResult.structured_output).length > 0 && (() => {
+                        const so = activeResult.structured_output as Record<string, unknown>
+                        const competitors = so.competitors as Array<Record<string, string>> | undefined
+                        const pricing = so.pricing as Record<string, unknown> | undefined
+                        const evidence = so.evidence as unknown[] | undefined
+                        const imagePlan = so.image_plan as Record<string, unknown> | undefined
+                        return (
+                          <div className="space-y-3">
+                            {Array.isArray(competitors) && competitors.length > 0 && (
+                              <div className="rounded-lg border border-border bg-background/60 p-4">
+                                <h4 className="mb-2 text-sm font-medium">竞品分析</h4>
+                                <div className="space-y-2">
+                                  {competitors.map((c, i) => (
+                                    <div key={i} className="rounded bg-background/40 p-2 text-sm">
+                                      <span className="font-medium">{c.name || ""}</span>
+                                      {c.details && <span className="ml-2 text-muted-foreground">— {c.details}</span>}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            {pricing && (
+                              <div className="rounded-lg border border-border bg-background/60 p-4">
+                                <h4 className="mb-2 text-sm font-medium">定价信息</h4>
+                                <pre className="whitespace-pre-wrap break-words font-sans text-xs text-muted-foreground">
+                                  {JSON.stringify(pricing, null, 2)}
+                                </pre>
+                              </div>
+                            )}
+                            {Array.isArray(evidence) && evidence.length > 0 && (
+                              <div className="rounded-lg border border-border bg-background/60 p-4">
+                                <h4 className="mb-2 text-sm font-medium">
+                                  搜索来源
+                                  <Badge variant="secondary" className="ml-2">{evidence.length}</Badge>
+                                </h4>
+                              </div>
+                            )}
+                            {imagePlan && (
+                              <div className="rounded-lg border border-border bg-background/60 p-4">
+                                <h4 className="mb-2 text-sm font-medium">图片/拍摄建议</h4>
+                                <pre className="whitespace-pre-wrap break-words font-sans text-xs text-muted-foreground">
+                                  {JSON.stringify(imagePlan, null, 2)}
+                                </pre>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })()}
                     </div>
                   )}
                 </>
