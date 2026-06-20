@@ -122,6 +122,7 @@ def _init_boss_tables():
             CREATE TABLE IF NOT EXISTS boss_missions (
                 mission_id TEXT PRIMARY KEY,
                 goal TEXT NOT NULL,
+                template_id TEXT DEFAULT '',
                 status TEXT DEFAULT 'pending',
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 updated_at TEXT DEFAULT (datetime('now','localtime'))
@@ -143,6 +144,7 @@ def _init_boss_tables():
                 used_agents TEXT DEFAULT '[]',
                 mode TEXT DEFAULT '',
                 next_actions TEXT DEFAULT '[]',
+                structured_output TEXT DEFAULT '{}',
                 started_at TEXT,
                 finished_at TEXT,
                 duration_ms INTEGER DEFAULT 0,
@@ -152,9 +154,21 @@ def _init_boss_tables():
             )
         """)
         # 尝试添加新列（已存在的表不会报错）
-        for col in ("next_actions TEXT DEFAULT '[]'", "started_at TEXT", "finished_at TEXT", "duration_ms INTEGER DEFAULT 0"):
+        for col in (
+            "next_actions TEXT DEFAULT '[]'",
+            "structured_output TEXT DEFAULT '{}'",
+            "started_at TEXT",
+            "finished_at TEXT",
+            "duration_ms INTEGER DEFAULT 0",
+        ):
             try:
                 db.execute(f"ALTER TABLE boss_mission_modules ADD COLUMN {col}")
+            except Exception:
+                pass
+        # boss_missions 新列
+        for col in ("template_id TEXT DEFAULT ''",):
+            try:
+                db.execute(f"ALTER TABLE boss_missions ADD COLUMN {col}")
             except Exception:
                 pass
         db.execute("""
@@ -255,7 +269,7 @@ class BossCommandCenterService:
             if inputs_text:
                 actual_goal = f"{actual_goal}\n\n补充信息：{inputs_text}"
 
-        return self.create_mission(actual_goal, auto_run=auto_run, enabled_modules=actual_modules)
+        return self.create_mission(actual_goal, auto_run=auto_run, enabled_modules=actual_modules, template_id=template_id)
 
     # ── 指标 ──────────────────────────────────────────────
 
@@ -286,13 +300,16 @@ class BossCommandCenterService:
 
     # ── Mission CRUD ──────────────────────────────────────
 
-    def create_mission(self, goal: str, auto_run: bool = False, enabled_modules: List[str] = None) -> Dict[str, Any]:
+    def create_mission(self, goal: str, auto_run: bool = False,
+                       enabled_modules: List[str] = None,
+                       template_id: str = "") -> Dict[str, Any]:
         """创建 Mission
 
         Args:
             goal: 业务目标
             auto_run: 创建后是否立即执行
             enabled_modules: 启用的模块 ID 列表，None 表示全部启用
+            template_id: 模板 ID（可选）
         """
         mission_id = f"mission_{uuid.uuid4().hex[:8]}"
         now = datetime.now().isoformat()
@@ -308,8 +325,8 @@ class BossCommandCenterService:
 
         with get_db() as db:
             db.execute(
-                "INSERT INTO boss_missions (mission_id, goal, status, created_at, updated_at) VALUES (?, ?, 'pending', ?, ?)",
-                (mission_id, goal, now, now)
+                "INSERT INTO boss_missions (mission_id, goal, template_id, status, created_at, updated_at) VALUES (?, ?, ?, 'pending', ?, ?)",
+                (mission_id, goal, template_id, now, now)
             )
             for module_id in MODULE_ORDER:
                 definition = MODULE_DEFINITIONS[module_id]
@@ -374,6 +391,11 @@ class BossCommandCenterService:
                         mod[field] = json.loads(mod.get(field, "[]"))
                     except (json.JSONDecodeError, TypeError):
                         mod[field] = []
+                # 解析 structured_output
+                try:
+                    mod["structured_output"] = json.loads(mod.get("structured_output", "{}"))
+                except (json.JSONDecodeError, TypeError):
+                    mod["structured_output"] = {}
                 mission["modules"].append(mod)
 
             # 动态计算 metrics
@@ -414,7 +436,7 @@ class BossCommandCenterService:
         return self.get_mission(mission_id)
 
     def run_module(self, mission_id: str, module_id: str) -> Optional[Dict[str, Any]]:
-        """执行单个模块"""
+        """执行单个模块 — 通过 ModuleExecutor 分发"""
         with get_db() as db:
             row = db.execute(
                 "SELECT * FROM boss_mission_modules WHERE mission_id = ? AND module_id = ?",
@@ -435,63 +457,52 @@ class BossCommandCenterService:
         self._log_event(mission_id, "module_started", f"开始执行模块 {MODULE_DEFINITIONS.get(module_id, {}).get('title', module_id)}",
                         module_id=module_id)
 
-        prompt = module["prompt"]
-        goal = ""
+        # 获取 mission 信息
         mission = self.get_mission(mission_id)
-        if mission:
-            goal = mission["goal"]
+        goal = mission["goal"] if mission else ""
+        template_id = mission.get("template_id", "") if mission else ""
 
-        # 使用 LocalAgentRuntime 执行
-        runtime = self._get_runtime()
+        # 构建 prev_results 上下文（从已完成的模块中收集 structured_output）
+        prev_results = {}
+        if mission:
+            for m in mission.get("modules", []):
+                if m["module_id"] != module_id and m.get("structured_output"):
+                    prev_results[m["module_id"]] = m
+
+        # 获取模块执行器
+        from backend.services.boss_module_executors import get_executor
+        executor = get_executor(template_id, module_id)
+
         start_time = time.time()
 
         try:
-            result = runtime.execute(prompt, {
-                "boss_mission": True,
-                "mission_id": mission_id,
-                "mission_module": module_id,
-                "mission_goal": goal,
+            exec_result = executor.execute(goal, module_id, mission_id, context={
+                "mission": mission,
+                "prev_results": prev_results,
             })
             duration_ms = int((time.time() - start_time) * 1000)
 
-            # 提取结果
-            ok = result.get("ok", False)
-            final_answer = result.get("final_answer", "")
-            confidence = result.get("confidence", 0.0)
-            warnings = result.get("warnings", [])
-            used_tools = result.get("used_tools", [])
-            mode = result.get("mode", "local")
-            error = result.get("error", "")
-            next_actions = result.get("next_actions", [])
-
-            # 特殊处理：market 模块无联网能力时加 warning
-            if module_id == "market":
-                if "mimo" not in used_tools and not result.get("used_web_search"):
-                    warnings.append("市场模块未联网，结果基于模型已有知识，可能不够最新")
-
-            # actions 模块必须有可执行清单
-            if module_id == "actions" and final_answer:
-                if not any(kw in final_answer for kw in ["今天", "本周", "本月", "Today", "This week"]):
-                    warnings.append("执行清单未按今天/本周/本月分组，建议重新生成")
-
             # 更新数据库
-            status = "done" if ok else "failed"
+            status = "done" if exec_result.ok else "failed"
             self._update_module_result(
                 mission_id, module_id, status,
-                final_answer, confidence, warnings, error,
-                used_tools, mode, next_actions, duration_ms
+                exec_result.final_answer, exec_result.confidence,
+                exec_result.warnings, exec_result.error,
+                exec_result.used_tools, exec_result.mode,
+                exec_result.next_actions, duration_ms,
+                exec_result.structured_output,
             )
 
-            if ok:
+            if exec_result.ok:
                 self._log_event(mission_id, "module_succeeded",
                                 f"模块 {MODULE_DEFINITIONS.get(module_id, {}).get('title', module_id)} 执行完成",
                                 module_id=module_id,
-                                payload={"confidence": confidence, "duration_ms": duration_ms})
+                                payload={"confidence": exec_result.confidence, "duration_ms": duration_ms})
             else:
                 self._log_event(mission_id, "module_failed",
-                                f"模块 {MODULE_DEFINITIONS.get(module_id, {}).get('title', module_id)} 执行失败: {error[:100]}",
+                                f"模块 {MODULE_DEFINITIONS.get(module_id, {}).get('title', module_id)} 执行失败: {exec_result.error[:100]}",
                                 module_id=module_id,
-                                payload={"error": error, "duration_ms": duration_ms})
+                                payload={"error": exec_result.error, "duration_ms": duration_ms})
 
             return self.get_mission(mission_id)
 
@@ -500,7 +511,7 @@ class BossCommandCenterService:
             duration_ms = int((time.time() - start_time) * 1000)
             self._update_module_result(
                 mission_id, module_id, "failed",
-                "", 0.0, [], str(e), [], "error", [], duration_ms
+                "", 0.0, [], str(e), [], "error", [], duration_ms, {}
             )
             self._log_event(mission_id, "module_failed",
                             f"模块 {MODULE_DEFINITIONS.get(module_id, {}).get('title', module_id)} 异常: {str(e)[:100]}",
@@ -634,7 +645,8 @@ class BossCommandCenterService:
         self, mission_id: str, module_id: str, status: str,
         result: str, confidence: float, warnings: List[str],
         error: str, used_tools: List[str], mode: str,
-        next_actions: List[str] = None, duration_ms: int = 0
+        next_actions: List[str] = None, duration_ms: int = 0,
+        structured_output: Dict[str, Any] = None
     ):
         """更新模块执行结果"""
         now = datetime.now().isoformat()
@@ -643,7 +655,7 @@ class BossCommandCenterService:
                 """UPDATE boss_mission_modules
                    SET status = ?, result = ?, confidence = ?,
                        warnings = ?, error = ?, used_tools = ?,
-                       mode = ?, next_actions = ?,
+                       mode = ?, next_actions = ?, structured_output = ?,
                        finished_at = ?, duration_ms = ?, updated_at = ?
                    WHERE mission_id = ? AND module_id = ?""",
                 (
@@ -651,6 +663,7 @@ class BossCommandCenterService:
                     json.dumps(warnings, ensure_ascii=False), error,
                     json.dumps(used_tools, ensure_ascii=False),
                     mode, json.dumps(next_actions or [], ensure_ascii=False),
+                    json.dumps(structured_output or {}, ensure_ascii=False),
                     now, duration_ms, now, mission_id, module_id
                 )
             )
