@@ -672,6 +672,17 @@ export default function BossPage() {
                           {activeResult.mode && (
                             <Badge variant="secondary">mode: {activeResult.mode}</Badge>
                           )}
+                          {/* 显示 Provider */}
+                          {(() => {
+                            const so = activeResult.structured_output as Record<string, unknown>
+                            const provider = so?.provider as string
+                            return provider ? (
+                              <Badge variant="outline" className="gap-1">
+                                <span className="text-xs">Provider:</span>
+                                {provider}
+                              </Badge>
+                            ) : null
+                          })()}
                         </div>
                       )}
 
@@ -702,8 +713,30 @@ export default function BossPage() {
                         const pricing = so.pricing as Record<string, unknown> | undefined
                         const evidence = so.evidence as unknown[] | undefined
                         const imagePlan = so.image_plan as Record<string, unknown> | undefined
+                        const provider = so.provider as string | undefined
+                        const generatedAt = so.generated_at as string | undefined
+                        const summary = so.summary as string | undefined
                         return (
                           <div className="space-y-3">
+                            {/* Provider 信息 */}
+                            {provider && (
+                              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                <span>执行 Provider:</span>
+                                <Badge variant="outline">{provider}</Badge>
+                                {generatedAt && (
+                                  <span>生成时间: {new Date(generatedAt).toLocaleString("zh-CN")}</span>
+                                )}
+                              </div>
+                            )}
+
+                            {/* 摘要 */}
+                            {summary && (
+                              <div className="rounded-lg border border-border bg-background/60 p-4">
+                                <h4 className="mb-2 text-sm font-medium">摘要</h4>
+                                <p className="text-sm text-muted-foreground">{summary}</p>
+                              </div>
+                            )}
+
                             {Array.isArray(competitors) && competitors.length > 0 && (
                               <div className="rounded-lg border border-border bg-background/60 p-4">
                                 <h4 className="mb-2 text-sm font-medium">竞品分析</h4>
@@ -744,6 +777,11 @@ export default function BossPage() {
                           </div>
                         )
                       })()}
+                      {activeResult.status === "done" && (!activeResult.structured_output || Object.keys(activeResult.structured_output).length === 0) && (
+                        <div className="rounded-lg border border-dashed border-border bg-background/40 p-4 text-center text-sm text-muted-foreground">
+                          此模块未生成结构化数据。结果已保存在上方文本中。
+                        </div>
+                      )}
                     </div>
                   )}
                 </>
