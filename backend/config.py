@@ -67,6 +67,11 @@ OPENCLAW_TIMEOUT: int = _int(os.getenv("OPENCLAW_TIMEOUT", "30"), 30)
 # ── 数据库 ─────────────────────────────────────────────────
 DATABASE_URL: str = os.getenv("DATABASE_URL", "")  # PostgreSQL URL（留空则用 SQLite）
 
+# ── Boss Command Center ─────────────────────────────────────
+BOSS_EXECUTION_PROVIDER: str = os.getenv("BOSS_EXECUTION_PROVIDER", "local_heuristic")
+# 可选值: local_mock / local_heuristic / hermes
+# 默认 local_heuristic，保证离线可跑
+
 # ── 日志 ───────────────────────────────────────────────────
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 LOG_DIR: str = os.getenv("LOG_DIR", "./logs")
