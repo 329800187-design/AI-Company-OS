@@ -72,6 +72,14 @@ BOSS_EXECUTION_PROVIDER: str = os.getenv("BOSS_EXECUTION_PROVIDER", "local_heuri
 # 可选值: local_mock / local_heuristic / hermes
 # 默认 local_heuristic，保证离线可跑
 
+# ── Hermes Execution Provider ───────────────────────────────
+HERMES_CLI_PATH: str = os.getenv("HERMES_CLI_PATH", "hermes")
+HERMES_EXECUTION_TIMEOUT_SECONDS: int = _int(os.getenv("HERMES_EXECUTION_TIMEOUT_SECONDS", "180"), 180)
+HERMES_ECOMMERCE_MODE_ENABLED: bool = _bool(os.getenv("HERMES_ECOMMERCE_MODE_ENABLED", "true"), True)
+# Hermes CLI 路径，默认 "hermes"（假设在 PATH 中）
+# 执行超时，默认 180 秒
+# 是否启用电商模式（使用 /ecommerce 技能）
+
 # ── 日志 ───────────────────────────────────────────────────
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 LOG_DIR: str = os.getenv("LOG_DIR", "./logs")
