@@ -864,3 +864,193 @@ class TestEnhancedEvents:
         assert len(report_events) == 1
         assert report_events[0]["payload"]["format"] == "json"
         assert "content_length" in report_events[0]["payload"]
+
+
+# ── Hermes Provider 测试 ────────────────────────────────────
+
+class TestHermesExecutionProvider:
+    """Hermes Execution Provider 测试（mock subprocess）"""
+
+    def test_hermes_provider_available_when_cli_exists(self, monkeypatch):
+        """Hermes CLI 存在时应该可用"""
+        import shutil
+        from backend.services.boss_execution_providers import HermesExecutionProvider
+
+        provider = HermesExecutionProvider()
+
+        # Mock shutil.which 返回非 None
+        def mock_which(cmd):
+            return "/usr/bin/hermes"
+
+        monkeypatch.setattr(shutil, "which", mock_which)
+        assert provider.is_available is True
+
+    def test_hermes_provider_unavailable_when_cli_missing(self, monkeypatch):
+        """Hermes CLI 不存在时应该不可用"""
+        import shutil
+        from backend.services.boss_execution_providers import HermesExecutionProvider
+
+        provider = HermesExecutionProvider()
+
+        # Mock shutil.which 返回 None
+        def mock_which(cmd):
+            return None
+
+        monkeypatch.setattr(shutil, "which", mock_which)
+        assert provider.is_available is False
+
+    def test_hermes_market_research_valid_json(self, monkeypatch):
+        """Hermes 返回合法 JSON 时应该成功解析"""
+        from backend.services.boss_execution_providers import HermesExecutionProvider
+        import subprocess
+
+        provider = HermesExecutionProvider()
+
+        # Mock subprocess.run 返回成功结果
+        mock_stdout = '{"summary": "测试摘要", "evidence": [{"title": "来源1", "url": "http://example.com"}], "competitors": [{"name": "竞品A", "price": "99-199"}], "pricing": {"range": "99-199"}, "warnings": []}'
+
+        def mock_run(cmd, **kwargs):
+            class Result:
+                returncode = 0
+                stdout = mock_stdout
+                stderr = ""
+            return Result()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = provider.execute_market_research("测试目标")
+        assert result["ok"] is True
+        assert result["summary"] == "测试摘要"
+        assert len(result["evidence"]) == 1
+        assert len(result["competitors"]) == 1
+
+    def test_hermes_market_research_invalid_json(self, monkeypatch):
+        """Hermes 返回非 JSON 时应该返回失败"""
+        from backend.services.boss_execution_providers import HermesExecutionProvider
+        import subprocess
+
+        provider = HermesExecutionProvider()
+
+        # Mock subprocess.run 返回非 JSON
+        def mock_run(cmd, **kwargs):
+            class Result:
+                returncode = 0
+                stdout = "This is not JSON output from Hermes"
+                stderr = ""
+            return Result()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = provider.execute_market_research("测试目标")
+        assert result["ok"] is False
+        assert "无法解析为 JSON" in result["warnings"][0]
+
+    def test_hermes_market_research_timeout(self, monkeypatch):
+        """Hermes 超时应该返回失败"""
+        from backend.services.boss_execution_providers import HermesExecutionProvider
+        import subprocess
+
+        provider = HermesExecutionProvider()
+
+        # Mock subprocess.run 抛出 TimeoutExpired
+        def mock_run(cmd, **kwargs):
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=180)
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = provider.execute_market_research("测试目标")
+        assert result["ok"] is False
+        assert "超时" in result["warnings"][0]
+
+    def test_hermes_market_research_command_missing(self, monkeypatch):
+        """Hermes CLI 不存在时应该返回失败"""
+        from backend.services.boss_execution_providers import HermesExecutionProvider
+        import subprocess
+
+        provider = HermesExecutionProvider()
+
+        # Mock subprocess.run 抛出 FileNotFoundError
+        def mock_run(cmd, **kwargs):
+            raise FileNotFoundError("No such file or directory: hermes")
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = provider.execute_market_research("测试目标")
+        assert result["ok"] is False
+        assert "未找到" in result["warnings"][0]
+
+    def test_hermes_competitor_analysis_valid_json(self, monkeypatch):
+        """Hermes 竞品分析返回合法 JSON 时应该成功解析"""
+        from backend.services.boss_execution_providers import HermesExecutionProvider
+        import subprocess
+
+        provider = HermesExecutionProvider()
+
+        mock_stdout = '{"summary": "竞品分析摘要", "competitors": [{"name": "竞品A", "price": "99", "strengths": "便宜", "weaknesses": "功能少"}], "pricing": {"recommended_range": "129-249"}, "warnings": []}'
+
+        def mock_run(cmd, **kwargs):
+            class Result:
+                returncode = 0
+                stdout = mock_stdout
+                stderr = ""
+            return Result()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = provider.execute_competitor_analysis("测试目标", [])
+        assert result["ok"] is True
+        assert result["summary"] == "竞品分析摘要"
+        assert len(result["competitors"]) == 1
+
+    def test_hermes_listing_pack_valid_json(self, monkeypatch):
+        """Hermes 上架物料包返回合法 JSON 时应该成功解析"""
+        from backend.services.boss_execution_providers import HermesExecutionProvider
+        import subprocess
+
+        provider = HermesExecutionProvider()
+
+        mock_stdout = '{"summary": "物料包摘要", "listing_copy": "【爆款推荐】测试产品", "pricing": {"recommended": "199"}, "image_plan": {"main_image": "白底图"}, "next_actions": ["确定定价", "拍摄主图"], "warnings": []}'
+
+        def mock_run(cmd, **kwargs):
+            class Result:
+                returncode = 0
+                stdout = mock_stdout
+                stderr = ""
+            return Result()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = provider.execute_listing_pack("测试目标", [], {})
+        assert result["ok"] is True
+        assert result["listing_copy"] == "【爆款推荐】测试产品"
+        assert len(result["next_actions"]) == 2
+
+    def test_hermes_fallback_to_local_heuristic(self, monkeypatch):
+        """Hermes 失败时应该 fallback 到 local_heuristic"""
+        from backend.services.boss_execution_providers import ProviderRegistry, HermesExecutionProvider, LocalHeuristicExecutionProvider
+        import shutil
+
+        # 创建一个总是失败的 Hermes provider
+        class FailingHermesProvider(HermesExecutionProvider):
+            @property
+            def is_available(self):
+                return True
+
+            def execute_market_research(self, goal, context=None):
+                return {"ok": False, "summary": "", "evidence": [], "competitors": [], "pricing": {}, "warnings": ["Hermes always fails"], "raw_data": {}}
+
+        registry = ProviderRegistry()
+        failing_hermes = FailingHermesProvider()
+        heuristic = LocalHeuristicExecutionProvider()
+
+        registry.register(failing_hermes)
+        registry.register(heuristic, is_fallback=True)
+
+        # 获取 hermes provider（可用但执行会失败）
+        provider, warnings = registry.get_available_provider("hermes")
+        assert provider.name == "hermes"
+
+        # 执行时应该失败
+        result = provider.execute_market_research("测试目标")
+        assert result["ok"] is False
+        assert "Hermes always fails" in result["warnings"][0]
