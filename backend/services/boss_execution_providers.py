@@ -392,18 +392,21 @@ class LocalHeuristicExecutionProvider(BossExecutionProvider):
         }
 
 
-# ── Hermes Provider（预留）────────────────────────────────
+# ── Hermes Provider（v1 实现）───────────────────────────────
 
 class HermesExecutionProvider(BossExecutionProvider):
-    """Hermes Provider — 接入真实 Hermes/ecommerce/browser 工具链
+    """Hermes Provider — 通过 subprocess 调用 Hermes CLI
 
-    注意：当前为接口预留，实际调用需要 Hermes 服务可用。
-    如果 Hermes 未配置或不可用，应在 ProviderRegistry 中自动 fallback。
+    安全要求：
+    - 不执行发布/付款/发消息等不可逆操作
+    - 失败时 fallback 到 local_heuristic
+    - event log 记录 hermes_invoked / hermes_failed
     """
 
-    def __init__(self, hermes_url: str = "", api_key: str = ""):
-        self._hermes_url = hermes_url
-        self._api_key = api_key
+    def __init__(self):
+        self._cli_path = None
+        self._timeout = None
+        self._ecommerce_enabled = None
 
     @property
     def name(self) -> str:
@@ -411,32 +414,357 @@ class HermesExecutionProvider(BossExecutionProvider):
 
     @property
     def is_available(self) -> bool:
-        """检查 Hermes 服务是否可用"""
-        if not self._hermes_url:
+        """检查 Hermes CLI 是否可用"""
+        try:
+            import shutil
+            cli_path = self._get_cli_path()
+            return shutil.which(cli_path) is not None
+        except Exception:
             return False
-        # TODO: 实现真实的健康检查
-        # try:
-        #     import httpx
-        #     resp = httpx.get(f"{self._hermes_url}/health", timeout=5)
-        #     return resp.status_code == 200
-        # except Exception:
-        #     return False
-        return False
+
+    def _get_cli_path(self) -> str:
+        """获取 Hermes CLI 路径"""
+        if self._cli_path is None:
+            from backend.config import HERMES_CLI_PATH
+            self._cli_path = HERMES_CLI_PATH
+        return self._cli_path
+
+    def _get_timeout(self) -> int:
+        """获取执行超时"""
+        if self._timeout is None:
+            from backend.config import HERMES_EXECUTION_TIMEOUT_SECONDS
+            self._timeout = HERMES_EXECUTION_TIMEOUT_SECONDS
+        return self._timeout
+
+    def _is_ecommerce_enabled(self) -> bool:
+        """检查电商模式是否启用"""
+        if self._ecommerce_enabled is None:
+            from backend.config import HERMES_ECOMMERCE_MODE_ENABLED
+            self._ecommerce_enabled = HERMES_ECOMMERCE_MODE_ENABLED
+        return self._ecommerce_enabled
+
+    def _execute_hermes_cli(self, prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """执行 Hermes CLI 调用
+
+        Args:
+            prompt: 完整的 prompt 内容
+            context: 执行上下文（包含 mission_id, module_id 等）
+
+        Returns:
+            {
+                "ok": bool,
+                "stdout": str,
+                "stderr": str,
+                "exit_code": int,
+                "error": str,
+            }
+        """
+        import subprocess
+        import json
+
+        cli_path = self._get_cli_path()
+        timeout = self._get_timeout()
+
+        # 构建命令：hermes -z "<prompt>"
+        # 使用 -z 标志表示非交互模式
+        cmd = [cli_path, "-z", prompt]
+
+        try:
+            # 执行 subprocess
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                encoding="utf-8",
+            )
+
+            return {
+                "ok": result.returncode == 0,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "exit_code": result.returncode,
+                "error": result.stderr if result.returncode != 0 else "",
+            }
+
+        except subprocess.TimeoutExpired:
+            return {
+                "ok": False,
+                "stdout": "",
+                "stderr": "",
+                "exit_code": -1,
+                "error": f"Hermes CLI 执行超时（{timeout}秒）",
+            }
+        except FileNotFoundError:
+            return {
+                "ok": False,
+                "stdout": "",
+                "stderr": "",
+                "exit_code": -1,
+                "error": f"Hermes CLI 未找到: {cli_path}",
+            }
+        except Exception as e:
+            return {
+                "ok": False,
+                "stdout": "",
+                "stderr": "",
+                "exit_code": -1,
+                "error": f"Hermes CLI 执行异常: {str(e)}",
+            }
+
+    def _parse_json_output(self, stdout: str) -> Dict[str, Any]:
+        """解析 Hermes 输出的 JSON
+
+        尝试从 stdout 中提取 JSON 对象。
+        Hermes 可能在 JSON 前后输出其他文本，需要智能提取。
+        """
+        import json
+        import re
+
+        if not stdout or not stdout.strip():
+            return None
+
+        # 尝试直接解析整个输出
+        try:
+            return json.loads(stdout.strip())
+        except json.JSONDecodeError:
+            pass
+
+        # 尝试提取 JSON 对象（以 { 开头，以 } 结尾）
+        json_match = re.search(r'\{[\s\S]*\}', stdout)
+        if json_match:
+            try:
+                return json.loads(json_match.group())
+            except json.JSONDecodeError:
+                pass
+
+        # 尝试提取 JSON 数组（以 [ 开头，以 ] 结尾）
+        json_match = re.search(r'\[[\s\S]*\]', stdout)
+        if json_match:
+            try:
+                return json.loads(json_match.group())
+            except json.JSONDecodeError:
+                pass
+
+        return None
+
+    def _build_market_research_prompt(self, goal: str, context: Dict[str, Any] = None) -> str:
+        """构建市场调研 prompt"""
+        ecommerce_hint = ""
+        if self._is_ecommerce_enabled():
+            ecommerce_hint = (
+                "请使用 /ecommerce 技能或 ecommerce 相关技能。\n"
+                "优先使用 sourcing-price-bridge / ecommerce-bridge 获取真实数据。\n"
+                "可以使用 browser 采集证据，但不要执行发布/付款/发消息等操作。\n\n"
+            )
+
+        return (
+            f"{ecommerce_hint}"
+            f"请调研以下电商业务的市场情况：{goal}\n\n"
+            f"请严格按以下 JSON 格式输出（不要输出其他内容）：\n"
+            f'{{\n'
+            f'  "summary": "市场调研摘要（200-500字）",\n'
+            f'  "evidence": [{{"title": "来源标题", "url": "来源URL"}}],\n'
+            f'  "competitors": [{{"name": "竞品名称", "price": "价格区间", "platform": "平台", "features": "核心卖点"}}],\n'
+            f'  "pricing": {{"range": "价格区间", "avg": "平均价格"}},\n'
+            f'  "warnings": ["警告信息（如有）"]\n'
+            f'}}\n\n'
+            f"注意：\n"
+            f"- 竞品列表至少 3 个\n"
+            f"- 尽量引用真实来源\n"
+            f"- 不要执行发布、付款、发消息等操作"
+        )
+
+    def _build_competitor_analysis_prompt(self, goal: str, competitors: List[Dict] = None,
+                                          context: Dict[str, Any] = None) -> str:
+        """构建竞品分析 prompt"""
+        import json as json_lib
+
+        competitor_info = ""
+        if competitors:
+            competitor_info = f"\n已知竞品信息：{json_lib.dumps(competitors, ensure_ascii=False)}\n"
+
+        ecommerce_hint = ""
+        if self._is_ecommerce_enabled():
+            ecommerce_hint = (
+                "请使用 /ecommerce 技能或 ecommerce 相关技能。\n"
+                "优先使用 sourcing-price-bridge / ecommerce-bridge 获取真实数据。\n\n"
+            )
+
+        return (
+            f"{ecommerce_hint}"
+            f"请对电商业务「{goal}」做竞品分析：{competitor_info}\n\n"
+            f"请严格按以下 JSON 格式输出（不要输出其他内容）：\n"
+            f'{{\n'
+            f'  "summary": "竞品分析摘要（200-500字）",\n'
+            f'  "competitors": [{{"name": "竞品名称", "price": "价格", "strengths": "优势", "weaknesses": "劣势"}}],\n'
+            f'  "pricing": {{"recommended_range": "建议定价范围", "rationale": "定价理由"}},\n'
+            f'  "warnings": ["警告信息（如有）"]\n'
+            f'}}\n\n'
+            f"注意：\n"
+            f"- 分析至少 3 个竞品\n"
+            f"- 给出明确的定价建议\n"
+            f"- 不要执行发布、付款、发消息等操作"
+        )
+
+    def _build_listing_pack_prompt(self, goal: str, competitors: List[Dict] = None,
+                                   pricing: Dict[str, Any] = None,
+                                   context: Dict[str, Any] = None) -> str:
+        """构建上架物料包 prompt"""
+        import json as json_lib
+
+        competitor_info = ""
+        if competitors:
+            competitor_info = f"\n竞品信息：{json_lib.dumps(competitors, ensure_ascii=False)}\n"
+
+        pricing_info = ""
+        if pricing:
+            pricing_info = f"\n定价参考：{json_lib.dumps(pricing, ensure_ascii=False)}\n"
+
+        ecommerce_hint = ""
+        if self._is_ecommerce_enabled():
+            ecommerce_hint = (
+                "请使用 /ecommerce 技能或 ecommerce 相关技能。\n"
+                "优先使用 sourcing-price-bridge / ecommerce-bridge 获取真实数据。\n\n"
+            )
+
+        return (
+            f"{ecommerce_hint}"
+            f"请为以下产品生成闲鱼/电商上架物料包：{goal}\n"
+            f"{competitor_info}{pricing_info}\n\n"
+            f"请严格按以下 JSON 格式输出（不要输出其他内容）：\n"
+            f'{{\n'
+            f'  "summary": "上架物料包摘要",\n'
+            f'  "listing_copy": "完整的产品标题和详情文案（200-500字）",\n'
+            f'  "pricing": {{"recommended": "建议售价", "min": "最低价", "max": "最高价"}},\n'
+            f'  "image_plan": {{"main_image": "主图建议", "lifestyle": "场景图建议", "details": "细节图建议"}},\n'
+            f'  "next_actions": ["行动项1", "行动项2", "行动项3"],\n'
+            f'  "warnings": ["警告信息（如有）"]\n'
+            f'}}\n\n'
+            f"注意：\n"
+            f"- 生成可直接使用的文案\n"
+            f"- 给出明确的定价建议\n"
+            f"- 提供图片拍摄建议\n"
+            f"- 不要执行发布、付款、发消息等操作"
+        )
 
     def execute_market_research(self, goal: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """调用 Hermes 执行市场调研"""
-        raise NotImplementedError("Hermes provider not yet implemented")
+        """执行市场调研"""
+        prompt = self._build_market_research_prompt(goal, context)
+        cli_result = self._execute_hermes_cli(prompt, context)
+
+        if not cli_result["ok"]:
+            return {
+                "ok": False,
+                "summary": "",
+                "evidence": [],
+                "competitors": [],
+                "pricing": {},
+                "warnings": [cli_result["error"]],
+                "raw_data": cli_result,
+            }
+
+        # 解析 JSON 输出
+        parsed = self._parse_json_output(cli_result["stdout"])
+        if not parsed:
+            return {
+                "ok": False,
+                "summary": "",
+                "evidence": [],
+                "competitors": [],
+                "pricing": {},
+                "warnings": ["Hermes 输出无法解析为 JSON"],
+                "raw_data": cli_result,
+            }
+
+        return {
+            "ok": True,
+            "summary": parsed.get("summary", ""),
+            "evidence": parsed.get("evidence", []),
+            "competitors": parsed.get("competitors", []),
+            "pricing": parsed.get("pricing", {}),
+            "warnings": parsed.get("warnings", []),
+            "raw_data": {"cli_result": cli_result, "parsed": parsed},
+        }
 
     def execute_competitor_analysis(self, goal: str, competitors: List[Dict] = None,
                                      context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """调用 Hermes 执行竞品分析"""
-        raise NotImplementedError("Hermes provider not yet implemented")
+        """执行竞品分析"""
+        prompt = self._build_competitor_analysis_prompt(goal, competitors, context)
+        cli_result = self._execute_hermes_cli(prompt, context)
+
+        if not cli_result["ok"]:
+            return {
+                "ok": False,
+                "summary": "",
+                "competitors": competitors or [],
+                "pricing": {},
+                "warnings": [cli_result["error"]],
+                "raw_data": cli_result,
+            }
+
+        parsed = self._parse_json_output(cli_result["stdout"])
+        if not parsed:
+            return {
+                "ok": False,
+                "summary": "",
+                "competitors": competitors or [],
+                "pricing": {},
+                "warnings": ["Hermes 输出无法解析为 JSON"],
+                "raw_data": cli_result,
+            }
+
+        return {
+            "ok": True,
+            "summary": parsed.get("summary", ""),
+            "competitors": parsed.get("competitors", competitors or []),
+            "pricing": parsed.get("pricing", {}),
+            "warnings": parsed.get("warnings", []),
+            "raw_data": {"cli_result": cli_result, "parsed": parsed},
+        }
 
     def execute_listing_pack(self, goal: str, competitors: List[Dict] = None,
                              pricing: Dict[str, Any] = None,
                              context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """调用 Hermes 执行上架物料包生成"""
-        raise NotImplementedError("Hermes provider not yet implemented")
+        """执行上架物料包生成"""
+        prompt = self._build_listing_pack_prompt(goal, competitors, pricing, context)
+        cli_result = self._execute_hermes_cli(prompt, context)
+
+        if not cli_result["ok"]:
+            return {
+                "ok": False,
+                "summary": "",
+                "listing_copy": "",
+                "pricing": pricing or {},
+                "image_plan": {},
+                "next_actions": [],
+                "warnings": [cli_result["error"]],
+                "raw_data": cli_result,
+            }
+
+        parsed = self._parse_json_output(cli_result["stdout"])
+        if not parsed:
+            return {
+                "ok": False,
+                "summary": "",
+                "listing_copy": "",
+                "pricing": pricing or {},
+                "image_plan": {},
+                "next_actions": [],
+                "warnings": ["Hermes 输出无法解析为 JSON"],
+                "raw_data": cli_result,
+            }
+
+        return {
+            "ok": True,
+            "summary": parsed.get("summary", ""),
+            "listing_copy": parsed.get("listing_copy", ""),
+            "pricing": parsed.get("pricing", pricing or {}),
+            "image_plan": parsed.get("image_plan", {}),
+            "next_actions": parsed.get("next_actions", []),
+            "warnings": parsed.get("warnings", []),
+            "raw_data": {"cli_result": cli_result, "parsed": parsed},
+        }
 
 
 # ── Provider Registry ─────────────────────────────────────
@@ -510,12 +838,7 @@ def get_provider_registry() -> ProviderRegistry:
         # 注册所有 Provider
         mock_provider = LocalMockExecutionProvider()
         heuristic_provider = LocalHeuristicExecutionProvider()
-
-        # Hermes 从配置读取
-        import os
-        hermes_url = os.getenv("HERMES_URL", "")
-        hermes_api_key = os.getenv("HERMES_API_KEY", "")
-        hermes_provider = HermesExecutionProvider(hermes_url, hermes_api_key)
+        hermes_provider = HermesExecutionProvider()
 
         _registry.register(mock_provider)
         _registry.register(hermes_provider)
