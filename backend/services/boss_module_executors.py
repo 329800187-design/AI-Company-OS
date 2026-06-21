@@ -100,6 +100,11 @@ class EcommerceMarketResearchExecutor(ModuleExecutor):
         service._log_event(mission_id, "provider_selected", f"使用 Provider: {provider.name}",
                           module_id=module_id, payload={"provider": provider.name})
 
+        # 如果是 Hermes provider，记录 hermes_invoked 事件
+        if provider.name == "hermes":
+            service._log_event(mission_id, "hermes_invoked", "调用 Hermes CLI",
+                              module_id=module_id, payload={"provider": "hermes"})
+
         # 调用 Provider 执行市场调研
         try:
             provider_result = provider.execute_market_research(goal, context)
@@ -109,10 +114,26 @@ class EcommerceMarketResearchExecutor(ModuleExecutor):
             service._log_event(mission_id, "provider_fallback",
                               f"Provider {provider.name} 失败，fallback 到 LocalAgentRuntime: {str(e)[:100]}",
                               module_id=module_id, payload={"error": str(e)})
+            if provider.name == "hermes":
+                service._log_event(mission_id, "hermes_failed", f"Hermes 执行失败: {str(e)[:100]}",
+                                  module_id=module_id, payload={"error": str(e)})
             return self._fallback_to_runtime(goal, module_id, mission_id, context)
 
         if not provider_result.get("ok"):
+            if provider.name == "hermes":
+                service._log_event(mission_id, "hermes_failed",
+                                  f"Hermes 返回失败: {provider_result.get('error', '未知错误')[:100]}",
+                                  module_id=module_id, payload=provider_result)
             return ExecutionResult(ok=False, error=provider_result.get("error", "Provider 执行失败"))
+
+        # 如果是 Hermes provider，记录 hermes_response_parsed 事件
+        if provider.name == "hermes":
+            service._log_event(mission_id, "hermes_response_parsed", "Hermes 响应解析成功",
+                              module_id=module_id, payload={
+                                  "has_summary": bool(provider_result.get("summary")),
+                                  "has_evidence": bool(provider_result.get("evidence")),
+                                  "has_competitors": bool(provider_result.get("competitors")),
+                              })
 
         # 标准化 structured_output
         from backend.services.boss_execution_providers import create_standard_output
@@ -190,6 +211,11 @@ class EcommerceCompetitorAnalysisExecutor(ModuleExecutor):
         service._log_event(mission_id, "provider_selected", f"使用 Provider: {provider.name}",
                           module_id=module_id, payload={"provider": provider.name})
 
+        # 如果是 Hermes provider，记录 hermes_invoked 事件
+        if provider.name == "hermes":
+            service._log_event(mission_id, "hermes_invoked", "调用 Hermes CLI",
+                              module_id=module_id, payload={"provider": "hermes"})
+
         # 调用 Provider 执行竞品分析
         try:
             provider_result = provider.execute_competitor_analysis(goal, competitors, context)
@@ -198,10 +224,26 @@ class EcommerceCompetitorAnalysisExecutor(ModuleExecutor):
             service._log_event(mission_id, "provider_fallback",
                               f"Provider {provider.name} 失败: {str(e)[:100]}",
                               module_id=module_id, payload={"error": str(e)})
+            if provider.name == "hermes":
+                service._log_event(mission_id, "hermes_failed", f"Hermes 执行失败: {str(e)[:100]}",
+                                  module_id=module_id, payload={"error": str(e)})
             return self._fallback_to_runtime(goal, module_id, mission_id, context, competitors)
 
         if not provider_result.get("ok"):
+            if provider.name == "hermes":
+                service._log_event(mission_id, "hermes_failed",
+                                  f"Hermes 返回失败: {provider_result.get('error', '未知错误')[:100]}",
+                                  module_id=module_id, payload=provider_result)
             return ExecutionResult(ok=False, error=provider_result.get("error", "Provider 执行失败"))
+
+        # 如果是 Hermes provider，记录 hermes_response_parsed 事件
+        if provider.name == "hermes":
+            service._log_event(mission_id, "hermes_response_parsed", "Hermes 响应解析成功",
+                              module_id=module_id, payload={
+                                  "has_summary": bool(provider_result.get("summary")),
+                                  "has_competitors": bool(provider_result.get("competitors")),
+                                  "has_pricing": bool(provider_result.get("pricing")),
+                              })
 
         # 标准化 structured_output
         from backend.services.boss_execution_providers import create_standard_output
@@ -297,6 +339,11 @@ class EcommerceListingPackExecutor(ModuleExecutor):
         service._log_event(mission_id, "provider_selected", f"使用 Provider: {provider.name}",
                           module_id=module_id, payload={"provider": provider.name})
 
+        # 如果是 Hermes provider，记录 hermes_invoked 事件
+        if provider.name == "hermes":
+            service._log_event(mission_id, "hermes_invoked", "调用 Hermes CLI",
+                              module_id=module_id, payload={"provider": "hermes"})
+
         # 调用 Provider 执行上架物料包生成
         try:
             provider_result = provider.execute_listing_pack(goal, competitors, pricing, context)
@@ -305,10 +352,26 @@ class EcommerceListingPackExecutor(ModuleExecutor):
             service._log_event(mission_id, "provider_fallback",
                               f"Provider {provider.name} 失败: {str(e)[:100]}",
                               module_id=module_id, payload={"error": str(e)})
+            if provider.name == "hermes":
+                service._log_event(mission_id, "hermes_failed", f"Hermes 执行失败: {str(e)[:100]}",
+                                  module_id=module_id, payload={"error": str(e)})
             return self._fallback_to_runtime(goal, module_id, mission_id, context, competitors, pricing)
 
         if not provider_result.get("ok"):
+            if provider.name == "hermes":
+                service._log_event(mission_id, "hermes_failed",
+                                  f"Hermes 返回失败: {provider_result.get('error', '未知错误')[:100]}",
+                                  module_id=module_id, payload=provider_result)
             return ExecutionResult(ok=False, error=provider_result.get("error", "Provider 执行失败"))
+
+        # 如果是 Hermes provider，记录 hermes_response_parsed 事件
+        if provider.name == "hermes":
+            service._log_event(mission_id, "hermes_response_parsed", "Hermes 响应解析成功",
+                              module_id=module_id, payload={
+                                  "has_summary": bool(provider_result.get("summary")),
+                                  "has_listing_copy": bool(provider_result.get("listing_copy")),
+                                  "has_image_plan": bool(provider_result.get("image_plan")),
+                              })
 
         # 标准化 structured_output
         from backend.services.boss_execution_providers import create_standard_output
