@@ -497,12 +497,12 @@ class BossCommandCenterService:
                 self._log_event(mission_id, "module_succeeded",
                                 f"模块 {MODULE_DEFINITIONS.get(module_id, {}).get('title', module_id)} 执行完成",
                                 module_id=module_id,
-                                payload={"confidence": exec_result.confidence, "duration_ms": duration_ms})
+                                payload={"confidence": exec_result.confidence, "duration_ms": duration_ms, "provider": exec_result.provider})
             else:
                 self._log_event(mission_id, "module_failed",
                                 f"模块 {MODULE_DEFINITIONS.get(module_id, {}).get('title', module_id)} 执行失败: {exec_result.error[:100]}",
                                 module_id=module_id,
-                                payload={"error": exec_result.error, "duration_ms": duration_ms})
+                                payload={"error": exec_result.error, "duration_ms": duration_ms, "provider": exec_result.provider})
 
             return self.get_mission(mission_id)
 
@@ -538,6 +538,8 @@ class BossCommandCenterService:
         if fmt == "markdown":
             content = self._export_markdown(mission)
             self._log_event(mission_id, "mission_exported", "导出 Markdown 报告", payload={"format": "markdown"})
+            self._log_event(mission_id, "report_generated", f"生成 {fmt.upper()} 报告",
+                          payload={"format": fmt, "content_length": len(content)})
             return {
                 "content": content,
                 "filename": f"boss-mission-{mission_id}.md",
@@ -546,6 +548,8 @@ class BossCommandCenterService:
         else:
             content = json.dumps(mission, ensure_ascii=False, indent=2)
             self._log_event(mission_id, "mission_exported", "导出 JSON 报告", payload={"format": "json"})
+            self._log_event(mission_id, "report_generated", f"生成 {fmt.upper()} 报告",
+                          payload={"format": fmt, "content_length": len(content)})
             return {
                 "content": content,
                 "filename": f"boss-mission-{mission_id}.json",
