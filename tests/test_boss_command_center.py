@@ -9,6 +9,9 @@
 - export json / markdown
 - API 接口验证
 - duration_ms / started_at / finished_at / next_actions 字段
+- provider 抽象层测试
+- structured_output 标准化测试
+- 事件日志增强测试
 """
 import sys
 import os
@@ -21,7 +24,8 @@ from unittest.mock import patch, MagicMock
 
 def _make_mock_executor(ok=True, final_answer="", confidence=0.0,
                         warnings=None, used_tools=None, mode="local",
-                        error="", next_actions=None, structured_output=None):
+                        error="", next_actions=None, structured_output=None,
+                        provider="local_mock"):
     """创建 mock executor"""
     mock_exec = MagicMock()
     mock_result = MagicMock()
@@ -34,6 +38,7 @@ def _make_mock_executor(ok=True, final_answer="", confidence=0.0,
     mock_result.error = error
     mock_result.next_actions = next_actions or []
     mock_result.structured_output = structured_output or {}
+    mock_result.provider = provider
     mock_exec.execute.return_value = mock_result
     return mock_exec
 
@@ -122,6 +127,7 @@ class TestBossCommandCenterService:
         mock_exec_result.error = ""
         mock_exec_result.next_actions = ["联系投资人", "写商业计划书"]
         mock_exec_result.structured_output = {}
+        mock_exec_result.provider = "local_mock"
 
         mock_executor = MagicMock()
         mock_executor.execute.return_value = mock_exec_result
@@ -680,3 +686,181 @@ class TestMetrics:
         assert "metrics" in data
         assert "completion_rate" in data["metrics"]
         assert data["metrics"]["total_modules"] == 5
+
+
+# ── Provider 抽象层测试 ────────────────────────────────────
+
+class TestExecutionProvider:
+    """Execution Provider 测试"""
+
+    def test_mock_provider_available(self):
+        """LocalMockExecutionProvider 应该可用"""
+        from backend.services.boss_execution_providers import LocalMockExecutionProvider
+        provider = LocalMockExecutionProvider()
+        assert provider.is_available is True
+        assert provider.name == "local_mock"
+
+    def test_mock_provider_market_research(self):
+        """Mock Provider 市场调研应返回正确结构"""
+        from backend.services.boss_execution_providers import LocalMockExecutionProvider
+        provider = LocalMockExecutionProvider()
+        result = provider.execute_market_research("测试目标")
+        assert result["ok"] is True
+        assert "summary" in result
+        assert "evidence" in result
+        assert "competitors" in result
+        assert "pricing" in result
+        assert "warnings" in result
+        assert "raw_data" in result
+
+    def test_mock_provider_competitor_analysis(self):
+        """Mock Provider 竞品分析应返回正确结构"""
+        from backend.services.boss_execution_providers import LocalMockExecutionProvider
+        provider = LocalMockExecutionProvider()
+        result = provider.execute_competitor_analysis("测试目标", [])
+        assert result["ok"] is True
+        assert "summary" in result
+        assert "competitors" in result
+        assert "pricing" in result
+
+    def test_mock_provider_listing_pack(self):
+        """Mock Provider 上架物料包应返回正确结构"""
+        from backend.services.boss_execution_providers import LocalMockExecutionProvider
+        provider = LocalMockExecutionProvider()
+        result = provider.execute_listing_pack("测试目标", [], {})
+        assert result["ok"] is True
+        assert "summary" in result
+        assert "listing_copy" in result
+        assert "pricing" in result
+        assert "image_plan" in result
+        assert "next_actions" in result
+
+    def test_provider_registry(self):
+        """Provider Registry 应该能注册和获取 Provider"""
+        from backend.services.boss_execution_providers import ProviderRegistry, LocalMockExecutionProvider
+        registry = ProviderRegistry()
+        provider = LocalMockExecutionProvider()
+        registry.register(provider, is_fallback=True)
+
+        retrieved = registry.get_provider("local_mock")
+        assert retrieved is not None
+        assert retrieved.name == "local_mock"
+
+    def test_provider_registry_get_available(self):
+        """Provider Registry 应该能获取可用的 Provider"""
+        from backend.services.boss_execution_providers import ProviderRegistry, LocalMockExecutionProvider
+        registry = ProviderRegistry()
+        provider = LocalMockExecutionProvider()
+        registry.register(provider, is_fallback=True)
+
+        available, warnings = registry.get_available_provider("local_mock")
+        assert available is not None
+        assert available.name == "local_mock"
+        assert len(warnings) == 0
+
+    def test_provider_registry_fallback(self):
+        """Provider Registry 应该能 fallback"""
+        from backend.services.boss_execution_providers import ProviderRegistry, LocalMockExecutionProvider
+
+        class UnavailableProvider(LocalMockExecutionProvider):
+            @property
+            def is_available(self):
+                return False
+
+        registry = ProviderRegistry()
+        unavailable = UnavailableProvider()
+        unavailable._name = "unavailable"
+        registry.register(unavailable)
+
+        fallback = LocalMockExecutionProvider()
+        registry.register(fallback, is_fallback=True)
+
+        available, warnings = registry.get_available_provider("unavailable")
+        assert available is not None
+        assert available.name == "local_mock"
+        assert len(warnings) > 0
+
+
+# ── 标准化输出测试 ──────────────────────────────────────────
+
+class TestStandardOutput:
+    """标准化 structured_output 测试"""
+
+    def test_create_standard_output(self):
+        """create_standard_output 应该返回完整结构"""
+        from backend.services.boss_execution_providers import create_standard_output
+        output = create_standard_output(
+            status="success",
+            summary="测试摘要",
+            provider="local_mock",
+        )
+        assert output["status"] == "success"
+        assert output["summary"] == "测试摘要"
+        assert output["provider"] == "local_mock"
+        assert "generated_at" in output
+        assert "evidence" in output
+        assert "competitors" in output
+        assert "pricing" in output
+        assert "listing_copy" in output
+        assert "image_plan" in output
+        assert "next_actions" in output
+        assert "warnings" in output
+        assert "raw_data" in output
+
+
+# ── 事件日志增强测试 ─────────────────────────────────────────
+
+class TestEnhancedEvents:
+    """增强事件日志测试"""
+
+    @pytest.fixture
+    def service(self):
+        from backend.services.boss_command_center import BossCommandCenterService
+        return BossCommandCenterService()
+
+    @pytest.fixture(autouse=True)
+    def _bypass_rate_limit(self):
+        from unittest.mock import patch
+        with patch("backend.routers.boss_router.rate_limiter") as mock_rl:
+            mock_rl.check.return_value = (True, "")
+            yield
+
+    def test_module_succeeded_logs_provider(self, service):
+        """module_succeeded 事件应包含 provider"""
+        mission = service.create_mission("provider 事件测试")
+        mission_id = mission["mission_id"]
+
+        mock_executor = _make_mock_executor(ok=True, final_answer="结果", confidence=0.7, provider="local_mock")
+        with patch("backend.services.boss_module_executors.get_executor", return_value=mock_executor):
+            service.run_module(mission_id, "strategy")
+
+        events = service.get_events(mission_id)
+        succeeded = [e for e in events if e["type"] == "module_succeeded"]
+        assert len(succeeded) == 1
+        assert succeeded[0]["payload"]["provider"] == "local_mock"
+
+    def test_module_failed_logs_provider(self, service):
+        """module_failed 事件应包含 provider"""
+        mission = service.create_mission("失败 provider 测试")
+        mission_id = mission["mission_id"]
+
+        mock_executor = _make_mock_executor(ok=False, error="boom", provider="local_mock")
+        with patch("backend.services.boss_module_executors.get_executor", return_value=mock_executor):
+            service.run_module(mission_id, "strategy")
+
+        events = service.get_events(mission_id)
+        failed = [e for e in events if e["type"] == "module_failed"]
+        assert len(failed) == 1
+        assert failed[0]["payload"]["provider"] == "local_mock"
+
+    def test_export_logs_report_generated(self, service):
+        """export 应该产生 report_generated 事件"""
+        mission = service.create_mission("报告生成事件测试")
+        mission_id = mission["mission_id"]
+
+        service.export_mission(mission_id, fmt="json")
+        events = service.get_events(mission_id)
+        report_events = [e for e in events if e["type"] == "report_generated"]
+        assert len(report_events) == 1
+        assert report_events[0]["payload"]["format"] == "json"
+        assert "content_length" in report_events[0]["payload"]
