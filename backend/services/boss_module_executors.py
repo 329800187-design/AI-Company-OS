@@ -124,9 +124,13 @@ class EcommerceMarketResearchExecutor(ModuleExecutor):
                 service._log_event(mission_id, "hermes_failed",
                                   f"Hermes 返回失败: {provider_result.get('error', '未知错误')[:100]}",
                                   module_id=module_id, payload=provider_result)
-            return ExecutionResult(ok=False, error=provider_result.get("error", "Provider 执行失败"))
+            # Fallback 到 LocalAgentRuntime
+            service._log_event(mission_id, "provider_fallback",
+                              f"Provider {provider.name} 返回失败，fallback 到 LocalAgentRuntime",
+                              module_id=module_id, payload=provider_result)
+            return self._fallback_to_runtime(goal, module_id, mission_id, context)
 
-        # 如果是 Hermes provider，记录 hermes_response_parsed 事件
+        # 如果是 Hermes provider，记录 hermes_response_parsed 和 tool_calls 事件
         if provider.name == "hermes":
             service._log_event(mission_id, "hermes_response_parsed", "Hermes 响应解析成功",
                               module_id=module_id, payload={
@@ -135,18 +139,43 @@ class EcommerceMarketResearchExecutor(ModuleExecutor):
                                   "has_competitors": bool(provider_result.get("competitors")),
                               })
 
+            # 记录 tool_calls 事件
+            tool_calls = provider_result.get("tool_calls", [])
+            if tool_calls:
+                service._log_event(mission_id, "hermes_tool_call_detected",
+                                  f"Hermes 记录了 {len(tool_calls)} 次工具调用",
+                                  module_id=module_id, payload={"tool_calls": tool_calls})
+
         # 标准化 structured_output
         from backend.services.boss_execution_providers import create_standard_output
         structured = create_standard_output(
             status="success",
             summary=provider_result.get("summary", ""),
             evidence=provider_result.get("evidence", []),
+            evidence_files=provider_result.get("evidence_files", []),
+            screenshots=provider_result.get("screenshots", []),
+            tool_calls=provider_result.get("tool_calls", []),
+            missing_evidence=provider_result.get("missing_evidence", []),
+            evidence_gate_passed=provider_result.get("evidence_gate_passed", True),
             competitors=provider_result.get("competitors", []),
             pricing=provider_result.get("pricing", {}),
             warnings=provider_result.get("warnings", []),
             provider=provider.name,
             raw_data=provider_result.get("raw_data", {}),
         )
+
+        # 记录 evidence gate 事件
+        evidence_gate_passed = structured.get("evidence_gate_passed", True)
+        if evidence_gate_passed:
+            service._log_event(mission_id, "evidence_gate_passed",
+                              f"证据门槛通过: 收集到 {len(structured['evidence'])} 条证据",
+                              module_id=module_id, payload={"evidence_count": len(structured["evidence"])})
+        else:
+            service._log_event(mission_id, "evidence_gate_failed",
+                              f"证据门槛未通过: {', '.join(structured.get('missing_evidence', []))}",
+                              module_id=module_id, payload={"missing_evidence": structured.get("missing_evidence", [])})
+            # 证据不足时，status 标记为 partial
+            structured["status"] = "partial"
 
         # 记录 evidence_collected 和 structured_output_generated 事件
         service._log_event(mission_id, "evidence_collected",
@@ -158,11 +187,14 @@ class EcommerceMarketResearchExecutor(ModuleExecutor):
 
         warnings.extend(structured.get("warnings", []))
 
+        # 如果 evidence gate 未通过，降低 confidence
+        confidence = 0.7 if evidence_gate_passed else 0.3
+
         return ExecutionResult(
             ok=True,
             final_answer=structured.get("summary", ""),
             structured_output=structured,
-            confidence=0.7,
+            confidence=confidence,
             warnings=warnings,
             used_tools=[provider.name],
             mode="provider",
@@ -245,11 +277,24 @@ class EcommerceCompetitorAnalysisExecutor(ModuleExecutor):
                                   "has_pricing": bool(provider_result.get("pricing")),
                               })
 
+            # 记录 tool_calls 事件
+            tool_calls = provider_result.get("tool_calls", [])
+            if tool_calls:
+                service._log_event(mission_id, "hermes_tool_call_detected",
+                                  f"Hermes 记录了 {len(tool_calls)} 次工具调用",
+                                  module_id=module_id, payload={"tool_calls": tool_calls})
+
         # 标准化 structured_output
         from backend.services.boss_execution_providers import create_standard_output
         structured = create_standard_output(
             status="success",
             summary=provider_result.get("summary", ""),
+            evidence=provider_result.get("evidence", []),
+            evidence_files=provider_result.get("evidence_files", []),
+            screenshots=provider_result.get("screenshots", []),
+            tool_calls=provider_result.get("tool_calls", []),
+            missing_evidence=provider_result.get("missing_evidence", []),
+            evidence_gate_passed=provider_result.get("evidence_gate_passed", True),
             competitors=provider_result.get("competitors", competitors),
             pricing=provider_result.get("pricing", {}),
             warnings=provider_result.get("warnings", []),
@@ -257,17 +302,36 @@ class EcommerceCompetitorAnalysisExecutor(ModuleExecutor):
             raw_data=provider_result.get("raw_data", {}),
         )
 
+        # 记录 evidence gate 事件
+        evidence_gate_passed = structured.get("evidence_gate_passed", True)
+        if evidence_gate_passed:
+            service._log_event(mission_id, "evidence_gate_passed",
+                              f"证据门槛通过: 收集到 {len(structured['evidence'])} 条证据和 {len(structured['competitors'])} 个竞品",
+                              module_id=module_id, payload={
+                                  "evidence_count": len(structured["evidence"]),
+                                  "competitor_count": len(structured["competitors"]),
+                              })
+        else:
+            service._log_event(mission_id, "evidence_gate_failed",
+                              f"证据门槛未通过: {', '.join(structured.get('missing_evidence', []))}",
+                              module_id=module_id, payload={"missing_evidence": structured.get("missing_evidence", [])})
+            # 证据不足时，status 标记为 partial
+            structured["status"] = "partial"
+
         service._log_event(mission_id, "structured_output_generated",
                           f"生成标准化输出",
                           module_id=module_id, payload={"provider": provider.name})
 
         warnings = provider_warnings + structured.get("warnings", [])
 
+        # 如果 evidence gate 未通过，降低 confidence
+        confidence = 0.7 if evidence_gate_passed else 0.3
+
         return ExecutionResult(
             ok=True,
             final_answer=structured.get("summary", ""),
             structured_output=structured,
-            confidence=0.7,
+            confidence=confidence,
             warnings=warnings,
             used_tools=[provider.name],
             mode="provider",
@@ -373,11 +437,24 @@ class EcommerceListingPackExecutor(ModuleExecutor):
                                   "has_image_plan": bool(provider_result.get("image_plan")),
                               })
 
+            # 记录 tool_calls 事件
+            tool_calls = provider_result.get("tool_calls", [])
+            if tool_calls:
+                service._log_event(mission_id, "hermes_tool_call_detected",
+                                  f"Hermes 记录了 {len(tool_calls)} 次工具调用",
+                                  module_id=module_id, payload={"tool_calls": tool_calls})
+
         # 标准化 structured_output
         from backend.services.boss_execution_providers import create_standard_output
         structured = create_standard_output(
             status="success",
             summary=provider_result.get("summary", ""),
+            evidence=provider_result.get("evidence", []),
+            evidence_files=provider_result.get("evidence_files", []),
+            screenshots=provider_result.get("screenshots", []),
+            tool_calls=provider_result.get("tool_calls", []),
+            missing_evidence=provider_result.get("missing_evidence", []),
+            evidence_gate_passed=provider_result.get("evidence_gate_passed", True),
             listing_copy=provider_result.get("listing_copy", ""),
             pricing=provider_result.get("pricing", pricing),
             image_plan=provider_result.get("image_plan", {}),
@@ -387,17 +464,33 @@ class EcommerceListingPackExecutor(ModuleExecutor):
             raw_data=provider_result.get("raw_data", {}),
         )
 
+        # 记录 evidence gate 事件
+        evidence_gate_passed = structured.get("evidence_gate_passed", True)
+        if evidence_gate_passed:
+            service._log_event(mission_id, "evidence_gate_passed",
+                              f"证据门槛通过: 基于前序 evidence 生成上架文案",
+                              module_id=module_id, payload={"evidence_count": len(structured["evidence"])})
+        else:
+            service._log_event(mission_id, "evidence_gate_failed",
+                              f"证据门槛未通过: {', '.join(structured.get('missing_evidence', []))}",
+                              module_id=module_id, payload={"missing_evidence": structured.get("missing_evidence", [])})
+            # 证据不足时，status 标记为 partial
+            structured["status"] = "partial"
+
         service._log_event(mission_id, "structured_output_generated",
                           f"生成标准化输出",
                           module_id=module_id, payload={"provider": provider.name})
 
         warnings = provider_warnings + structured.get("warnings", [])
 
+        # 如果 evidence gate 未通过，降低 confidence
+        confidence = 0.7 if evidence_gate_passed else 0.3
+
         return ExecutionResult(
             ok=True,
             final_answer=structured.get("summary", ""),
             structured_output=structured,
-            confidence=0.7,
+            confidence=confidence,
             warnings=warnings,
             used_tools=[provider.name],
             mode="provider",

@@ -17,12 +17,38 @@ from backend.logger import get_logger
 logger = get_logger()
 
 
+# ── Evidence Gate 配置 ──────────────────────────────────────
+
+# 每个模块类型的最低 evidence 要求
+EVIDENCE_GATE_THRESHOLDS = {
+    "market": {
+        "min_evidence": 2,      # 至少 2 条来源
+        "min_competitors": 2,   # 至少 2 个竞品
+        "description": "市场调研需要至少 2 条搜索来源和 2 个竞品数据",
+    },
+    "competitor_analysis": {
+        "min_evidence": 3,      # 至少 3 条来源/货源样本
+        "min_competitors": 3,   # 至少 3 个竞品
+        "description": "竞品分析需要至少 3 条货源样本和 3 个竞品数据",
+    },
+    "listing_pack": {
+        "min_evidence": 1,      # 至少 1 条来源（依赖前序 evidence）
+        "description": "上架文案需要基于前序 evidence，不能凭空生成",
+    },
+}
+
+
 # ── 标准化输出结构 ────────────────────────────────────────
 
 def create_standard_output(
     status: str = "success",
     summary: str = "",
     evidence: List[Dict[str, Any]] = None,
+    evidence_files: List[str] = None,
+    screenshots: List[str] = None,
+    tool_calls: List[Dict[str, Any]] = None,
+    missing_evidence: List[str] = None,
+    evidence_gate_passed: bool = True,
     competitors: List[Dict[str, Any]] = None,
     pricing: Dict[str, Any] = None,
     listing_copy: str = "",
@@ -32,11 +58,24 @@ def create_standard_output(
     provider: str = "",
     raw_data: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
-    """创建标准化的 structured_output"""
+    """创建标准化的 structured_output
+
+    新增字段：
+    - evidence_files: 采集到的文件路径列表
+    - screenshots: 截图路径列表
+    - tool_calls: Hermes 工具调用记录 [{"tool": "name", "args": {}, "result": "..."}]
+    - missing_evidence: 缺失的证据类型列表
+    - evidence_gate_passed: 证据门槛是否通过
+    """
     return {
         "status": status,
         "summary": summary,
         "evidence": evidence or [],
+        "evidence_files": evidence_files or [],
+        "screenshots": screenshots or [],
+        "tool_calls": tool_calls or [],
+        "missing_evidence": missing_evidence or [],
+        "evidence_gate_passed": evidence_gate_passed,
         "competitors": competitors or [],
         "pricing": pricing or {},
         "listing_copy": listing_copy,
@@ -46,6 +85,66 @@ def create_standard_output(
         "provider": provider,
         "generated_at": datetime.now().isoformat(),
         "raw_data": raw_data or {},
+    }
+
+
+def check_evidence_gate(
+    module_id: str,
+    evidence: List[Dict[str, Any]] = None,
+    competitors: List[Dict[str, Any]] = None,
+    prev_results: Dict[str, Any] = None,
+) -> Dict[str, Any]:
+    """检查 evidence gate 是否通过
+
+    Args:
+        module_id: 模块 ID（market / competitor_analysis / listing_pack）
+        evidence: 当前模块收集的 evidence 列表
+        competitors: 竞品列表
+        prev_results: 前序模块结果（listing 依赖前序 evidence）
+
+    Returns:
+        {
+            "passed": bool,
+            "missing": [str],  # 缺失的证据类型
+            "details": str,    # 可读描述
+        }
+    """
+    thresholds = EVIDENCE_GATE_THRESHOLDS.get(module_id, {})
+    if not thresholds:
+        return {"passed": True, "missing": [], "details": "无门槛要求"}
+
+    evidence = evidence or []
+    competitors = competitors or []
+    missing = []
+
+    # 检查 evidence 数量
+    min_evidence = thresholds.get("min_evidence", 0)
+    if len(evidence) < min_evidence:
+        # 对 listing_pack，检查前序 evidence 是否足够
+        if module_id == "listing_pack" and prev_results:
+            prev_evidence = []
+            for prev_module in prev_results.values():
+                prev_so = prev_module.get("structured_output", {})
+                prev_evidence.extend(prev_so.get("evidence", []))
+            if len(prev_evidence) < min_evidence:
+                missing.append(f"前序 evidence 不足（需要 {min_evidence} 条，当前 {len(prev_evidence)} 条）")
+        elif module_id != "listing_pack":
+            missing.append(f"evidence 不足（需要 {min_evidence} 条，当前 {len(evidence)} 条）")
+
+    # 检查竞品数量
+    min_competitors = thresholds.get("min_competitors", 0)
+    if min_competitors > 0 and len(competitors) < min_competitors:
+        missing.append(f"竞品数据不足（需要 {min_competitors} 个，当前 {len(competitors)} 个）")
+
+    passed = len(missing) == 0
+    details = thresholds.get("description", "")
+    if not passed:
+        details = f"证据门槛未通过：{'; '.join(missing)}"
+
+    return {
+        "passed": passed,
+        "missing": missing,
+        "details": details,
     }
 
 
@@ -549,13 +648,25 @@ class HermesExecutionProvider(BossExecutionProvider):
         return None
 
     def _build_market_research_prompt(self, goal: str, context: Dict[str, Any] = None) -> str:
-        """构建市场调研 prompt"""
+        """构建市场调研 prompt — 强制要求真实工具链采集"""
         ecommerce_hint = ""
         if self._is_ecommerce_enabled():
             ecommerce_hint = (
-                "请使用 /ecommerce 技能或 ecommerce 相关技能。\n"
-                "优先使用 sourcing-price-bridge / ecommerce-bridge 获取真实数据。\n"
-                "可以使用 browser 采集证据，但不要执行发布/付款/发消息等操作。\n\n"
+                "【重要】你必须使用真实工具链采集证据，不能凭记忆生成数据。\n\n"
+                "工具链要求：\n"
+                "1. 必须先调用 ecommerce-bridge 或 sourcing-price-bridge 技能获取真实货源数据\n"
+                "2. 必须使用 browser 技能访问至少 2 个真实网页采集证据\n"
+                "3. 每条 evidence 必须包含真实 URL（不能是 example.com）\n"
+                "4. 每个竞品必须包含真实的价格区间和平台信息\n"
+                "5. 不要执行发布/付款/发消息等操作\n\n"
+                "工具调用记录：\n"
+                "在输出 JSON 中，必须包含 tool_calls 数组，记录你调用的每个工具：\n"
+                '```json\n'
+                '  "tool_calls": [\n'
+                '    {"tool": "sourcing-price-bridge", "args": {"keyword": "..."}, "result": "获取到 N 条货源"},\n'
+                '    {"tool": "browser", "args": {"url": "https://..."}, "result": "采集到 N 条数据"}\n'
+                '  ]\n'
+                '```\n\n'
             )
 
         return (
@@ -564,20 +675,33 @@ class HermesExecutionProvider(BossExecutionProvider):
             f"请严格按以下 JSON 格式输出（不要输出其他内容）：\n"
             f'{{\n'
             f'  "summary": "市场调研摘要（200-500字）",\n'
-            f'  "evidence": [{{"title": "来源标题", "url": "来源URL"}}],\n'
-            f'  "competitors": [{{"name": "竞品名称", "price": "价格区间", "platform": "平台", "features": "核心卖点"}}],\n'
-            f'  "pricing": {{"range": "价格区间", "avg": "平均价格"}},\n'
+            f'  "evidence": [\n'
+            f'    {{"title": "来源标题", "url": "https://真实URL", "type": "source/sourcing/browser"}},\n'
+            f'    ...\n'
+            f'  ],\n'
+            f'  "tool_calls": [\n'
+            f'    {{"tool": "工具名", "args": {{}}, "result": "调用结果摘要"}}\n'
+            f'  ],\n'
+            f'  "evidence_files": [],\n'
+            f'  "screenshots": [],\n'
+            f'  "competitors": [\n'
+            f'    {{"name": "竞品名称", "price": "真实价格区间", "platform": "真实平台", "features": "核心卖点", "source_url": "数据来源URL"}},\n'
+            f'    ...\n'
+            f'  ],\n'
+            f'  "pricing": {{"range": "价格区间", "avg": "平均价格", "sources": ["数据来源"]}},\n'
             f'  "warnings": ["警告信息（如有）"]\n'
             f'}}\n\n'
-            f"注意：\n"
-            f"- 竞品列表至少 3 个\n"
-            f"- 尽量引用真实来源\n"
+            f"【严格要求】\n"
+            f"- evidence 数组至少 2 条，且 URL 必须是真实可访问的链接\n"
+            f"- competitors 数组至少 2 个，每个必须有 price 和 platform\n"
+            f"- tool_calls 必须记录你实际调用的工具\n"
+            f"- 如果无法获取真实数据，必须在 warnings 中说明，不能编造数据\n"
             f"- 不要执行发布、付款、发消息等操作"
         )
 
     def _build_competitor_analysis_prompt(self, goal: str, competitors: List[Dict] = None,
                                           context: Dict[str, Any] = None) -> str:
-        """构建竞品分析 prompt"""
+        """构建竞品分析 prompt — 强制要求真实工具链采集"""
         import json as json_lib
 
         competitor_info = ""
@@ -587,8 +711,14 @@ class HermesExecutionProvider(BossExecutionProvider):
         ecommerce_hint = ""
         if self._is_ecommerce_enabled():
             ecommerce_hint = (
-                "请使用 /ecommerce 技能或 ecommerce 相关技能。\n"
-                "优先使用 sourcing-price-bridge / ecommerce-bridge 获取真实数据。\n\n"
+                "【重要】你必须使用真实工具链采集证据，不能凭记忆生成数据。\n\n"
+                "工具链要求：\n"
+                "1. 必须先调用 ecommerce-bridge 或 sourcing-price-bridge 技能获取真实货源数据\n"
+                "2. 必须使用 browser 技能访问至少 3 个竞品页面采集详细信息\n"
+                "3. 每条竞品必须有真实 URL 和真实价格\n"
+                "4. 不要执行发布/付款/发消息等操作\n\n"
+                "工具调用记录：\n"
+                "在输出 JSON 中，必须包含 tool_calls 数组，记录你调用的每个工具。\n\n"
             )
 
         return (
@@ -597,20 +727,32 @@ class HermesExecutionProvider(BossExecutionProvider):
             f"请严格按以下 JSON 格式输出（不要输出其他内容）：\n"
             f'{{\n'
             f'  "summary": "竞品分析摘要（200-500字）",\n'
-            f'  "competitors": [{{"name": "竞品名称", "price": "价格", "strengths": "优势", "weaknesses": "劣势"}}],\n'
+            f'  "evidence": [\n'
+            f'    {{"title": "来源标题", "url": "https://真实URL", "type": "source/sourcing/browser"}},\n'
+            f'    ...\n'
+            f'  ],\n'
+            f'  "tool_calls": [\n'
+            f'    {{"tool": "工具名", "args": {{}}, "result": "调用结果摘要"}}\n'
+            f'  ],\n'
+            f'  "competitors": [\n'
+            f'    {{"name": "竞品名称", "price": "真实价格", "strengths": "优势", "weaknesses": "劣势", "source_url": "数据来源URL"}},\n'
+            f'    ...\n'
+            f'  ],\n'
             f'  "pricing": {{"recommended_range": "建议定价范围", "rationale": "定价理由"}},\n'
             f'  "warnings": ["警告信息（如有）"]\n'
             f'}}\n\n'
-            f"注意：\n"
-            f"- 分析至少 3 个竞品\n"
-            f"- 给出明确的定价建议\n"
+            f"【严格要求】\n"
+            f"- evidence 数组至少 3 条，且 URL 必须是真实可访问的链接\n"
+            f"- competitors 数组至少 3 个，每个必须有真实价格和来源 URL\n"
+            f"- tool_calls 必须记录你实际调用的工具\n"
+            f"- 如果无法获取真实数据，必须在 warnings 中说明，不能编造数据\n"
             f"- 不要执行发布、付款、发消息等操作"
         )
 
     def _build_listing_pack_prompt(self, goal: str, competitors: List[Dict] = None,
                                    pricing: Dict[str, Any] = None,
                                    context: Dict[str, Any] = None) -> str:
-        """构建上架物料包 prompt"""
+        """构建上架物料包 prompt — 必须基于前序 evidence"""
         import json as json_lib
 
         competitor_info = ""
@@ -621,35 +763,56 @@ class HermesExecutionProvider(BossExecutionProvider):
         if pricing:
             pricing_info = f"\n定价参考：{json_lib.dumps(pricing, ensure_ascii=False)}\n"
 
+        # 获取前序 evidence
+        prev_evidence_info = ""
+        if context and context.get("prev_results"):
+            all_evidence = []
+            for module_id, module_data in context["prev_results"].items():
+                so = module_data.get("structured_output", {})
+                all_evidence.extend(so.get("evidence", []))
+            if all_evidence:
+                prev_evidence_info = f"\n前序 evidence（必须基于这些真实数据生成文案）：\n{json_lib.dumps(all_evidence[:10], ensure_ascii=False)}\n"
+
         ecommerce_hint = ""
         if self._is_ecommerce_enabled():
             ecommerce_hint = (
-                "请使用 /ecommerce 技能或 ecommerce 相关技能。\n"
-                "优先使用 sourcing-price-bridge / ecommerce-bridge 获取真实数据。\n\n"
+                "【重要】上架文案必须基于前序 evidence 生成，不能凭空编造。\n\n"
+                "要求：\n"
+                "1. 标题和卖点必须引用前序 evidence 中的真实数据\n"
+                "2. 定价必须基于前序竞品分析的真实价格\n"
+                "3. 如果前序 evidence 不足，必须在 warnings 中说明\n"
+                "4. 不要执行发布/付款/发消息等操作\n\n"
             )
 
         return (
             f"{ecommerce_hint}"
             f"请为以下产品生成闲鱼/电商上架物料包：{goal}\n"
-            f"{competitor_info}{pricing_info}\n\n"
+            f"{competitor_info}{pricing_info}{prev_evidence_info}\n\n"
             f"请严格按以下 JSON 格式输出（不要输出其他内容）：\n"
             f'{{\n'
             f'  "summary": "上架物料包摘要",\n'
             f'  "listing_copy": "完整的产品标题和详情文案（200-500字）",\n'
-            f'  "pricing": {{"recommended": "建议售价", "min": "最低价", "max": "最高价"}},\n'
+            f'  "evidence": [\n'
+            f'    {{"title": "数据来源", "url": "https://真实URL", "type": "source/sourcing/browser"}},\n'
+            f'    ...\n'
+            f'  ],\n'
+            f'  "tool_calls": [\n'
+            f'    {{"tool": "工具名", "args": {{}}, "result": "调用结果摘要"}}\n'
+            f'  ],\n'
+            f'  "pricing": {{"recommended": "建议售价", "min": "最低价", "max": "最高价", "evidence_based": true}},\n'
             f'  "image_plan": {{"main_image": "主图建议", "lifestyle": "场景图建议", "details": "细节图建议"}},\n'
             f'  "next_actions": ["行动项1", "行动项2", "行动项3"],\n'
             f'  "warnings": ["警告信息（如有）"]\n'
             f'}}\n\n'
-            f"注意：\n"
-            f"- 生成可直接使用的文案\n"
-            f"- 给出明确的定价建议\n"
-            f"- 提供图片拍摄建议\n"
+            f"【严格要求】\n"
+            f"- listing_copy 中的标题、卖点、定价必须引用前序 evidence 中的真实数据\n"
+            f"- pricing.evidence_based 必须为 true（基于前序数据）\n"
+            f"- 如果前序 evidence 不足，必须在 warnings 中说明证据不足，不能编造数据\n"
             f"- 不要执行发布、付款、发消息等操作"
         )
 
     def execute_market_research(self, goal: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """执行市场调研"""
+        """执行市场调研 — 带 evidence gate 验证"""
         prompt = self._build_market_research_prompt(goal, context)
         cli_result = self._execute_hermes_cli(prompt, context)
 
@@ -673,23 +836,51 @@ class HermesExecutionProvider(BossExecutionProvider):
                 "evidence": [],
                 "competitors": [],
                 "pricing": {},
-                "warnings": ["Hermes 输出无法解析为 JSON"],
+                "warnings": ["Hermes 输出无法解析为 JSON，无法获取真实证据"],
                 "raw_data": cli_result,
             }
+
+        # 提取新增字段
+        tool_calls = parsed.get("tool_calls", [])
+        evidence_files = parsed.get("evidence_files", [])
+        screenshots = parsed.get("screenshots", [])
+
+        # 构建原始 warning
+        warnings = parsed.get("warnings", [])
+
+        # 如果没有 tool_calls，添加警告
+        if not tool_calls:
+            warnings.append("Hermes 未记录工具调用，可能未使用真实工具链采集数据")
+
+        # 检查 evidence gate
+        from backend.services.boss_execution_providers import check_evidence_gate
+        gate_result = check_evidence_gate(
+            "market",
+            evidence=parsed.get("evidence", []),
+            competitors=parsed.get("competitors", []),
+        )
+
+        if not gate_result["passed"]:
+            warnings.append(f"证据门槛未通过: {gate_result['details']}")
 
         return {
             "ok": True,
             "summary": parsed.get("summary", ""),
             "evidence": parsed.get("evidence", []),
+            "evidence_files": evidence_files,
+            "screenshots": screenshots,
+            "tool_calls": tool_calls,
             "competitors": parsed.get("competitors", []),
             "pricing": parsed.get("pricing", {}),
-            "warnings": parsed.get("warnings", []),
+            "warnings": warnings,
             "raw_data": {"cli_result": cli_result, "parsed": parsed},
+            "evidence_gate_passed": gate_result["passed"],
+            "missing_evidence": gate_result["missing"],
         }
 
     def execute_competitor_analysis(self, goal: str, competitors: List[Dict] = None,
                                      context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """执行竞品分析"""
+        """执行竞品分析 — 带 evidence gate 验证"""
         prompt = self._build_competitor_analysis_prompt(goal, competitors, context)
         cli_result = self._execute_hermes_cli(prompt, context)
 
@@ -710,23 +901,53 @@ class HermesExecutionProvider(BossExecutionProvider):
                 "summary": "",
                 "competitors": competitors or [],
                 "pricing": {},
-                "warnings": ["Hermes 输出无法解析为 JSON"],
+                "warnings": ["Hermes 输出无法解析为 JSON，无法获取真实证据"],
                 "raw_data": cli_result,
             }
+
+        # 提取新增字段
+        tool_calls = parsed.get("tool_calls", [])
+        evidence_files = parsed.get("evidence_files", [])
+        screenshots = parsed.get("screenshots", [])
+        evidence = parsed.get("evidence", [])
+
+        # 构建原始 warning
+        warnings = parsed.get("warnings", [])
+
+        # 如果没有 tool_calls，添加警告
+        if not tool_calls:
+            warnings.append("Hermes 未记录工具调用，可能未使用真实工具链采集数据")
+
+        # 检查 evidence gate
+        from backend.services.boss_execution_providers import check_evidence_gate
+        gate_result = check_evidence_gate(
+            "competitor_analysis",
+            evidence=evidence,
+            competitors=parsed.get("competitors", competitors or []),
+        )
+
+        if not gate_result["passed"]:
+            warnings.append(f"证据门槛未通过: {gate_result['details']}")
 
         return {
             "ok": True,
             "summary": parsed.get("summary", ""),
+            "evidence": evidence,
+            "evidence_files": evidence_files,
+            "screenshots": screenshots,
+            "tool_calls": tool_calls,
             "competitors": parsed.get("competitors", competitors or []),
             "pricing": parsed.get("pricing", {}),
-            "warnings": parsed.get("warnings", []),
+            "warnings": warnings,
             "raw_data": {"cli_result": cli_result, "parsed": parsed},
+            "evidence_gate_passed": gate_result["passed"],
+            "missing_evidence": gate_result["missing"],
         }
 
     def execute_listing_pack(self, goal: str, competitors: List[Dict] = None,
                              pricing: Dict[str, Any] = None,
                              context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """执行上架物料包生成"""
+        """执行上架物料包生成 — 必须基于前序 evidence"""
         prompt = self._build_listing_pack_prompt(goal, competitors, pricing, context)
         cli_result = self._execute_hermes_cli(prompt, context)
 
@@ -751,19 +972,62 @@ class HermesExecutionProvider(BossExecutionProvider):
                 "pricing": pricing or {},
                 "image_plan": {},
                 "next_actions": [],
-                "warnings": ["Hermes 输出无法解析为 JSON"],
+                "warnings": ["Hermes 输出无法解析为 JSON，无法基于证据生成文案"],
                 "raw_data": cli_result,
             }
+
+        # 提取新增字段
+        tool_calls = parsed.get("tool_calls", [])
+        evidence = parsed.get("evidence", [])
+        evidence_files = parsed.get("evidence_files", [])
+        screenshots = parsed.get("screenshots", [])
+
+        # 构建原始 warning
+        warnings = parsed.get("warnings", [])
+
+        # 检查前序 evidence 是否足够
+        if context and context.get("prev_results"):
+            prev_evidence_count = 0
+            for module_id, module_data in context["prev_results"].items():
+                so = module_data.get("structured_output", {})
+                prev_evidence_count += len(so.get("evidence", []))
+
+            if prev_evidence_count == 0:
+                warnings.append("前序模块未提供任何 evidence，上架文案可能基于模型知识而非真实数据")
+        else:
+            warnings.append("未获取到前序模块结果，上架文案可能基于模型知识而非真实数据")
+
+        # 检查 evidence gate
+        from backend.services.boss_execution_providers import check_evidence_gate
+        gate_result = check_evidence_gate(
+            "listing_pack",
+            evidence=evidence,
+            prev_results=context.get("prev_results") if context else None,
+        )
+
+        if not gate_result["passed"]:
+            warnings.append(f"证据门槛未通过: {gate_result['details']}")
+
+        # 检查 pricing 是否基于 evidence
+        result_pricing = parsed.get("pricing", pricing or {})
+        if isinstance(result_pricing, dict) and not result_pricing.get("evidence_based"):
+            warnings.append("定价未明确标注基于 evidence，可能是凭空生成")
 
         return {
             "ok": True,
             "summary": parsed.get("summary", ""),
             "listing_copy": parsed.get("listing_copy", ""),
-            "pricing": parsed.get("pricing", pricing or {}),
+            "pricing": result_pricing,
             "image_plan": parsed.get("image_plan", {}),
             "next_actions": parsed.get("next_actions", []),
-            "warnings": parsed.get("warnings", []),
+            "evidence": evidence,
+            "evidence_files": evidence_files,
+            "screenshots": screenshots,
+            "tool_calls": tool_calls,
+            "warnings": warnings,
             "raw_data": {"cli_result": cli_result, "parsed": parsed},
+            "evidence_gate_passed": gate_result["passed"],
+            "missing_evidence": gate_result["missing"],
         }
 
 
