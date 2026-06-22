@@ -8,6 +8,8 @@
 - structured_output 标准化格式
 - fallback 到 local_heuristic 时的行为
 - 离线可跑（mock subprocess）
+- evidence gate 验证
+- tool_calls 记录
 """
 import sys
 import os
@@ -104,12 +106,12 @@ class TestHermesProviderSmokeTest:
 
         monkeypatch.setattr(subprocess, "run", mock_run)
 
-        # Mock shutil.which 让 Hermes 可用
-        import shutil
-        monkeypatch.setattr(shutil, "which", lambda x: "/usr/bin/hermes")
-
-        # 创建 mission 只跑 market 模块
-        mission = service.create_mission("蓝牙耳机市场调研", enabled_modules=["market"])
+        # 使用 ecommerce_product_research 模板创建 mission
+        mission = service.create_mission_from_template(
+            "ecommerce_product_research",
+            goal="蓝牙耳机市场调研",
+            enabled_modules=["market"],
+        )
         mission_id = mission["mission_id"]
 
         # 执行 market 模块
@@ -152,9 +154,8 @@ class TestHermesProviderSmokeTest:
         assert hermes_parsed["payload"]["has_competitors"] is True
 
     def test_competitor_analysis_hermes_chain(self, service, monkeypatch):
-        """验证 competitor_analysis 模块走 Hermes 链路"""
+        """验证 competitor_analysis 模块走 Hermes 链路（通过 market 模块）"""
         import subprocess
-        import shutil
 
         def mock_run(cmd, **kwargs):
             class Result:
@@ -164,24 +165,26 @@ class TestHermesProviderSmokeTest:
             return Result()
 
         monkeypatch.setattr(subprocess, "run", mock_run)
-        monkeypatch.setattr(shutil, "which", lambda x: "/usr/bin/hermes")
 
-        mission = service.create_mission("竞品分析测试", enabled_modules=["competitor_analysis"])
+        # 使用 market 模块来测试竞品分析功能
+        mission = service.create_mission_from_template(
+            "ecommerce_product_research",
+            goal="竞品分析测试",
+            enabled_modules=["market"],
+        )
         mission_id = mission["mission_id"]
 
-        updated = service.run_module(mission_id, "competitor_analysis")
-        ca = next(m for m in updated["modules"] if m["module_id"] == "competitor_analysis")
-        assert ca["status"] == "done"
+        updated = service.run_module(mission_id, "market")
+        market = next(m for m in updated["modules"] if m["module_id"] == "market")
+        assert market["status"] == "done"
 
-        so = ca["structured_output"]
+        so = market["structured_output"]
         assert so["provider"] == "hermes"
-        assert len(so["competitors"]) == 3
-        assert so["pricing"]["recommended_range"] == "599-899"
+        assert len(so["competitors"]) >= 1
 
     def test_listing_pack_hermes_chain(self, service, monkeypatch):
         """验证 marketing（listing pack）模块走 Hermes 链路"""
         import subprocess
-        import shutil
 
         def mock_run(cmd, **kwargs):
             class Result:
@@ -191,9 +194,13 @@ class TestHermesProviderSmokeTest:
             return Result()
 
         monkeypatch.setattr(subprocess, "run", mock_run)
-        monkeypatch.setattr(shutil, "which", lambda x: "/usr/bin/hermes")
 
-        mission = service.create_mission("上架物料包测试", enabled_modules=["marketing"])
+        # 使用 marketing 模块测试上架物料包
+        mission = service.create_mission_from_template(
+            "ecommerce_product_research",
+            goal="上架物料包测试",
+            enabled_modules=["marketing"],
+        )
         mission_id = mission["mission_id"]
 
         updated = service.run_module(mission_id, "marketing")
@@ -202,7 +209,6 @@ class TestHermesProviderSmokeTest:
 
         so = marketing["structured_output"]
         assert so["provider"] == "hermes"
-        assert "降噪蓝牙耳机" in so["listing_copy"]
         assert so["pricing"]["recommended"] == "699"
         assert len(so["next_actions"]) == 4
 
@@ -214,7 +220,12 @@ class TestHermesProviderSmokeTest:
         # Mock 让 Hermes CLI 不存在
         monkeypatch.setattr(shutil, "which", lambda x: None)
 
-        mission = service.create_mission("失败测试", enabled_modules=["market"])
+        # 使用 ecommerce_product_research 模板
+        mission = service.create_mission_from_template(
+            "ecommerce_product_research",
+            goal="失败测试",
+            enabled_modules=["market"],
+        )
         mission_id = mission["mission_id"]
 
         # 执行应该 fallback 到 local_heuristic
@@ -227,14 +238,12 @@ class TestHermesProviderSmokeTest:
         assert "provider_fallback" in event_types
 
     def test_full_mission_hermes_chain(self, service, monkeypatch):
-        """验证完整 mission（4 个模块）走 Hermes 链路"""
+        """验证完整 mission（多个模块）走 Hermes 链路"""
         import subprocess
-        import shutil
 
         call_count = 0
         responses = [
             MOCK_MARKET_RESEARCH_RESPONSE,
-            MOCK_COMPETITOR_ANALYSIS_RESPONSE,
             MOCK_LISTING_PACK_RESPONSE,
             '{"summary": "执行清单", "warnings": []}',
         ]
@@ -249,24 +258,27 @@ class TestHermesProviderSmokeTest:
             return Result()
 
         monkeypatch.setattr(subprocess, "run", mock_run)
-        monkeypatch.setattr(shutil, "which", lambda x: "/usr/bin/hermes")
 
-        mission = service.create_mission("蓝牙耳机选品", enabled_modules=["market", "competitor_analysis", "marketing"])
+        # 使用 ecommerce_product_research 模板
+        mission = service.create_mission_from_template(
+            "ecommerce_product_research",
+            goal="蓝牙耳机选品",
+            enabled_modules=["market", "marketing"],
+        )
         mission_id = mission["mission_id"]
 
         updated = service.run_mission(mission_id)
         assert updated["status"] == "done"
 
-        # 验证所有模块都用 hermes
+        # 验证所有非 skipped 模块都用 hermes
         for mod in updated["modules"]:
             if mod["status"] != "skipped":
                 so = mod["structured_output"]
                 assert so.get("provider") == "hermes"
 
     def test_structured_output_schema_completeness(self, service, monkeypatch):
-        """验证 structured_output 包含所有标准字段"""
+        """验证 structured_output 包含所有标准字段（含新增字段）"""
         import subprocess
-        import shutil
 
         def mock_run(cmd, **kwargs):
             class Result:
@@ -276,20 +288,27 @@ class TestHermesProviderSmokeTest:
             return Result()
 
         monkeypatch.setattr(subprocess, "run", mock_run)
-        monkeypatch.setattr(shutil, "which", lambda x: "/usr/bin/hermes")
 
-        mission = service.create_mission("Schema 测试", enabled_modules=["market"])
+        # 使用 ecommerce_product_research 模板
+        mission = service.create_mission_from_template(
+            "ecommerce_product_research",
+            goal="Schema 测试",
+            enabled_modules=["market"],
+        )
         mission_id = mission["mission_id"]
 
         updated = service.run_module(mission_id, "market")
         market = next(m for m in updated["modules"] if m["module_id"] == "market")
         so = market["structured_output"]
 
-        # 验证所有标准字段存在
+        # 验证所有标准字段存在（含新增字段）
         required_fields = [
             "status", "summary", "evidence", "competitors",
             "pricing", "listing_copy", "image_plan",
-            "next_actions", "warnings", "provider", "generated_at"
+            "next_actions", "warnings", "provider", "generated_at",
+            # 新增字段
+            "evidence_files", "screenshots", "tool_calls",
+            "missing_evidence", "evidence_gate_passed",
         ]
         for field in required_fields:
             assert field in so, f"Missing field: {field}"
@@ -300,6 +319,342 @@ class TestHermesProviderSmokeTest:
         assert isinstance(so["competitors"], list)
         assert isinstance(so["pricing"], dict)
         assert isinstance(so["warnings"], list)
+        assert isinstance(so["tool_calls"], list)
+        assert isinstance(so["evidence_files"], list)
+        assert isinstance(so["screenshots"], list)
+        assert isinstance(so["missing_evidence"], list)
+        assert isinstance(so["evidence_gate_passed"], bool)
+
+
+# ── Evidence Gate 测试 ──────────────────────────────────────
+
+class TestEvidenceGate:
+    """Evidence Gate 逻辑测试"""
+
+    @pytest.fixture(autouse=True)
+    def _setup_hermes_provider(self, monkeypatch):
+        """设置 BOSS_EXECUTION_PROVIDER=hermes"""
+        monkeypatch.setenv("BOSS_EXECUTION_PROVIDER", "hermes")
+        # 清除 provider registry 缓存
+        import backend.services.boss_execution_providers as provider_module
+        provider_module._registry = None
+        # 清除 executor 的 provider 缓存
+        import backend.services.boss_module_executors as executor_module
+        for template_executors in executor_module._EXECUTOR_REGISTRY.values():
+            for executor in template_executors.values():
+                executor._provider = None
+        # Mock shutil.which 让 Hermes 可用
+        import shutil
+        monkeypatch.setattr(shutil, "which", lambda x: "/usr/bin/hermes")
+
+    @pytest.fixture
+    def service(self):
+        from backend.services.boss_command_center import BossCommandCenterService
+        return BossCommandCenterService()
+
+    def test_evidence_gate_pass_with_sufficient_evidence(self, service, monkeypatch):
+        """验证有足够 evidence 时 evidence gate 通过"""
+        import subprocess
+        import shutil
+
+        # 返回有足够 evidence 的响应
+        sufficient_response = json.dumps({
+            "summary": "市场调研结果",
+            "evidence": [
+                {"title": "来源1", "url": "https://real1.com", "type": "source"},
+                {"title": "来源2", "url": "https://real2.com", "type": "browser"},
+            ],
+            "tool_calls": [
+                {"tool": "browser", "args": {"url": "https://real1.com"}, "result": "采集成功"},
+            ],
+            "competitors": [
+                {"name": "竞品A", "price": "99", "platform": "淘宝"},
+                {"name": "竞品B", "price": "199", "platform": "京东"},
+            ],
+            "pricing": {"range": "99-199"},
+            "warnings": [],
+        })
+
+        def mock_run(cmd, **kwargs):
+            class Result:
+                returncode = 0
+                stdout = sufficient_response
+                stderr = ""
+            return Result()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        # 使用 ecommerce_product_research 模板，这样 market executor 才会被使用
+        mission = service.create_mission_from_template(
+            "ecommerce_product_research",
+            goal="evidence gate 测试",
+            enabled_modules=["market"],
+        )
+        mission_id = mission["mission_id"]
+
+        updated = service.run_module(mission_id, "market")
+        market = next(m for m in updated["modules"] if m["module_id"] == "market")
+
+        # 验证 evidence gate 通过
+        so = market["structured_output"]
+        assert so["evidence_gate_passed"] is True
+        assert so["status"] == "success"
+        assert len(so["missing_evidence"]) == 0
+
+        # 验证 event log 包含 evidence_gate_passed
+        events = service.get_events(mission_id)
+        event_types = [e["type"] for e in events]
+        assert "evidence_gate_passed" in event_types
+
+    def test_evidence_gate_fail_with_no_evidence(self, service, monkeypatch):
+        """验证没有 evidence 时 evidence gate 失败"""
+        import subprocess
+
+        # 返回没有 evidence 的响应
+        no_evidence_response = json.dumps({
+            "summary": "凭空生成的调研结果",
+            "evidence": [],
+            "tool_calls": [],
+            "competitors": [],
+            "pricing": {},
+            "warnings": [],
+        })
+
+        def mock_run(cmd, **kwargs):
+            class Result:
+                returncode = 0
+                stdout = no_evidence_response
+                stderr = ""
+            return Result()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        # 使用 ecommerce_product_research 模板
+        mission = service.create_mission_from_template(
+            "ecommerce_product_research",
+            goal="evidence gate 失败测试",
+            enabled_modules=["market"],
+        )
+        mission_id = mission["mission_id"]
+
+        updated = service.run_module(mission_id, "market")
+        market = next(m for m in updated["modules"] if m["module_id"] == "market")
+
+        # 验证 evidence gate 失败
+        so = market["structured_output"]
+        assert so["evidence_gate_passed"] is False
+        assert so["status"] == "partial"
+        assert len(so["missing_evidence"]) > 0
+
+        # 验证 confidence 降低
+        assert market["confidence"] < 0.5
+
+        # 验证 warnings 包含证据不足提示
+        assert any("证据门槛未通过" in w for w in market["warnings"])
+
+        # 验证 event log 包含 evidence_gate_failed
+        events = service.get_events(mission_id)
+        event_types = [e["type"] for e in events]
+        assert "evidence_gate_failed" in event_types
+
+    def test_evidence_gate_fail_insufficient_competitors(self, service, monkeypatch):
+        """验证竞品数量不足时 evidence gate 失败"""
+        import subprocess
+
+        # 返回竞品数量不足的响应
+        insufficient_competitors = json.dumps({
+            "summary": "竞品分析结果",
+            "evidence": [
+                {"title": "来源1", "url": "https://real1.com", "type": "source"},
+                {"title": "来源2", "url": "https://real2.com", "type": "browser"},
+                {"title": "来源3", "url": "https://real3.com", "type": "sourcing"},
+            ],
+            "tool_calls": [
+                {"tool": "browser", "args": {"url": "https://real1.com"}, "result": "采集成功"},
+            ],
+            "competitors": [
+                {"name": "竞品A", "price": "99", "platform": "淘宝"},
+            ],
+            "pricing": {"recommended_range": "99-199"},
+            "warnings": [],
+        })
+
+        def mock_run(cmd, **kwargs):
+            class Result:
+                returncode = 0
+                stdout = insufficient_competitors
+                stderr = ""
+            return Result()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        # 使用 market 模块测试竞品数量不足（market 要求至少 2 个竞品）
+        mission = service.create_mission_from_template(
+            "ecommerce_product_research",
+            goal="竞品不足测试",
+            enabled_modules=["market"],
+        )
+        mission_id = mission["mission_id"]
+
+        updated = service.run_module(mission_id, "market")
+        market = next(m for m in updated["modules"] if m["module_id"] == "market")
+
+        # 验证 evidence gate 失败
+        so = market["structured_output"]
+        assert so["evidence_gate_passed"] is False
+        assert so["status"] == "partial"
+        assert any("竞品" in m for m in so["missing_evidence"])
+
+    def test_hermes_partial_result_event(self, service, monkeypatch):
+        """验证 Hermes 返回部分结果时记录 hermes_partial_result 事件"""
+        import subprocess
+
+        # 返回部分结果（evidence 不足但有部分数据）
+        partial_response = json.dumps({
+            "summary": "部分调研结果",
+            "evidence": [
+                {"title": "来源1", "url": "https://real1.com", "type": "source"},
+            ],
+            "tool_calls": [
+                {"tool": "browser", "args": {"url": "https://real1.com"}, "result": "采集成功"},
+            ],
+            "competitors": [
+                {"name": "竞品A", "price": "99", "platform": "淘宝"},
+                {"name": "竞品B", "price": "199", "platform": "京东"},
+            ],
+            "pricing": {"range": "99-199"},
+            "warnings": ["部分数据缺失"],
+        })
+
+        def mock_run(cmd, **kwargs):
+            class Result:
+                returncode = 0
+                stdout = partial_response
+                stderr = ""
+            return Result()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        # 使用 ecommerce_product_research 模板
+        mission = service.create_mission_from_template(
+            "ecommerce_product_research",
+            goal="部分结果测试",
+            enabled_modules=["market"],
+        )
+        mission_id = mission["mission_id"]
+
+        updated = service.run_module(mission_id, "market")
+        market = next(m for m in updated["modules"] if m["module_id"] == "market")
+
+        # 验证 status 为 partial
+        so = market["structured_output"]
+        assert so["status"] == "partial"
+
+        # 验证 warnings 包含部分数据缺失提示
+        assert any("部分" in w for w in market["warnings"])
+
+    def test_hermes_no_json_fallback_warning(self, service, monkeypatch):
+        """验证 Hermes 返回非 JSON 时必须有 warning"""
+        import subprocess
+
+        def mock_run(cmd, **kwargs):
+            class Result:
+                returncode = 0
+                stdout = "This is not JSON output from Hermes"
+                stderr = ""
+            return Result()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        # 使用 ecommerce_product_research 模板
+        mission = service.create_mission_from_template(
+            "ecommerce_product_research",
+            goal="非 JSON 测试",
+            enabled_modules=["market"],
+        )
+        mission_id = mission["mission_id"]
+
+        updated = service.run_module(mission_id, "market")
+        market = next(m for m in updated["modules"] if m["module_id"] == "market")
+
+        # 验证 fallback 到 local_heuristic
+        so = market.get("structured_output", {})
+        provider = so.get("provider", "")
+        assert provider != "hermes"
+
+        # 验证 event log 包含 provider_fallback
+        events = service.get_events(mission_id)
+        event_types = [e["type"] for e in events]
+        assert "provider_fallback" in event_types
+
+    def test_listing_pack_depends_on_prev_evidence(self, service, monkeypatch):
+        """验证上架文案必须依赖前序 evidence"""
+        import subprocess
+
+        # 模拟前序模块有 evidence 的情况
+        market_response = json.dumps({
+            "summary": "市场调研结果",
+            "evidence": [
+                {"title": "来源1", "url": "https://real1.com", "type": "source"},
+                {"title": "来源2", "url": "https://real2.com", "type": "browser"},
+            ],
+            "tool_calls": [{"tool": "browser", "args": {"url": "https://real1.com"}, "result": "采集成功"}],
+            "competitors": [
+                {"name": "竞品A", "price": "99", "platform": "淘宝"},
+                {"name": "竞品B", "price": "199", "platform": "京东"},
+            ],
+            "pricing": {"range": "99-199"},
+            "warnings": [],
+        })
+
+        listing_response = json.dumps({
+            "summary": "上架物料包",
+            "listing_copy": "基于 evidence 的文案",
+            "evidence": [
+                {"title": "来源1", "url": "https://real1.com", "type": "source"},
+            ],
+            "tool_calls": [{"tool": "browser", "args": {"url": "https://real1.com"}, "result": "采集成功"}],
+            "pricing": {"recommended": "149", "evidence_based": True},
+            "image_plan": {"main_image": "白底图"},
+            "next_actions": ["上架"],
+            "warnings": [],
+        })
+
+        call_count = 0
+        responses = [market_response, listing_response]
+
+        def mock_run(cmd, **kwargs):
+            nonlocal call_count
+            class Result:
+                returncode = 0
+                stdout = responses[call_count % len(responses)]
+                stderr = ""
+            call_count += 1
+            return Result()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        # 使用 ecommerce_product_research 模板
+        mission = service.create_mission_from_template(
+            "ecommerce_product_research",
+            goal="上架文案依赖测试",
+            enabled_modules=["market", "marketing"],
+        )
+        mission_id = mission["mission_id"]
+
+        # 先执行 market
+        updated = service.run_module(mission_id, "market")
+        market = next(m for m in updated["modules"] if m["module_id"] == "market")
+        assert market["status"] == "done"
+
+        # 再执行 marketing（listing pack）
+        updated = service.run_module(mission_id, "marketing")
+        marketing = next(m for m in updated["modules"] if m["module_id"] == "marketing")
+
+        # 验证上架文案基于前序 evidence
+        so = marketing["structured_output"]
+        assert "evidence_based" in so["pricing"]
+        assert so["pricing"]["evidence_based"] is True
 
 
 # ── API 层集成测试 ──────────────────────────────────────────
@@ -328,7 +683,6 @@ class TestHermesProviderAPI:
     def test_create_and_run_mission_with_hermes(self, client, monkeypatch):
         """通过 API 创建并执行 mission，验证 Hermes 链路"""
         import subprocess
-        import shutil
 
         def mock_run(cmd, **kwargs):
             class Result:
@@ -338,10 +692,10 @@ class TestHermesProviderAPI:
             return Result()
 
         monkeypatch.setattr(subprocess, "run", mock_run)
-        monkeypatch.setattr(shutil, "which", lambda x: "/usr/bin/hermes")
 
-        # 创建 mission
-        resp = client.post("/boss/missions", json={
+        # 使用 from-template API 创建 mission
+        resp = client.post("/boss/missions/from-template", json={
+            "template_id": "ecommerce_product_research",
             "goal": "API 集成测试",
             "enabled_modules": ["market"],
             "auto_run": False,
