@@ -711,11 +711,17 @@ export default function BossPage() {
                         const so = activeResult.structured_output as Record<string, unknown>
                         const competitors = so.competitors as Array<Record<string, string>> | undefined
                         const pricing = so.pricing as Record<string, unknown> | undefined
-                        const evidence = so.evidence as unknown[] | undefined
+                        const evidence = so.evidence as Array<Record<string, string>> | undefined
+                        const evidenceFiles = so.evidence_files as string[] | undefined
+                        const screenshots = so.screenshots as string[] | undefined
+                        const toolCalls = so.tool_calls as Array<Record<string, unknown>> | undefined
                         const imagePlan = so.image_plan as Record<string, unknown> | undefined
                         const provider = so.provider as string | undefined
                         const generatedAt = so.generated_at as string | undefined
                         const summary = so.summary as string | undefined
+                        const status = so.status as string | undefined
+                        const evidenceGatePassed = so.evidence_gate_passed as boolean | undefined
+                        const missingEvidence = so.missing_evidence as string[] | undefined
                         return (
                           <div className="space-y-3">
                             {/* Provider 信息 */}
@@ -725,6 +731,40 @@ export default function BossPage() {
                                 <Badge variant="outline">{provider}</Badge>
                                 {generatedAt && (
                                   <span>生成时间: {new Date(generatedAt).toLocaleString("zh-CN")}</span>
+                                )}
+                                {status && (
+                                  <Badge variant={status === "success" ? "success" : status === "partial" ? "warning" : "destructive"}>
+                                    {status === "success" ? "成功" : status === "partial" ? "证据不足" : "失败"}
+                                  </Badge>
+                                )}
+                              </div>
+                            )}
+
+                            {/* 证据门槛状态 */}
+                            {evidenceGatePassed !== undefined && (
+                              <div className={`rounded-lg border p-3 ${evidenceGatePassed ? "border-green/20 bg-green/5" : "border-yellow/20 bg-yellow/5"}`}>
+                                <div className="flex items-center gap-2">
+                                  {evidenceGatePassed ? (
+                                    <CheckCircle2 className="h-4 w-4 text-green" />
+                                  ) : (
+                                    <AlertCircle className="h-4 w-4 text-yellow" />
+                                  )}
+                                  <span className="text-sm font-medium">
+                                    {evidenceGatePassed ? "证据门槛已通过" : "证据门槛未通过"}
+                                  </span>
+                                </div>
+                                {!evidenceGatePassed && missingEvidence && missingEvidence.length > 0 && (
+                                  <div className="mt-2 text-xs text-muted-foreground">
+                                    <p className="font-medium">缺失证据：</p>
+                                    {missingEvidence.map((item, i) => (
+                                      <p key={i}>• {item}</p>
+                                    ))}
+                                  </div>
+                                )}
+                                {!evidenceGatePassed && (
+                                  <p className="mt-2 text-xs text-yellow">
+                                    ⚠️ 证据不足，不能生成 TOP 推荐结论。请补充更多真实数据后重试。
+                                  </p>
                                 )}
                               </div>
                             )}
@@ -737,6 +777,40 @@ export default function BossPage() {
                               </div>
                             )}
 
+                            {/* 工具调用记录 */}
+                            {Array.isArray(toolCalls) && toolCalls.length > 0 && (
+                              <div className="rounded-lg border border-border bg-background/60 p-4">
+                                <h4 className="mb-2 text-sm font-medium">
+                                  工具调用记录
+                                  <Badge variant="secondary" className="ml-2">{toolCalls.length}</Badge>
+                                </h4>
+                                <div className="space-y-2">
+                                  {toolCalls.map((tc, i) => {
+                                    const tool = tc.tool as string;
+                                    const args = tc.args as Record<string, unknown> | undefined;
+                                    const result = tc.result as string | undefined;
+                                    return (
+                                      <div key={i} className="rounded bg-background/40 p-2 text-xs">
+                                        <div className="flex items-center gap-2">
+                                          <Badge variant="outline">{tool}</Badge>
+                                          {args && (
+                                            <span className="text-muted-foreground">
+                                              args: {JSON.stringify(args).slice(0, 60)}...
+                                            </span>
+                                          )}
+                                        </div>
+                                        {result && (
+                                          <p className="mt-1 text-muted-foreground">
+                                            result: {result.slice(0, 100)}...
+                                          </p>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+
                             {Array.isArray(competitors) && competitors.length > 0 && (
                               <div className="rounded-lg border border-border bg-background/60 p-4">
                                 <h4 className="mb-2 text-sm font-medium">竞品分析</h4>
@@ -744,7 +818,16 @@ export default function BossPage() {
                                   {competitors.map((c, i) => (
                                     <div key={i} className="rounded bg-background/40 p-2 text-sm">
                                       <span className="font-medium">{c.name || ""}</span>
-                                      {c.details && <span className="ml-2 text-muted-foreground">— {c.details}</span>}
+                                      {c.price && <span className="ml-2 text-muted-foreground">价格: {c.price}</span>}
+                                      {c.platform && <span className="ml-2 text-muted-foreground">平台: {c.platform}</span>}
+                                      {c.source_url && (
+                                        <a href={c.source_url} target="_blank" rel="noopener noreferrer" className="ml-2 text-primary hover:underline">
+                                          来源 ↗
+                                        </a>
+                                      )}
+                                      {c.details && <p className="mt-1 text-muted-foreground">{c.details}</p>}
+                                      {c.strengths && <p className="mt-1 text-muted-foreground">优势: {c.strengths}</p>}
+                                      {c.weaknesses && <p className="mt-1 text-muted-foreground">劣势: {c.weaknesses}</p>}
                                     </div>
                                   ))}
                                 </div>
@@ -761,9 +844,49 @@ export default function BossPage() {
                             {Array.isArray(evidence) && evidence.length > 0 && (
                               <div className="rounded-lg border border-border bg-background/60 p-4">
                                 <h4 className="mb-2 text-sm font-medium">
-                                  搜索来源
+                                  采集来源
                                   <Badge variant="secondary" className="ml-2">{evidence.length}</Badge>
                                 </h4>
+                                <div className="space-y-1">
+                                  {evidence.map((ev, i) => (
+                                    <div key={i} className="flex items-center gap-2 text-xs">
+                                      {ev.url ? (
+                                        <a href={ev.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                                          {ev.title || ev.url}
+                                        </a>
+                                      ) : (
+                                        <span>{ev.title || "未知来源"}</span>
+                                      )}
+                                      {ev.type && <Badge variant="outline" className="text-[10px]">{ev.type}</Badge>}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            {Array.isArray(evidenceFiles) && evidenceFiles.length > 0 && (
+                              <div className="rounded-lg border border-border bg-background/60 p-4">
+                                <h4 className="mb-2 text-sm font-medium">
+                                  证据文件
+                                  <Badge variant="secondary" className="ml-2">{evidenceFiles.length}</Badge>
+                                </h4>
+                                <div className="space-y-1">
+                                  {evidenceFiles.map((file, i) => (
+                                    <div key={i} className="text-xs text-muted-foreground">📁 {file}</div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            {Array.isArray(screenshots) && screenshots.length > 0 && (
+                              <div className="rounded-lg border border-border bg-background/60 p-4">
+                                <h4 className="mb-2 text-sm font-medium">
+                                  截图
+                                  <Badge variant="secondary" className="ml-2">{screenshots.length}</Badge>
+                                </h4>
+                                <div className="space-y-1">
+                                  {screenshots.map((shot, i) => (
+                                    <div key={i} className="text-xs text-muted-foreground">🖼️ {shot}</div>
+                                  ))}
+                                </div>
                               </div>
                             )}
                             {imagePlan && (
