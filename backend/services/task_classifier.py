@@ -1,8 +1,9 @@
 """
 Task Classifier — 统一任务分类器
 
-优先级：image > data > research > website > code > marketing > chat
+优先级：image > data > marketing > research > website > code > chat
 
+v1.5.1: marketing 提到 research 前面，防止"调研+营销"组合词被 research 误抢
 UTF-8 编码，中文关键词正确识别
 """
 import re
@@ -29,6 +30,12 @@ class TaskClassifier:
             "en": ["data", "csv", "excel", "spreadsheet", "analyze data",
                    "statistics", "report", "visualization", "chart"]
         },
+        "marketing": {
+            "zh": ["文案", "营销", "推广", "小红书", "闲鱼", "朋友圈", "抖音",
+                   "广告", "slogan", "宣传语", "商品描述", "产品介绍"],
+            "en": ["copywriting", "marketing", "promotion", "advertising",
+                   "slogan", "product description", "write a post"]
+        },
         "research": {
             "zh": ["联网", "搜索", "调研", "市场分析", "竞品", "趋势", "行业",
                    "竞品分析", "市场调研", "行业报告", "用户画像", "市场机会"],
@@ -46,32 +53,20 @@ class TaskClassifier:
                    "写代码", "开发", "写一个函数", "写一个脚本"],
             "en": ["code", "script", "python", "function", "program",
                    "programming", "develop", "write code", "write a function"]
-        },
-        "marketing": {
-            "zh": ["文案", "营销", "推广", "小红书", "闲鱼", "朋友圈", "抖音",
-                   "广告", "slogan", "宣传语", "商品描述", "产品介绍"],
-            "en": ["copywriting", "marketing", "promotion", "advertising",
-                   "slogan", "product description", "write a post"]
         }
     }
 
     def classify(self, message: str, context: Dict = None) -> Tuple[str, float]:
-        """
-        分类任务
-
-        Returns:
-            (task_type, confidence)
-        """
+        """分类任务, 按优先级匹配关键词"""
         message_lower = message.lower().strip()
 
-        # 按优先级检查
-        for task_type in ["image", "data", "research", "website", "code", "marketing"]:
+        # 按优先级检查 (v1.5.1: marketing 在 research 前)
+        for task_type in ["image", "data", "marketing", "research", "website", "code"]:
             keywords = self.KEYWORDS[task_type]
             all_keywords = keywords["zh"] + keywords["en"]
 
             for keyword in all_keywords:
                 if keyword in message_lower:
-                    # 计算置信度
                     confidence = self._calculate_confidence(message_lower, keyword, task_type)
                     logger.info(f"TaskClassifier: '{message[:30]}...' -> {task_type} (keyword: {keyword})")
                     return task_type, confidence
@@ -82,20 +77,17 @@ class TaskClassifier:
 
     def _calculate_confidence(self, message: str, keyword: str, task_type: str) -> float:
         """计算置信度"""
-        confidence = 0.7  # 基础置信度
+        confidence = 0.7
 
-        # 关键词越长，置信度越高
         if len(keyword) >= 4:
             confidence += 0.1
 
-        # 如果有多个同类型关键词，置信度更高
         keywords = self.KEYWORDS[task_type]
         all_keywords = keywords["zh"] + keywords["en"]
         match_count = sum(1 for kw in all_keywords if kw in message)
         if match_count > 1:
             confidence += 0.1
 
-        # 如果关键词在开头，置信度更高
         if message.startswith(keyword):
             confidence += 0.05
 
