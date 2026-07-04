@@ -2,6 +2,7 @@ import { useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   Home,
+  Briefcase,
   MessageSquare,
   FileText,
   Image,
@@ -16,6 +17,14 @@ import {
   X,
   Zap,
   Cpu,
+  PenTool,
+  BookOpen,
+  ClipboardList,
+  Coins,
+  Puzzle,
+  Shield,
+  GitBranch,
+  Package,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -26,6 +35,7 @@ interface SidebarProps {
 
 const navItems = [
   { id: "home", label: "首页", icon: Home },
+  { id: "boss", label: "老板指挥台", icon: Briefcase, legacy: true },
   { id: "chat", label: "AI 助手", icon: MessageSquare },
 ]
 
@@ -35,10 +45,19 @@ const featureItems = [
   { id: "data", label: "看数据", icon: BarChart3 },
   { id: "research", label: "做调研", icon: Search },
   { id: "website", label: "建网站", icon: Globe },
+  { id: "templates", label: "场景模板", icon: PenTool },
+  { id: "delivery", label: "交付中心", icon: Package },
 ]
 
 const advancedItems = [
   { id: "commander", label: "智能任务", icon: Brain },
+  { id: "missions", label: "任务中心", icon: Briefcase, legacy: true },
+  { id: "reports", label: "报告中心", icon: ClipboardList },
+  { id: "memory", label: "知识库", icon: BookOpen },
+  { id: "skills", label: "技能库", icon: Puzzle },
+  { id: "workflows", label: "工作流", icon: GitBranch, legacy: true },
+  { id: "governance", label: "Governance", icon: Shield },
+  { id: "usage", label: "用量统计", icon: Coins },
   { id: "agent-console", label: "Agent 控制台", icon: Cpu },
   { id: "dashboard", label: "系统状态", icon: Activity },
 ]
@@ -52,7 +71,7 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
     item,
     isActive,
   }: {
-    item: { id: string; label: string; icon: React.ElementType }
+    item: { id: string; label: string; icon: React.ElementType; legacy?: boolean }
     isActive: boolean
   }) => (
     <motion.button
@@ -63,25 +82,31 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
         setMobileOpen(false)
       }}
       className={cn(
-        "flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm transition-all duration-200 relative",
+        "flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm transition-colors duration-200 relative",
         isActive
-          ? "text-primary bg-primary/10"
-          : "text-muted-foreground hover:text-foreground hover:bg-accent"
+          ? "text-white bg-white/10"
+          : "text-[#8A8A8A] hover:text-white hover:bg-white/5"
       )}
     >
       {/* Active indicator */}
       {isActive && (
         <motion.div
           layoutId="activeTab"
-          className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-primary rounded-r-full"
-          style={{
-            boxShadow: "0 0 8px rgba(59, 130, 246, 0.5)",
-          }}
+          className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-white rounded-r-full"
         />
       )}
 
       <item.icon className="w-4 h-4 flex-shrink-0" />
-      {!collapsed && <span>{item.label}</span>}
+      {!collapsed && (
+        <>
+          <span>{item.label}</span>
+          {item.legacy && (
+            <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded bg-[#333] text-[#666]">
+              旧版
+            </span>
+          )}
+        </>
+      )}
     </motion.button>
   )
 
@@ -91,26 +116,16 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
       <div className="p-4 border-b border-border">
         <div className="flex items-center gap-3">
           <div
-            className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-cyan flex items-center justify-center"
-            style={{
-              boxShadow: "0 0 15px rgba(59, 130, 246, 0.3)",
-            }}
+            className="w-9 h-9 rounded-xl bg-white flex items-center justify-center"
           >
-            <Zap className="w-4 h-4 text-white" />
+            <Zap className="w-4 h-4 text-[#0B0B0B]" />
           </div>
           {!collapsed && (
             <div>
-              <h1
-                className="text-base font-bold"
-                style={{
-                  background: "linear-gradient(135deg, #3b82f6, #06b6d4)",
-                  WebkitBackgroundClip: "text",
-                  WebkitTextFillColor: "transparent",
-                }}
-              >
+              <h1 className="text-base font-bold text-white">
                 AI Company
               </h1>
-              <p className="text-[10px] text-muted-foreground">你的 AI 助手</p>
+              <p className="text-[10px] text-[#8A8A8A]">你的 AI 助手</p>
             </div>
           )}
         </div>
@@ -130,9 +145,9 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
         </div>
 
         {/* Features */}
-        <div className="border-t border-border pt-2 mt-2">
+        <div className="border-t border-[#333333] pt-2 mt-2">
           {!collapsed && (
-            <div className="px-3 py-1 text-[10px] text-muted-foreground uppercase tracking-wider">
+            <div className="px-3 py-1 text-[10px] text-[#666666] uppercase tracking-wider">
               常用功能
             </div>
           )}
@@ -146,10 +161,10 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
         </div>
 
         {/* Advanced */}
-        <div className="border-t border-border pt-2 mt-2">
+        <div className="border-t border-[#333333] pt-2 mt-2">
           <button
             onClick={() => setShowAdvanced(!showAdvanced)}
-            className="flex items-center gap-2 px-3 py-1 text-[10px] text-muted-foreground uppercase tracking-wider w-full hover:text-foreground"
+            className="flex items-center gap-2 px-3 py-1 text-[10px] text-[#666666] uppercase tracking-wider w-full hover:text-white"
           >
             {!collapsed && (
               <>
@@ -199,7 +214,7 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
       {/* Mobile toggle */}
       <button
         onClick={() => setMobileOpen(!mobileOpen)}
-        className="lg:hidden fixed top-4 left-4 z-50 p-2 rounded-lg bg-card border border-border"
+        className="lg:hidden fixed top-4 left-4 z-50 p-2 rounded-lg bg-white border border-[#E5E5E5]"
       >
         {mobileOpen ? (
           <X className="w-5 h-5" />
@@ -234,7 +249,7 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
         {/* Collapse toggle */}
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className="hidden lg:flex absolute -right-3 top-6 z-50 w-6 h-6 rounded-full bg-card border border-border items-center justify-center hover:bg-accent"
+          className="hidden lg:flex absolute -right-3 top-6 z-50 w-6 h-6 rounded-full bg-white border border-[#E5E5E5] items-center justify-center hover:bg-[#F4F3EF]"
         >
           <ChevronDown
             className={cn(

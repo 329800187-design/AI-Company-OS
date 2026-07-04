@@ -1,7 +1,9 @@
 import { lazy, Suspense } from "react"
+import { ErrorBoundary } from "@/components/error-boundary"
 
 // Lazy load pages
 const HomePage = lazy(() => import("@/pages/home"))
+const BossPage = lazy(() => import("@/pages/boss"))
 const ChatPage = lazy(() => import("@/pages/chat"))
 const CommanderPage = lazy(() => import("@/pages/commander"))
 const MarketingPage = lazy(() => import("@/pages/marketing"))
@@ -13,6 +15,14 @@ const SettingsPage = lazy(() => import("@/pages/settings"))
 const DashboardPage = lazy(() => import("@/pages/dashboard"))
 const TemplatesPage = lazy(() => import("@/pages/templates"))
 const AgentConsolePage = lazy(() => import("@/pages/agent-console"))
+const MissionsPage = lazy(() => import("@/pages/missions"))
+const MemoryPage = lazy(() => import("@/pages/memory"))
+const ReportsPage = lazy(() => import("@/pages/reports"))
+const UsagePage = lazy(() => import("@/pages/usage"))
+const SkillsPage = lazy(() => import("@/pages/skills"))
+const WorkflowsPage = lazy(() => import("@/pages/workflows"))
+const GovernancePage = lazy(() => import("@/pages/governance"))
+const DeliveryPage = lazy(() => import("@/pages/delivery"))
 
 const Loading = () => (
   <div className="flex items-center justify-center h-64">
@@ -32,6 +42,8 @@ export function Routes({ currentPage }: RoutesProps) {
     switch (currentPage) {
       case "home":
         return <HomePage />
+      case "boss":
+        return <BossPage />
       case "chat":
         return <ChatPage />
       case "commander":
@@ -54,14 +66,32 @@ export function Routes({ currentPage }: RoutesProps) {
         return <TemplatesPage />
       case "agent-console":
         return <AgentConsolePage />
+      case "missions":
+        return <MissionsPage />
+      case "memory":
+        return <MemoryPage />
+      case "reports":
+        return <ReportsPage />
+      case "usage":
+        return <UsagePage />
+      case "skills":
+        return <SkillsPage />
+      case "workflows":
+        return <WorkflowsPage />
+      case "governance":
+        return <GovernancePage />
+      case "delivery":
+        return <DeliveryPage />
       default:
         return <HomePage />
     }
   }
 
   return (
-    <Suspense fallback={<Loading />}>
-      {renderPage()}
-    </Suspense>
+    <ErrorBoundary>
+      <Suspense fallback={<Loading />}>
+        {renderPage()}
+      </Suspense>
+    </ErrorBoundary>
   )
 }

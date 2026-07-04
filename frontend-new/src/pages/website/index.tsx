@@ -1,44 +1,96 @@
 import { useState } from "react"
 import { motion } from "framer-motion"
-import { Globe, Sparkles, Loader2, Copy, Check, AlertCircle, CheckCircle2, ExternalLink } from "lucide-react"
+import { Globe, Sparkles, Loader2, Copy, Check, AlertCircle, CheckCircle2, ChevronDown, FileText, Eye, Search, Palette } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { GlowCard } from "@/components/shared/glow-card"
 import { Badge } from "@/components/ui/badge"
 import { api } from "@/api/client"
+import { SaveToDeliveryButton } from "@/components/features/save-to-delivery-button"
+
+const examples = [
+  { goal: "帮我为手工耳环生成一个落地页文案", label: "手工耳环落地页" },
+  { goal: "帮我为手工耳环生成一个产品展示页文案", label: "产品展示页文案" },
+  { goal: "帮我搭建一个全自动赚钱公司系统", label: "自动赚钱系统拦截测试" },
+]
+
+interface WebsiteAgentResult {
+  ok: boolean
+  mode?: string
+  agent_id: string
+  task_type?: string
+  summary?: string
+  structured_output?: {
+    page_type?: string
+    target_audience?: string
+    hero?: {
+      headline?: string
+      subheadline?: string
+      primary_cta?: string
+    }
+    sections?: Array<{
+      title?: string
+      content?: string
+      cta?: string | null
+    }>
+    seo?: {
+      title?: string
+      description?: string
+      keywords?: string[]
+    }
+    design_notes?: string
+    html_preview?: string
+    markdown_preview?: string
+    limitations?: string[]
+    sources?: string[]
+  }
+  output?: Record<string, unknown>
+  artifacts?: string[]
+  warnings?: string[]
+  errors?: string[]
+  error?: string
+  metadata?: Record<string, unknown>
+}
 
 export default function WebsitePage() {
   const [description, setDescription] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [result, setResult] = useState<any>(null)
+  const [result, setResult] = useState<WebsiteAgentResult | null>(null)
+  const [showResult, setShowResult] = useState(false)
+  const [showPreview, setShowPreview] = useState<"markdown" | "html" | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
-  const [showPreview, setShowPreview] = useState(false)
 
   const handleGenerate = async () => {
     if (!description.trim()) return
     setIsLoading(true)
     setResult(null)
+    setError(null)
 
     try {
-      const response = await api.executePipeline(
-        `请生成一个网站页面：${description}`,
-        { task_type: "website" }
-      )
+      const response = await api.executeAgent("website", {
+        goal: description,
+        task_type: "website_draft",
+        context: {},
+        input: { goal: description },
+      })
       setResult(response)
-    } catch (error) {
-      console.error("Website generation failed:", error)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "生成失败")
     } finally {
       setIsLoading(false)
     }
   }
 
-  const handleCopy = () => {
-    if (result?.final_answer) {
-      navigator.clipboard.writeText(result.final_answer)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    }
+  const handleCopy = (text: string) => {
+    navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
   }
+
+  const isFallback = result?.metadata?.fallback === true
+  const hasWarnings = (result?.warnings?.length ?? 0) > 0
+  const hasErrors = (result?.errors?.length ?? 0) > 0
+  const output = result?.structured_output
 
   return (
     <div className="space-y-6">
@@ -48,11 +100,11 @@ export default function WebsitePage() {
         </div>
         <div>
           <h1 className="text-2xl font-bold">建网站</h1>
-          <p className="text-muted-foreground">落地页、产品页、预约页，一句话搞定</p>
+          <p className="text-[#8A8A8A]">落地页、产品页、预约页，一句话搞定</p>
         </div>
       </div>
 
-      <GlowCard>
+      <div className="p-6 rounded-2xl border border-[#E5E5E5] bg-white">
         <h3 className="font-semibold mb-3">网站描述</h3>
         <Textarea
           value={description}
@@ -63,7 +115,7 @@ export default function WebsitePage() {
         <Button
           onClick={handleGenerate}
           disabled={!description.trim() || isLoading}
-          variant="glow"
+          variant="default"
           className="mt-4 w-full"
         >
           {isLoading ? (
@@ -71,115 +123,315 @@ export default function WebsitePage() {
           ) : (
             <Sparkles className="w-4 h-4" />
           )}
-          {isLoading ? "正在生成..." : "生成网站"}
+          {isLoading ? "正在生成..." : "生成落地页文案"}
         </Button>
-      </GlowCard>
+
+        {/* Example buttons */}
+        <div className="flex flex-wrap gap-2 mt-4">
+          <span className="text-xs text-[#8A8A8A]">示例:</span>
+          {examples.map((ex) => (
+            <button
+              key={ex.label}
+              type="button"
+              onClick={() => setDescription(ex.goal)}
+              className="px-3 py-1.5 text-xs rounded-full border border-[#E5E5E5] text-[#8A8A8A] hover:text-[#0B0B0B] hover:border-[#B5B5B5] bg-white transition-colors"
+            >
+              {ex.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Error */}
+      {error && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="p-4 rounded-xl border border-red/20 bg-red/5 flex items-center gap-3"
+        >
+          <AlertCircle className="w-5 h-5 text-red flex-shrink-0" />
+          <span className="text-sm text-red">{error}</span>
+        </motion.div>
+      )}
 
       {/* Result */}
       {result && (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
-          <GlowCard>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold">生成结果</h3>
-              <div className="flex items-center gap-2">
-                {result.used_web_search ? (
-                  <Badge variant="success" className="gap-1">
-                    <Globe className="w-3 h-3" />
-                    已联网
-                  </Badge>
-                ) : (
-                  <Badge variant="warning">未联网</Badge>
-                )}
-                <Badge variant="info">
-                  可信度: {Math.round((result.confidence || 0) * 100)}%
-                </Badge>
+          {/* Status bar */}
+          <div className="p-4 rounded-xl border border-[#E5E5E5] bg-white flex flex-wrap items-center gap-3">
+            {result.ok ? (
+              <Badge variant="success" className="gap-1">
+                <CheckCircle2 className="w-3 h-3" />
+                生成成功
+              </Badge>
+            ) : (
+              <Badge variant="destructive" className="gap-1">
+                <AlertCircle className="w-3 h-3" />
+                生成失败
+              </Badge>
+            )}
+            {result.mode && (
+              <Badge variant="outline">模式: {result.mode}</Badge>
+            )}
+            {!!result.metadata?.source && (
+              <Badge variant="outline">来源: {String(result.metadata.source)}</Badge>
+            )}
+            {isFallback && (
+              <Badge variant="warning">模板草稿</Badge>
+            )}
+            {result.ok && !isFallback && (
+              <SaveToDeliveryButton
+                goal={description}
+                agentId={result.agent_id || "website"}
+                agentResult={result as unknown as Record<string, unknown>}
+                sourcePage="website"
+              />
+            )}
+          </div>
+
+          {/* Fallback warning */}
+          {isFallback && (
+            <div className="p-4 rounded-xl border border-yellow/30 bg-yellow/5 flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-yellow flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-[#666]">
+                <p className="font-medium text-yellow mb-1">当前为草稿/模板生成，未部署网站</p>
+                <p>配置 AI API Key 后可获得定制化落地页内容。</p>
               </div>
             </div>
+          )}
 
-            {/* QA Status */}
-            {result.qa && (
-              <div className={`flex items-center gap-2 p-3 rounded-lg mb-4 ${
-                result.qa.passed ? "bg-green/10" : result.qa.score >= 60 ? "bg-yellow/10" : "bg-red/10"
-              }`}>
-                {result.qa.passed ? (
-                  <CheckCircle2 className="w-5 h-5 text-green" />
-                ) : (
-                  <AlertCircle className="w-5 h-5 text-yellow" />
-                )}
-                <span className="text-sm">
-                  QA 审核: {result.qa.score} 分
-                  {!result.qa.passed && result.qa.score >= 60 && " - 建议人工复查"}
-                </span>
+          {/* Warnings */}
+          {hasWarnings && (
+            <div className="p-4 rounded-xl border border-yellow/30 bg-yellow/5">
+              <div className="flex items-center gap-2 mb-2">
+                <AlertCircle className="w-4 h-4 text-yellow" />
+                <span className="text-sm font-medium text-yellow">警告</span>
               </div>
-            )}
-
-            {/* Used Tools */}
-            {result.used_tools && result.used_tools.length > 0 && (
-              <div className="flex items-center gap-2 mb-4">
-                <span className="text-xs text-muted-foreground">使用工具:</span>
-                {result.used_tools.map((tool: string, i: number) => (
-                  <Badge key={i} variant="outline" className="text-xs">{tool}</Badge>
+              <ul className="text-sm text-[#666] space-y-1">
+                {result.warnings!.map((w, i) => (
+                  <li key={i}>• {w}</li>
                 ))}
-              </div>
-            )}
-
-            {/* Action Buttons */}
-            <div className="flex gap-2 mb-4">
-              <Button variant="outline" size="sm" onClick={handleCopy} className="gap-2">
-                {copied ? <Check className="w-4 h-4 text-green" /> : <Copy className="w-4 h-4" />}
-                {copied ? "已复制" : "复制代码"}
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setShowPreview(!showPreview)} className="gap-2">
-                <ExternalLink className="w-4 h-4" />
-                {showPreview ? "隐藏预览" : "预览"}
-              </Button>
+              </ul>
             </div>
+          )}
 
-            {/* HTML Code */}
-            <div className="rounded-lg bg-background border border-border overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-2 border-b border-border">
-                <span className="text-xs text-muted-foreground">HTML 代码</span>
+          {/* Errors */}
+          {hasErrors && (
+            <div className="p-4 rounded-xl border border-red/20 bg-red/5">
+              <div className="flex items-center gap-2 mb-2">
+                <AlertCircle className="w-4 h-4 text-red" />
+                <span className="text-sm font-medium text-red">错误</span>
               </div>
-              <pre className="p-4 overflow-x-auto text-xs max-h-[300px]">
-                <code>{result.final_answer}</code>
-              </pre>
+              <ul className="text-sm text-[#666] space-y-1">
+                {result.errors!.map((e, i) => (
+                  <li key={i}>• {e}</li>
+                ))}
+              </ul>
             </div>
+          )}
 
-            {/* Preview */}
-            {showPreview && result.final_answer && (
-              <div className="mt-4 rounded-lg border border-border overflow-hidden">
-                <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-muted">
-                  <span className="text-xs text-muted-foreground">预览</span>
+          {/* Summary */}
+          {result.summary && (
+            <div className="p-4 rounded-xl border border-[#E5E5E5] bg-white">
+              <h4 className="text-sm font-medium mb-2">执行摘要</h4>
+              <p className="text-sm text-[#333]">{result.summary}</p>
+            </div>
+          )}
+
+          {/* Hero Section */}
+          {output?.hero && (
+            <div className="p-5 rounded-xl border border-[#E5E5E5] bg-white">
+              <div className="flex items-center gap-2 mb-3">
+                <Eye className="w-4 h-4" />
+                <h4 className="text-sm font-medium">Hero 区域</h4>
+              </div>
+              <div className="space-y-2">
+                <div>
+                  <span className="text-xs text-[#8A8A8A]">Headline:</span>
+                  <p className="text-lg font-bold text-[#0B0B0B]">{output.hero.headline}</p>
                 </div>
-                <iframe
-                  srcDoc={result.final_answer}
-                  className="w-full h-[400px] bg-white"
-                  title="Website Preview"
-                />
+                <div>
+                  <span className="text-xs text-[#8A8A8A]">Subheadline:</span>
+                  <p className="text-sm text-[#666]">{output.hero.subheadline}</p>
+                </div>
+                <div>
+                  <span className="text-xs text-[#8A8A8A]">CTA:</span>
+                  <Badge variant="default" className="ml-2">{output.hero.primary_cta}</Badge>
+                </div>
               </div>
-            )}
+            </div>
+          )}
 
-            {/* Warnings */}
-            {result.warnings && result.warnings.length > 0 && (
-              <div className="mt-4 p-3 rounded-lg bg-yellow/10 border border-yellow/20">
-                {result.warnings.map((warning: string, i: number) => (
-                  <p key={i} className="text-sm text-yellow flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4" />
-                    {warning}
-                  </p>
+          {/* Sections */}
+          {output?.sections && output.sections.length > 0 && (
+            <div className="p-5 rounded-xl border border-[#E5E5E5] bg-white">
+              <div className="flex items-center gap-2 mb-3">
+                <FileText className="w-4 h-4" />
+                <h4 className="text-sm font-medium">内容板块 ({output.sections.length})</h4>
+              </div>
+              <div className="space-y-4">
+                {output.sections.map((section, i) => (
+                  <div key={i} className="p-3 rounded-lg bg-[#F9F9F9] border border-[#E5E5E5]">
+                    <h5 className="font-medium text-sm mb-1">{section.title}</h5>
+                    <p className="text-sm text-[#666]">{section.content}</p>
+                    {section.cta && (
+                      <Badge variant="outline" className="mt-2">{section.cta}</Badge>
+                    )}
+                  </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* SEO */}
+          {output?.seo && (
+            <div className="p-5 rounded-xl border border-[#E5E5E5] bg-white">
+              <div className="flex items-center gap-2 mb-3">
+                <Search className="w-4 h-4" />
+                <h4 className="text-sm font-medium">SEO 信息</h4>
+              </div>
+              <div className="space-y-2 text-sm">
+                <div>
+                  <span className="text-[#8A8A8A]">Title:</span>
+                  <p className="text-[#333]">{output.seo.title}</p>
+                </div>
+                <div>
+                  <span className="text-[#8A8A8A]">Description:</span>
+                  <p className="text-[#333]">{output.seo.description}</p>
+                </div>
+                {output.seo.keywords && output.seo.keywords.length > 0 && (
+                  <div>
+                    <span className="text-[#8A8A8A]">Keywords:</span>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {output.seo.keywords.map((kw, i) => (
+                        <Badge key={i} variant="outline" className="text-xs">{kw}</Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Design Notes */}
+          {output?.design_notes && (
+            <div className="p-5 rounded-xl border border-[#E5E5E5] bg-white">
+              <div className="flex items-center gap-2 mb-3">
+                <Palette className="w-4 h-4" />
+                <h4 className="text-sm font-medium">设计建议</h4>
+              </div>
+              <p className="text-sm text-[#666] whitespace-pre-wrap">{output.design_notes}</p>
+            </div>
+          )}
+
+          {/* Preview Tabs */}
+          {(output?.markdown_preview || output?.html_preview) && (
+            <div className="rounded-xl border border-[#E5E5E5] bg-white overflow-hidden">
+              <div className="flex border-b border-[#E5E5E5]">
+                {output?.markdown_preview && (
+                  <button
+                    type="button"
+                    onClick={() => setShowPreview(showPreview === "markdown" ? null : "markdown")}
+                    className={`px-4 py-2 text-sm font-medium transition-colors ${
+                      showPreview === "markdown" ? "text-[#0B0B0B] border-b-2 border-[#0B0B0B]" : "text-[#8A8A8A] hover:text-[#333]"
+                    }`}
+                  >
+                    Markdown 预览
+                  </button>
+                )}
+                {output?.html_preview && (
+                  <button
+                    type="button"
+                    onClick={() => setShowPreview(showPreview === "html" ? null : "html")}
+                    className={`px-4 py-2 text-sm font-medium transition-colors ${
+                      showPreview === "html" ? "text-[#0B0B0B] border-b-2 border-[#0B0B0B]" : "text-[#8A8A8A] hover:text-[#333]"
+                    }`}
+                  >
+                    HTML 预览
+                  </button>
+                )}
+              </div>
+              <div className="p-4">
+                {showPreview === "markdown" && output?.markdown_preview && (
+                  <div className="relative">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleCopy(output.markdown_preview!)}
+                      className="absolute top-2 right-2 gap-1"
+                    >
+                      {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                      {copied ? "已复制" : "复制"}
+                    </Button>
+                    <pre className="text-sm whitespace-pre-wrap font-sans leading-relaxed text-[#333] bg-[#F4F3EF] rounded-lg p-4 max-h-[400px] overflow-auto">
+                      {output.markdown_preview}
+                    </pre>
+                  </div>
+                )}
+                {showPreview === "html" && output?.html_preview && (
+                  <div className="relative">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleCopy(output.html_preview!)}
+                      className="absolute top-2 right-2 gap-1"
+                    >
+                      {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                      {copied ? "已复制" : "复制"}
+                    </Button>
+                    <pre className="text-xs text-[#666] bg-[#F4F3EF] rounded-lg p-4 max-h-[400px] overflow-auto whitespace-pre-wrap">
+                      {output.html_preview}
+                    </pre>
+                  </div>
+                )}
+                {!showPreview && (
+                  <p className="text-sm text-[#8A8A8A] text-center py-4">点击上方标签查看预览</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Limitations */}
+          {output?.limitations && output.limitations.length > 0 && (
+            <div className="p-4 rounded-xl border border-[#E5E5E5] bg-white">
+              <h4 className="text-sm font-medium mb-2">限制说明</h4>
+              <ul className="text-sm text-[#8A8A8A] space-y-1">
+                {output.limitations.map((l, i) => (
+                  <li key={i}>• {l}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Full result (collapsible) */}
+          <div className="rounded-xl border border-[#E5E5E5] bg-white overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowResult(!showResult)}
+              className="w-full p-4 flex items-center justify-between text-left hover:bg-[#F9F9F9] transition-colors"
+            >
+              <span className="text-sm font-medium">完整结果 JSON</span>
+              <ChevronDown
+                className={`w-4 h-4 transition-transform ${showResult ? "rotate-180" : ""}`}
+              />
+            </button>
+            {showResult && (
+              <div className="px-4 pb-4">
+                <pre className="text-xs text-[#666] bg-[#F4F3EF] rounded-lg p-3 overflow-auto max-h-[300px] whitespace-pre-wrap">
+                  {JSON.stringify(result ?? null, null, 2)}
+                </pre>
+              </div>
             )}
-          </GlowCard>
+          </div>
         </motion.div>
       )}
 
       {/* Empty State */}
       {!result && !isLoading && (
-        <GlowCard variant="glass" className="text-center py-12">
-          <Globe className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-          <p className="text-muted-foreground">描述你想要的网站，AI 帮你生成</p>
-        </GlowCard>
+        <div className="p-6 rounded-2xl border border-[#E5E5E5] bg-white/80 backdrop-blur-sm text-center py-12">
+          <Globe className="w-12 h-12 mx-auto text-[#8A8A8A] mb-4" />
+          <p className="text-[#8A8A8A]">描述你想要的网站，AI 帮你生成落地页文案</p>
+        </div>
       )}
     </div>
   )

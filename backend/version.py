@@ -1,5 +1,5 @@
 """Single source of truth for AI Company OS version"""
-VERSION = "1.4.0"
+VERSION = "1.5.1"
 VERSION_HISTORY = [
     ("0.1.0",  "CEO+QA MVP"),
     ("0.4.0",  "11 Agent完整"),
@@ -13,4 +13,6 @@ VERSION_HISTORY = [
     ("1.2.0",  "单元测试+Embedding v2+5x压缩"),
     ("1.3.0",  "OAuth+移动端+PDF+CI/CD"),
     ("1.4.0",  "版本中心化+流式输出+自动采集+i18n"),
+    ("1.5.0",  "真实能力闭环+工程稳定化+Pipeline+ResultVerifier"),
+    ("1.5.1",  "【修复致命死循环】砍掉自动重试→人工复查 / Agent依赖排序 / CEO反问能力"),
 ]

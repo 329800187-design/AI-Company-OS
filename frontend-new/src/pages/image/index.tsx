@@ -1,62 +1,277 @@
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { motion } from "framer-motion"
-import { Image, Sparkles, Loader2, Download, AlertCircle, CheckCircle2 } from "lucide-react"
+import {
+  Image,
+  Sparkles,
+  Loader2,
+  Copy,
+  Check,
+  AlertCircle,
+  CheckCircle2,
+  ChevronDown,
+  RotateCcw,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { GlowCard } from "@/components/shared/glow-card"
 import { Badge } from "@/components/ui/badge"
+import { api } from "@/api/client"
+import { SaveToDeliveryButton } from "@/components/features/save-to-delivery-button"
 
-interface Capability {
-  available: boolean
-  installed: boolean
-  running: boolean
-  models: string[]
-  error: string
-  fix_hint: string
+const examples = [
+  {
+    goal: "帮我为手工耳环生成产品图提示词",
+    label: "手工耳环产品图提示词",
+  },
+  {
+    goal: "帮我为手工银饰耳环生成小红书配图提示词",
+    label: "手工银饰耳环配图提示词",
+  },
+  {
+    goal: "帮我搭建一个全自动赚钱公司系统",
+    label: "自动赚钱系统拦截测试",
+  },
+]
+
+// ── Agent 执行结果 ──────────────────────────────────────────────────────────
+
+interface AgentRunResult {
+  ok: boolean
+  mode?: string
+  agent_id: string
+  task_type?: string
+  summary?: string
+  structured_output?: Record<string, unknown>
+  output: Record<string, unknown>
+  artifacts: string[]
+  warnings?: string[]
+  errors?: string[]
+  error?: string
+  next_actions?: string[]
+  risk_decision?: {
+    risk_level?: string
+    recommended_action?: string
+  }
+  timeline_events?: Array<Record<string, unknown>>
+  metadata?: Record<string, unknown>
+}
+
+// ── Governance fallback 结果 ─────────────────────────────────────────────────
+
+interface GovernanceRunResult {
+  run_id: string
+  status: string
+  artifact_path?: string
+  json_path?: string
+  task_id?: string
+  mode?: string
+  summary?: string
+  plan?: Record<string, unknown>
+  classification?: Record<string, unknown>
+  result?: {
+    ok: boolean
+    checks?: Record<string, unknown>
+    spec?: Record<string, unknown>
+    [key: string]: unknown
+  }
+}
+
+interface ArtifactContent {
+  run_id: string
+  artifact_path: string
+  content: string
+}
+
+// ── 判断 Agent 是否因不可用而失败 ──────────────────────────────────────────
+
+function isAgentUnavailable(result: AgentRunResult): boolean {
+  if (result.ok) return false
+  const err = (result.error || "").toLowerCase()
+  return (
+    err.includes("not enabled") ||
+    err.includes("not found") ||
+    err.includes("api key") ||
+    err.includes("unexpected")
+  )
+}
+
+// ── 结构化字段展示组件 ──────────────────────────────────────────────────────
+
+function StructuredOutput({ output }: { output: Record<string, unknown> }) {
+  const sections: { label: string; value: unknown; isList?: boolean }[] = []
+
+  // 增强后的提示词
+  if (output.enhanced_prompt) sections.push({ label: "增强提示词", value: output.enhanced_prompt })
+  // 负面提示词
+  if (output.negative_prompt) sections.push({ label: "负面提示词", value: output.negative_prompt })
+  // 风格
+  if (output.style) sections.push({ label: "风格", value: output.style })
+  // 宽高比
+  if (output.aspect_ratio) sections.push({ label: "宽高比", value: output.aspect_ratio })
+  // 模型建议
+  if (output.model_suggestion) sections.push({ label: "推荐模型", value: output.model_suggestion })
+  // 图片 URL（如果有）
+  if (Array.isArray(output.images) && output.images.length > 0) {
+    sections.push({ label: "生成的图片", value: output.images, isList: true })
+  }
+  // 本地路径
+  if (output.local_path) sections.push({ label: "本地保存路径", value: output.local_path })
+  // 输出目录
+  if (output.output_dir) sections.push({ label: "输出目录", value: output.output_dir })
+  // 使用的 prompt
+  if (output.prompt_used && output.prompt_used !== output.enhanced_prompt) {
+    sections.push({ label: "实际使用的提示词", value: output.prompt_used })
+  }
+  // 模型
+  if (output.model) sections.push({ label: "使用模型", value: output.model })
+  // 注意事项
+  if (output.note) sections.push({ label: "⚠️ 注意", value: output.note })
+  // 修复建议
+  if (Array.isArray(output.fix_hints) && output.fix_hints.length > 0) {
+    sections.push({ label: "修复建议", value: output.fix_hints, isList: true })
+  }
+
+  if (sections.length === 0) {
+    // 没有识别到已知结构化字段，展示 key 列表
+    return (
+      <div className="space-y-3">
+        {Object.entries(output).map(([k, v]) => (
+          <div key={k}>
+            <span className="text-xs font-medium text-[#8A8A8A]">{k}</span>
+            <div className="mt-1 text-sm text-[#333]">
+              {typeof v === "object" ? (
+                <pre className="whitespace-pre-wrap text-xs bg-[#F4F3EF] rounded p-2 max-h-[200px] overflow-auto">
+                  {JSON.stringify(v, null, 2)}
+                </pre>
+              ) : (
+                <p className="leading-relaxed">{String(v)}</p>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {sections.map(({ label, value, isList }) => (
+        <div key={label}>
+          <h4 className="text-xs font-medium text-[#8A8A8A] mb-1">{label}</h4>
+          {isList ? (
+            <div className="flex flex-wrap gap-1.5">
+              {(value as unknown[]).map((item, i) => (
+                <Badge key={i} variant="secondary" className="text-xs">
+                  {typeof item === "object" ? JSON.stringify(item) : String(item)}
+                </Badge>
+              ))}
+            </div>
+          ) : typeof value === "string" && (value as string).includes("\n") ? (
+            <div className="text-sm text-[#333] leading-relaxed whitespace-pre-wrap bg-[#F4F3EF] rounded-lg p-3">
+              {String(value)}
+            </div>
+          ) : (
+            <p className="text-sm text-[#333] leading-relaxed">{String(value)}</p>
+          )}
+        </div>
+      ))}
+    </div>
+  )
 }
 
 export default function ImagePage() {
-  const [prompt, setPrompt] = useState("")
+  const [goal, setGoal] = useState("")
+
+  // Agent 执行状态
   const [isLoading, setIsLoading] = useState(false)
-  const [result, setResult] = useState<any>(null)
-  const [capability, setCapability] = useState<Capability | null>(null)
-  const [loadingCap, setLoadingCap] = useState(true)
+  const [agentResult, setAgentResult] = useState<AgentRunResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    checkCapability()
-  }, [])
+  // Governance fallback 状态
+  const [fallbackResult, setFallbackResult] = useState<GovernanceRunResult | null>(null)
+  const [fallbackArtifact, setFallbackArtifact] = useState<ArtifactContent | null>(null)
+  const [fallbackLoading, setFallbackLoading] = useState(false)
 
-  const checkCapability = async () => {
-    setLoadingCap(true)
-    try {
-      const caps = await fetch("/capabilities").then(r => r.json())
-      setCapability(caps.comfyui || null)
-    } catch (error) {
-      console.error("Failed to check capability:", error)
-    } finally {
-      setLoadingCap(false)
-    }
-  }
+  // UI 状态
+  const [copied, setCopied] = useState(false)
+  const [showResult, setShowResult] = useState(false)
+
+  // ── Agent 优先执行 ──────────────────────────────────────────────────────
 
   const handleGenerate = async () => {
-    if (!prompt.trim()) return
+    if (!goal.trim()) return
     setIsLoading(true)
-    setResult(null)
+    setAgentResult(null)
+    setFallbackResult(null)
+    setFallbackArtifact(null)
+    setError(null)
 
     try {
-      const response = await fetch("/pipeline/execute", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: `生成图片: ${prompt}` })
+      const result = await api.executeAgent("image", {
+        goal,
+        task_type: "image_generate",
+        context: {},
+        input: { prompt: goal },
       })
-      const data = await response.json()
-      setResult(data)
-    } catch (error) {
-      console.error("Image generation failed:", error)
+      setAgentResult(result)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Agent 执行失败")
     } finally {
       setIsLoading(false)
     }
   }
+
+  // ── Governance fallback 手动触发 ────────────────────────────────────────
+
+  const handleFallback = async () => {
+    setFallbackLoading(true)
+    setFallbackResult(null)
+    setFallbackArtifact(null)
+
+    try {
+      const response = await api.governanceRun(goal, "", true)
+      setFallbackResult(response)
+
+      if (response.status === "succeeded" && response.run_id) {
+        try {
+          const art = await api.governanceArtifact(response.run_id)
+          setFallbackArtifact(art)
+        } catch {
+          // artifact fetch failed, not critical
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Governance fallback 失败")
+    } finally {
+      setFallbackLoading(false)
+    }
+  }
+
+  const handleCopy = (text: string) => {
+    if (text) {
+      navigator.clipboard.writeText(text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
+  }
+
+  // 从 agent output 中提取可复制的纯文本
+  const getCopyText = (): string => {
+    if (agentResult?.ok) {
+      const o = agentResult.structured_output || agentResult.output
+      const parts: string[] = []
+      if (o.enhanced_prompt) parts.push(String(o.enhanced_prompt))
+      if (o.negative_prompt) parts.push(`Negative: ${String(o.negative_prompt)}`)
+      if (o.style) parts.push(`Style: ${String(o.style)}`)
+      if (o.aspect_ratio) parts.push(`Aspect: ${String(o.aspect_ratio)}`)
+      if (o.note) parts.push(String(o.note))
+      if (o.fix_hints) parts.push(String(o.fix_hints))
+      return parts.join("\n\n")
+    }
+    if (fallbackArtifact?.content) return fallbackArtifact.content
+    return ""
+  }
+
+  const agentUnavailable = agentResult ? isAgentUnavailable(agentResult) : false
 
   return (
     <div className="space-y-6">
@@ -66,112 +281,307 @@ export default function ImagePage() {
           <Image className="w-6 h-6 text-white" />
         </div>
         <div>
-          <h1 className="text-2xl font-bold">生成图片</h1>
-          <p className="text-muted-foreground">产品图、海报、Logo、社交媒体配图</p>
+          <h1 className="text-2xl font-bold">做图片</h1>
+          <p className="text-[#8A8A8A]">
+            当前生成<strong>图片提示词包</strong>，不是直接生成图片
+          </p>
         </div>
       </div>
 
-      {/* Capability Status */}
-      {loadingCap ? (
-        <GlowCard>
-          <div className="flex items-center gap-2">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span>检测图片生成工具...</span>
+      {/* Info Banner */}
+      <div className="p-4 rounded-xl border border-blue-500/20 bg-blue-500/5">
+        <div className="flex items-start gap-3">
+          <Sparkles className="w-5 h-5 text-blue-400 mt-0.5" />
+          <div>
+            <h3 className="font-medium text-blue-400">图片提示词包模式</h3>
+            <p className="text-sm text-[#8A8A8A] mt-1">
+              系统将为你生成产品图片的提示词（Prompt），包含主图、细节图、场景图、风格关键词、负面提示词等。你需要配合 Midjourney / Stable Diffusion / DALL-E 等图片生成工具使用。
+            </p>
           </div>
-        </GlowCard>
-      ) : capability?.available ? (
-        <GlowCard>
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-5 h-5 text-green" />
-            <span className="font-medium">ComfyUI 已就绪</span>
-            <Badge variant="success">{capability.models.length} 个模型</Badge>
-          </div>
-        </GlowCard>
-      ) : (
-        <GlowCard className="border-yellow/50">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-yellow mt-0.5" />
-            <div>
-              <h3 className="font-medium text-yellow">图片生成服务不可用</h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                {capability?.error || "未检测到可用的图片生成工具"}
-              </p>
-              {capability?.fix_hint && (
-                <p className="text-sm text-muted-foreground mt-2">
-                  修复建议: {capability.fix_hint}
-                </p>
-              )}
-              <Button variant="outline" size="sm" className="mt-3" onClick={checkCapability}>
-                重新检测
-              </Button>
-            </div>
-          </div>
-        </GlowCard>
-      )}
+        </div>
+      </div>
 
-      {/* Input */}
-      <GlowCard>
-        <h3 className="font-semibold mb-3">图片描述</h3>
+      {/* Goal Input */}
+      <div className="p-6 rounded-2xl border border-[#E5E5E5] bg-white space-y-3">
+        <h3 className="font-semibold">产品描述</h3>
         <Textarea
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          placeholder="描述你想要的图片，比如：一个简约风格的产品展示图..."
+          value={goal}
+          onChange={(e) => setGoal(e.target.value)}
+          placeholder="描述你的产品，比如：手工制作的银饰耳环，适合年轻女性..."
           className="min-h-[100px]"
         />
         <Button
           onClick={handleGenerate}
-          disabled={!prompt.trim() || isLoading || !capability?.available}
-          variant="glow"
-          className="mt-4 w-full"
+          disabled={!goal.trim() || isLoading}
+          variant="default"
+          className="w-full"
         >
           {isLoading ? (
             <Loader2 className="w-4 h-4 animate-spin" />
           ) : (
             <Sparkles className="w-4 h-4" />
           )}
-          {isLoading ? "正在生成..." : "生成图片"}
+          {isLoading ? "正在生成提示词包..." : "生成提示词包"}
         </Button>
-      </GlowCard>
 
-      {/* Result */}
-      {result && (
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-          <GlowCard>
-            {result.ok ? (
-              <>
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-semibold">生成结果</h3>
-                  <Button variant="outline" size="sm" className="gap-2">
-                    <Download className="w-4 h-4" />
-                    下载
-                  </Button>
-                </div>
-                {result.deliverables?.image_url && (
-                  <img src={result.deliverables.image_url} alt="Generated" className="rounded-lg w-full" />
-                )}
-              </>
+        {/* Example buttons */}
+        <div className="flex flex-wrap gap-2 pt-2">
+          <span className="text-xs text-[#8A8A8A]">示例:</span>
+          {examples.map((ex) => (
+            <button
+              key={ex.label}
+              type="button"
+              onClick={() => setGoal(ex.goal)}
+              className="px-3 py-1.5 text-xs rounded-full border border-[#E5E5E5] text-[#8A8A8A] hover:text-[#0B0B0B] hover:border-[#B5B5B5] bg-white transition-colors"
+            >
+              {ex.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Error */}
+      {error && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="p-4 rounded-xl border border-red/20 bg-red/5 flex items-center gap-3"
+        >
+          <AlertCircle className="w-5 h-5 text-red flex-shrink-0" />
+          <span className="text-sm text-red">{error}</span>
+        </motion.div>
+      )}
+
+      {/* ── Agent 结构化结果 ─────────────────────────────────────────────── */}
+      {agentResult && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="space-y-4"
+        >
+          {/* 状态栏 */}
+          <div className="p-4 rounded-xl border border-[#E5E5E5] bg-white flex flex-wrap items-center gap-3">
+            {agentResult.ok ? (
+              <Badge variant="success" className="gap-1">
+                <CheckCircle2 className="w-3 h-3" />
+                Agent 生成成功
+              </Badge>
             ) : (
-              <div className="flex items-start gap-3">
-                <AlertCircle className="w-5 h-5 text-red mt-0.5" />
-                <div>
-                  <h3 className="font-medium text-red">生成失败</h3>
-                  <p className="text-sm text-muted-foreground mt-1">{result.error}</p>
-                  {result.warnings?.map((w: string, i: number) => (
-                    <p key={i} className="text-sm text-muted-foreground mt-1">{w}</p>
-                  ))}
-                </div>
-              </div>
+              <Badge variant="destructive" className="gap-1">
+                <AlertCircle className="w-3 h-3" />
+                Agent 执行失败
+              </Badge>
             )}
-          </GlowCard>
+            {!!agentResult.metadata?.task_id && (
+              <Badge variant="outline">任务: {String(agentResult.metadata!.task_id).slice(0, 12)}...</Badge>
+            )}
+            {!!agentResult.mode && (
+              <Badge variant="outline">模式: {agentResult.mode}</Badge>
+            )}
+            {!!agentResult.task_type && (
+              <Badge variant="outline">类型: {agentResult.task_type}</Badge>
+            )}
+            {!!agentResult.metadata?.source && (
+              <Badge variant="outline">来源: {String(agentResult.metadata.source)}</Badge>
+            )}
+            {agentResult.ok && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleCopy(getCopyText())}
+                className="ml-auto gap-2"
+              >
+                {copied ? <Check className="w-4 h-4 text-green" /> : <Copy className="w-4 h-4" />}
+                {copied ? "已复制" : "复制提示词"}
+              </Button>
+            )}
+            {agentResult.ok && (
+              <SaveToDeliveryButton
+                goal={goal}
+                agentId={agentResult.agent_id || "image"}
+                agentResult={agentResult as unknown as Record<string, unknown>}
+                sourcePage="image"
+              />
+            )}
+          </div>
+
+          {/* 执行摘要 */}
+          {agentResult.summary && (
+            <div className="p-4 rounded-xl border border-[#E5E5E5] bg-white">
+              <h4 className="text-xs font-medium text-[#8A8A8A] mb-1">执行摘要</h4>
+              <p className="text-sm text-[#333] leading-relaxed">{agentResult.summary}</p>
+            </div>
+          )}
+
+          {/* 警告信息 */}
+          {agentResult.warnings && agentResult.warnings.length > 0 && (
+            <div className="p-4 rounded-xl border border-amber-200 bg-amber-50">
+              <h4 className="text-xs font-medium text-amber-800 mb-2">⚠️ 警告</h4>
+              <ul className="text-sm text-amber-700 space-y-1">
+                {agentResult.warnings.map((warning, i) => (
+                  <li key={i}>• {warning}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* 错误信息 */}
+          {agentResult.errors && agentResult.errors.length > 0 && (
+            <div className="p-4 rounded-xl border border-red-200 bg-red-50">
+              <h4 className="text-xs font-medium text-red-800 mb-2">❌ 错误</h4>
+              <ul className="text-sm text-red-700 space-y-1">
+                {agentResult.errors.map((err, i) => (
+                  <li key={i}>• {err}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* 建议的下一步操作 */}
+          {agentResult.next_actions && agentResult.next_actions.length > 0 && (
+            <div className="p-4 rounded-xl border border-[#E5E5E5] bg-white">
+              <h4 className="text-xs font-medium text-[#8A8A8A] mb-2">💡 建议的下一步</h4>
+              <ul className="text-sm text-[#333] space-y-1">
+                {agentResult.next_actions.map((action, i) => (
+                  <li key={i}>• {action}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Agent 成功 → 结构化展示 */}
+          {agentResult.ok && (agentResult.structured_output || agentResult.output) && (
+            <div className="p-5 rounded-xl border border-[#E5E5E5] bg-white">
+              <div className="flex items-center gap-2 mb-4">
+                <Sparkles className="w-4 h-4 text-violet-500" />
+                <h4 className="text-sm font-medium">图片提示词结果</h4>
+              </div>
+              <StructuredOutput output={agentResult.structured_output || agentResult.output} />
+            </div>
+          )}
+
+          {/* Agent 失败 → 显示错误 + fallback 按钮 */}
+          {!agentResult.ok && (
+            <div className="p-5 rounded-xl border border-amber-200 bg-amber-50 space-y-3">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600" />
+                <h4 className="text-sm font-medium text-amber-800">
+                  {agentUnavailable
+                    ? "Image Agent 未启用或执行失败"
+                    : "Agent 执行未成功"}
+                </h4>
+              </div>
+              <p className="text-xs text-amber-700">{agentResult.error}</p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleFallback}
+                disabled={fallbackLoading}
+                className="gap-2"
+              >
+                {fallbackLoading ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <RotateCcw className="w-3 h-3" />
+                )}
+                {fallbackLoading ? "正在使用基础模板生成..." : "使用基础模板生成"}
+              </Button>
+            </div>
+          )}
+
+          {/* 原始 JSON 折叠区 */}
+          {(agentResult.structured_output || agentResult.output) &&
+           Object.keys(agentResult.structured_output || agentResult.output).length > 0 && (
+            <div className="rounded-xl border border-[#E5E5E5] bg-white overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowResult(!showResult)}
+                className="w-full p-4 flex items-center justify-between text-left hover:bg-[#F9F9F9] transition-colors"
+              >
+                <span className="text-sm font-medium">原始 JSON</span>
+                <ChevronDown className={`w-4 h-4 transition-transform ${showResult ? "rotate-180" : ""}`} />
+              </button>
+              {showResult && (
+                <div className="px-4 pb-4">
+                  <pre className="text-xs text-[#666] bg-[#F4F3EF] rounded-lg p-3 overflow-auto max-h-[300px] whitespace-pre-wrap">
+                    {JSON.stringify(agentResult, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
+        </motion.div>
+      )}
+
+      {/* ── Governance fallback 结果 ──────────────────────────────────────── */}
+      {fallbackResult && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="space-y-4"
+        >
+          <div className="p-4 rounded-xl border border-[#E5E5E5] bg-white flex flex-wrap items-center gap-3">
+            {fallbackResult.status === "succeeded" ? (
+              <Badge variant="success" className="gap-1">
+                <CheckCircle2 className="w-3 h-3" />
+                模板生成成功
+              </Badge>
+            ) : (
+              <Badge variant="destructive" className="gap-1">
+                <AlertCircle className="w-3 h-3" />
+                模板生成失败
+              </Badge>
+            )}
+            {fallbackResult.mode && (
+              <Badge variant="outline">模式: {fallbackResult.mode}</Badge>
+            )}
+            {fallbackResult.status === "succeeded" && fallbackArtifact && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleCopy(fallbackArtifact.content)}
+                className="ml-auto gap-2"
+              >
+                {copied ? <Check className="w-4 h-4 text-green" /> : <Copy className="w-4 h-4" />}
+                {copied ? "已复制" : "复制提示词"}
+              </Button>
+            )}
+          </div>
+
+          {fallbackResult.summary && (
+            <div className="p-4 rounded-xl border border-[#E5E5E5] bg-white">
+              <h4 className="text-sm font-medium mb-2">执行摘要</h4>
+              <p className="text-sm text-[#333]">{fallbackResult.summary}</p>
+            </div>
+          )}
+
+          {fallbackArtifact && (
+            <div className="p-4 rounded-xl border border-[#E5E5E5] bg-white">
+              <div className="flex items-center gap-2 mb-3">
+                <Image className="w-4 h-4" />
+                <h4 className="text-sm font-medium">模板生成结果</h4>
+              </div>
+              <div className="p-4 rounded-lg bg-[#F4F3EF] border border-border max-h-[500px] overflow-auto">
+                <pre className="text-sm whitespace-pre-wrap font-sans leading-relaxed">
+                  {fallbackArtifact.content}
+                </pre>
+              </div>
+            </div>
+          )}
         </motion.div>
       )}
 
       {/* Empty State */}
-      {!result && !isLoading && capability?.available && (
-        <GlowCard variant="glass" className="text-center py-12">
-          <Image className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-          <p className="text-muted-foreground">输入描述，生成你的专属图片</p>
-        </GlowCard>
+      {!agentResult && !fallbackResult && !isLoading && (
+        <div className="p-6 rounded-2xl border border-[#E5E5E5] bg-white/80 backdrop-blur-sm text-center py-12">
+          <Image className="w-12 h-12 mx-auto text-[#8A8A8A] mb-4" />
+          <p className="text-[#8A8A8A]">
+            输入产品描述，生成图片提示词包
+          </p>
+          <p className="text-xs text-[#D4D4D4] mt-2">
+            支持 Midjourney / Stable Diffusion / DALL-E 等工具
+          </p>
+        </div>
       )}
     </div>
   )

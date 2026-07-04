@@ -1,14 +1,17 @@
+import type { CollaborationRunDetailView, MissionMetrics } from "@/types"
+
 const API_BASE = ""
 
 interface RequestOptions {
   method?: string
   body?: unknown
   headers?: Record<string, string>
+  signal?: AbortSignal
 }
 
 class ApiClient {
   private async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-    const { method = "GET", body, headers = {} } = options
+    const { method = "GET", body, headers = {}, signal } = options
 
     const config: RequestInit = {
       method,
@@ -16,6 +19,7 @@ class ApiClient {
         "Content-Type": "application/json",
         ...headers,
       },
+      signal,
     }
 
     if (body) {
@@ -62,8 +66,8 @@ class ApiClient {
   }
 
   // Agent APIs
-  async runAgent(agentName: string, task: string) {
-    const body: Record<string, string> = { goal: task }
+  async runAgent(agentName: string, task: string, allowBrowserAutomation = false) {
+    const body: Record<string, unknown> = { goal: task }
     if (agentName === "marketing") {
       body.prompt = task
       body.platform = "xiaohongshu"
@@ -73,6 +77,9 @@ class ApiClient {
       body.prompt = task
     } else if (agentName === "video") {
       body.prompt = task
+    }
+    if (agentName === "openclaw") {
+      body.allow_browser_automation = allowBrowserAutomation
     }
 
     return this.request<{ status: string; data?: Record<string, unknown> }>(`/agents/${agentName}/run`, {
@@ -189,6 +196,7 @@ class ApiClient {
     enabledModules?: string[]
     inputs?: Record<string, string>
     autoRun?: boolean
+    allowBrowserAutomation?: boolean
   }) {
     return this.request<{
       mission_id: string
@@ -225,11 +233,12 @@ class ApiClient {
         enabled_modules: overrides?.enabledModules,
         inputs: overrides?.inputs,
         auto_run: overrides?.autoRun,
+        allow_browser_automation: overrides?.allowBrowserAutomation ?? false,
       },
     })
   }
 
-  async createMission(goal: string, autoRun = false, enabledModules?: string[]) {
+  async createMission(goal: string, autoRun = false, enabledModules?: string[], allowBrowserAutomation = false) {
     return this.request<{
       mission_id: string
       goal: string
@@ -246,15 +255,27 @@ class ApiClient {
         warnings: string[]
         error: string
         used_tools: string[]
+        used_agents?: string[]
         mode?: string
+        structured_output?: Record<string, unknown>
         started_at?: string
         finished_at?: string
         duration_ms?: number
         next_actions?: string[]
       }>
+      metrics?: {
+        total_modules: number
+        succeeded_modules: number
+        failed_modules: number
+        skipped_modules: number
+        duration_ms: number
+        warning_count: number
+        next_action_count: number
+        completion_rate: number
+      }
     }>("/boss/missions", {
       method: "POST",
-      body: { goal, auto_run: autoRun, enabled_modules: enabledModules },
+      body: { goal, auto_run: autoRun, enabled_modules: enabledModules, allow_browser_automation: allowBrowserAutomation },
     })
   }
 
@@ -290,11 +311,26 @@ class ApiClient {
         used_tools: string[]
         used_agents?: string[]
         mode?: string
+        structured_output?: Record<string, unknown>
+        started_at?: string
+        finished_at?: string
+        duration_ms?: number
+        next_actions?: string[]
       }>
+      metrics?: {
+        total_modules: number
+        succeeded_modules: number
+        failed_modules: number
+        skipped_modules: number
+        duration_ms: number
+        warning_count: number
+        next_action_count: number
+        completion_rate: number
+      }
     }>(`/boss/missions/${missionId}`)
   }
 
-  async runMission(missionId: string) {
+  async runMission(missionId: string, allowBrowserAutomation = false) {
     return this.request<{
       mission_id: string
       goal: string
@@ -310,12 +346,31 @@ class ApiClient {
         warnings: string[]
         error: string
         used_tools: string[]
+        used_agents?: string[]
         mode?: string
+        structured_output?: Record<string, unknown>
+        started_at?: string
+        finished_at?: string
+        duration_ms?: number
+        next_actions?: string[]
       }>
-    }>(`/boss/missions/${missionId}/run`, { method: "POST" })
+      metrics?: {
+        total_modules: number
+        succeeded_modules: number
+        failed_modules: number
+        skipped_modules: number
+        duration_ms: number
+        warning_count: number
+        next_action_count: number
+        completion_rate: number
+      }
+    }>(`/boss/missions/${missionId}/run`, {
+      method: "POST",
+      body: { allow_browser_automation: allowBrowserAutomation },
+    })
   }
 
-  async runMissionModule(missionId: string, moduleId: string) {
+  async runMissionModule(missionId: string, moduleId: string, allowBrowserAutomation = false, signal?: AbortSignal) {
     return this.request<{
       mission_id: string
       goal: string
@@ -331,9 +386,57 @@ class ApiClient {
         warnings: string[]
         error: string
         used_tools: string[]
+        used_agents?: string[]
         mode?: string
+        structured_output?: Record<string, unknown>
+        started_at?: string
+        finished_at?: string
+        duration_ms?: number
+        next_actions?: string[]
       }>
-    }>(`/boss/missions/${missionId}/modules/${moduleId}/run`, { method: "POST" })
+      metrics?: {
+        total_modules: number
+        succeeded_modules: number
+        failed_modules: number
+        skipped_modules: number
+        duration_ms: number
+        warning_count: number
+        next_action_count: number
+        completion_rate: number
+      }
+    }>(`/boss/missions/${missionId}/modules/${moduleId}/run`, {
+      method: "POST",
+      body: { allow_browser_automation: allowBrowserAutomation },
+      signal,
+    })
+  }
+
+  async acceptMission(missionId: string, comment = "") {
+    return this.request<{
+      mission_id: string
+      goal: string
+      status: string
+      created_at: string
+      updated_at: string
+      modules: Array<{
+        module_id: string
+        title: string
+        status: string
+        result: string
+        confidence: number
+        warnings: string[]
+        error: string
+        used_tools: string[]
+        used_agents?: string[]
+        mode?: string
+        structured_output?: Record<string, unknown>
+        next_actions?: string[]
+      }>
+      metrics?: MissionMetrics
+    }>(`/boss/missions/${missionId}/accept`, {
+      method: "POST",
+      body: { comment },
+    })
   }
 
   async getMissionEvents(missionId: string) {
@@ -352,6 +455,94 @@ class ApiClient {
     }>(`/boss/missions/${missionId}/events`)
   }
 
+  // Memory APIs
+  async searchMemory(query: string, limit = 20) {
+    return this.request<{
+      memories: Array<{
+        key: string
+        content: string
+        source: string
+        tags: string[]
+        importance: number
+        created_at: string
+        accessed_at: string
+        access_count: number
+      }>
+      count: number
+    }>(`/memory/search?q=${encodeURIComponent(query)}&limit=${limit}`)
+  }
+
+  async recentMemory(limit = 20) {
+    return this.request<{
+      memories: Array<{
+        key: string
+        content: string
+        source: string
+        tags: string[]
+        importance: number
+        created_at: string
+        accessed_at: string
+        access_count: number
+      }>
+      count: number
+    }>(`/memory/recent?limit=${limit}`)
+  }
+
+  async rememberMemory(key: string, content: string, source = "user", tags: string[] = [], importance = 0.5) {
+    return this.request<{ status: string }>("/memory/remember", {
+      method: "POST",
+      body: { key, content, source, tags, importance },
+    })
+  }
+
+  async getMemoryContext(goal: string) {
+    return this.request<{ context: string; goal: string }>(
+      `/memory/context?goal=${encodeURIComponent(goal)}`
+    )
+  }
+
+  async clearMemory() {
+    return this.request<{ status: string; message: string }>("/memory/clear", {
+      method: "DELETE",
+    })
+  }
+
+  async deleteMemory(key: string) {
+    return this.request<{ status: string; message: string }>(`/memory/${encodeURIComponent(key)}`, {
+      method: "DELETE",
+    })
+  }
+
+  async updateMemory(key: string, updates: {
+    content?: string
+    source?: string
+    tags?: string[]
+    importance?: number
+  }) {
+    return this.request<{ status: string }>(`/memory/${encodeURIComponent(key)}`, {
+      method: "PUT",
+      body: updates,
+    })
+  }
+
+  // Report / Export APIs
+  async exportSession(sessionId: string, format: "html" | "csv" | "json" = "html") {
+    const response = await fetch(`${API_BASE}/export/session/${sessionId}?format=${format}`)
+    if (!response.ok) {
+      throw new Error(`Export failed: HTTP ${response.status}`)
+    }
+    const blob = await response.blob()
+    const ext = format === "html" ? "html" : format === "csv" ? "csv" : "json"
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `report-${sessionId.slice(0, 8)}.${ext}`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
   async exportMission(missionId: string, format: "json" | "markdown" = "json") {
     const response = await fetch(`${API_BASE}/boss/missions/${missionId}/export?format=${format}`)
     if (!response.ok) {
@@ -360,8 +551,8 @@ class ApiClient {
     const blob = await response.blob()
     const ext = format === "markdown" ? "md" : "json"
     const filename = `boss-mission-${missionId}.${ext}`
-    // 触发浏览器下载
     const url = URL.createObjectURL(blob)
+    // 触发浏览器下载
     const a = document.createElement("a")
     a.href = url
     a.download = filename
@@ -369,6 +560,472 @@ class ApiClient {
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
+  }
+
+  // ── System Metrics ──────────────────────────────────────────────────────────
+
+  async getSystemMetrics() {
+    return this.request<{
+      usage: {
+        "24h_calls": number
+        "24h_tokens": number
+        "all_calls": number
+        "all_tokens": number
+        "cost_yuan": number
+      }
+      agents: Record<string, string>
+      cache: Record<string, unknown>
+      payment: { active: boolean; tx_count: number }
+      db: Record<string, number>
+    }>("/system/metrics")
+  }
+
+  async getSystemHealth() {
+    return this.request<{
+      status: string
+      agents: Record<string, { status: string; error?: string }>
+      timestamp: string
+    }>("/system/health")
+  }
+
+  // ── Usage ───────────────────────────────────────────────────────────────────
+
+  async getUsageStats(hours = 24) {
+    return this.request<{
+      hours: number
+      calls: number
+      tokens: number
+      cost_yuan: number
+    }>(`/usage/stats?hours=${hours}`)
+  }
+
+  async getUsageTotal() {
+    return this.request<{
+      total_calls: number
+      total_tokens: number
+      total_cost_yuan: number
+    }>("/usage/total")
+  }
+
+  async getUsageRecent(limit = 50) {
+    return this.request<{
+      calls: Array<{
+        model: string
+        tokens: number
+        cost_yuan: number
+        timestamp: string
+        duration_ms: number
+      }>
+      count: number
+    }>(`/usage/recent?limit=${limit}`)
+  }
+
+  // ── Skills ──────────────────────────────────────────────────────────────────
+
+  async listSkills() {
+    return this.request<{
+      skills: Array<{
+        name: string
+        title: string
+        description: string
+        category: string
+        capabilities: string[]
+        triggers: string[]
+      }>
+      count: number
+    }>("/skills/list")
+  }
+
+  async matchSkills(goal: string) {
+    return this.request<{
+      matched: Array<{
+        name: string
+        title: string
+        score: number
+      }>
+      goal: string
+    }>(`/skills/match?goal=${encodeURIComponent(goal)}`)
+  }
+
+  async createSkill(skill: {
+    name: string
+    title: string
+    description: string
+    category: string
+    capabilities: string[]
+    triggers: string[]
+    body: string
+  }) {
+    return this.request<{ status: string; skill: Record<string, unknown> }>("/skills/create", {
+      method: "POST",
+      body: skill,
+    })
+  }
+
+  // ── Workflows (DAG) ────────────────────────────────────────────────────────
+
+  async listWorkflows() {
+    return this.request<{
+      workflows: Array<{ name: string; count: number }>
+      total: number
+    }>("/workflows/dag/list")
+  }
+
+  async getWorkflow(name: string) {
+    return this.request<{
+      name: string
+      title: string
+      description: string
+      version: string
+      triggers: string[]
+      steps: Array<{
+        name: string
+        agent: string
+        task_type: string
+        depends_on: string[]
+      }>
+    }>(`/workflows/dag/${encodeURIComponent(name)}`)
+  }
+
+  async runWorkflow(name: string, variables: Record<string, string> = {}) {
+    return this.request<{
+      status: string
+      workflow: string
+      results: Record<string, unknown>
+    }>("/workflows/dag/run", {
+      method: "POST",
+      body: { workflow: name, inputs: variables },
+    })
+  }
+
+  // ── Agent Execution APIs ────────────────────────────────────────────────
+
+  async executeAgent(agentId: string, task: {
+    goal: string
+    task_type: string
+    context?: Record<string, unknown>
+    input?: Record<string, unknown>
+  }) {
+    return this.request<{
+      ok: boolean
+      mode?: string
+      agent_id: string
+      task_type?: string
+      summary?: string
+      structured_output?: Record<string, unknown>
+      output: Record<string, unknown>
+      artifacts: string[]
+      warnings?: string[]
+      errors?: string[]
+      error?: string
+      next_actions?: string[]
+      risk_decision?: {
+        risk_level?: string
+        recommended_action?: string
+      }
+      timeline_events?: Array<Record<string, unknown>>
+      metadata?: Record<string, unknown>
+    }>(`/agents/${agentId}/execute`, {
+      method: "POST",
+      body: {
+        task_id: "",
+        goal: task.goal,
+        task_type: task.task_type,
+        context: task.context || {},
+        input: task.input || {},
+      },
+    })
+  }
+
+  // ── Governance APIs ────────────────────────────────────────────────────────
+
+  async governanceRun(goal: string, platform: string = "", execute: boolean = false) {
+    return this.request<{
+      run_id: string
+      status: string
+      artifact_path?: string
+      json_path?: string
+      task_id?: string
+      mode?: string
+      summary?: string
+      plan?: Record<string, unknown>
+      classification?: Record<string, unknown>
+      result?: {
+        ok: boolean
+        checks?: Record<string, unknown>
+        spec?: Record<string, unknown>
+        [key: string]: unknown
+      }
+    }>("/governance/run", {
+      method: "POST",
+      body: { goal, platform, execute },
+    })
+  }
+
+  async governanceArtifact(runId: string) {
+    return this.request<{
+      run_id: string
+      artifact_path: string
+      content: string
+    }>(`/governance/runs/${runId}/artifact`)
+  }
+
+  // ── MiniDelivery: 保存 Agent 结果 ──────────────────────
+  async saveAgentResultToDelivery(payload: {
+    goal: string
+    agent_id: string
+    agent_result: Record<string, unknown>
+    artifact_type?: string
+    title?: string
+    source_page?: string
+  }) {
+    return this.request<{
+      task_id: string
+      artifact_path: string
+      result_path: string
+      agent_id: string
+      artifact_type: string
+    }>("/minidelivery/save-from-agent", {
+      method: "POST",
+      body: payload,
+    })
+  }
+
+  async governanceRunDetail(runId: string) {
+    return this.request<{
+      run_id: string
+      goal: string
+      capability_id: string
+      status: string
+      created_at: string
+      updated_at: string
+      artifact_path?: string
+      result_ref?: string
+      failure_reason?: string
+      collaboration_plan?: {
+        plan_id: string
+        goal: string
+        status: string
+        steps: Array<{
+          id: string
+          name: string
+          task_type: string
+          required_capability: string
+          status: string
+          assigned_agent_id?: string
+          result?: {
+            ok: boolean
+            agent_id?: string
+            output?: Record<string, unknown>
+            error?: string
+          }
+        }>
+      }
+    }>(`/governance/runs/${runId}`)
+  }
+
+  async listGovernanceRuns(limit = 20, offset = 0) {
+    return this.request<{
+      total: number
+      records: Array<{
+        run_id: string
+        goal: string
+        capability_id: string
+        status: string
+        created_at: string
+        updated_at: string
+        artifact_path?: string
+        result_ref?: string
+        failure_reason?: string
+        collaboration_plan?: {
+          plan_id: string
+          goal: string
+          status: string
+          steps: Array<{
+            id: string
+            name: string
+            task_type: string
+            required_capability: string
+            status: string
+            assigned_agent_id?: string
+            result?: {
+              ok: boolean
+              agent_id?: string
+              output?: Record<string, unknown>
+              error?: string
+            }
+          }>
+        }
+      }>
+    }>(`/governance/runs?limit=${limit}&offset=${offset}`)
+  }
+
+  // ── Collaboration APIs ──────────────────────────────────────────────────
+
+  async collaborationPlanGet(planId: string) {
+    return this.request<CollaborationRunDetailView>(`/collaboration/runs/${planId}`)
+  }
+
+  async collaborationRunResume(runId: string) {
+    return this.request<Record<string, unknown>>(`/collaboration/runs/${runId}/resume`, {
+      method: "POST",
+    })
+  }
+
+  async collaborationStepApprove(planId: string, stepId: string, comment?: string) {
+    return this.request<Record<string, unknown>>(`/collaboration/runs/${planId}/approve`, {
+      method: "POST",
+      body: { step_id: stepId, ...(comment !== undefined ? { comment } : {}) },
+    })
+  }
+
+  async collaborationStepReject(planId: string, stepId: string, comment?: string) {
+    return this.request<Record<string, unknown>>(`/collaboration/runs/${planId}/reject`, {
+      method: "POST",
+      body: { step_id: stepId, ...(comment !== undefined ? { comment } : {}) },
+    })
+  }
+
+  async collaborationStepRetry(planId: string, stepId: string) {
+    return this.request<Record<string, unknown>>(`/collaboration/runs/${planId}/retry-step`, {
+      method: "POST",
+      body: { step_id: stepId },
+    })
+  }
+
+  // ── Agent Discovery & Enable/Disable ──────────────────────────────────────
+
+  async getDiscoveredAgents() {
+    return this.request<{
+      agents: Array<{
+        id: string
+        name: string
+        kind: string
+        executable?: string
+        endpoint?: string
+        status: string
+        capabilities: string[]
+        task_types: string[]
+        risk_level: string
+        requires_api_key: boolean
+        requires_gpu: boolean
+        requires_confirmation: boolean
+        enabled: boolean
+        source: string
+        timeout_seconds: number
+        input_schema?: Record<string, unknown> | null
+        output_schema?: Record<string, unknown> | null
+        tools: string[]
+        supports_files: boolean
+        supports_web_search: boolean
+        supports_code_execution: boolean
+        supports_image_generation: boolean
+        supports_browser: boolean
+        priority: number
+        cost_level: string
+        latency_level: string
+        reliability_score: number
+        health: Record<string, unknown>
+        last_error?: string
+      }>
+      total: number
+      enabled_count: number
+    }>("/agent-console/discovered")
+  }
+
+  async enableAgent(agentId: string) {
+    return this.request<{ ok: boolean; agent_id: string; enabled: boolean; message: string }>(
+      `/agent-console/${agentId}/enable`,
+      { method: "POST" }
+    )
+  }
+
+  async disableAgent(agentId: string) {
+    return this.request<{ ok: boolean; agent_id: string; enabled: boolean; message: string }>(
+      `/agent-console/${agentId}/disable`,
+      { method: "POST" }
+    )
+  }
+
+  // ── Universal Search ────────────────────────────────────────────────────────
+
+  async universalSearch(query: string, scope = "all", limit = 20) {
+    return this.request<{
+      query: string
+      scope: string
+      total: number
+      hits: {
+        memories: Array<{ key: string; content: string; source: string }>
+        skills: Array<{ name: string; title: string; score: number }>
+        sessions: Array<{ goal: string; status: string; created_at: string }>
+        workflows: Array<{ name: string; description: string }>
+      }
+    }>(`/search?q=${encodeURIComponent(query)}&scope=${scope}&limit=${limit}`)
+  }
+
+  // ── MiniDelivery 交付物列表（Phase 2A）───────────────────────────────────
+
+  async listMiniDeliveryTasks(filters?: {
+    q?: string
+    agent_id?: string
+    artifact_type?: string
+    source_page?: string
+    limit?: number
+    offset?: number
+  }) {
+    const params = new URLSearchParams()
+    if (filters?.q) params.set("q", filters.q)
+    if (filters?.agent_id) params.set("agent_id", filters.agent_id)
+    if (filters?.artifact_type) params.set("artifact_type", filters.artifact_type)
+    if (filters?.source_page) params.set("source_page", filters.source_page)
+    if (filters?.limit !== undefined) params.set("limit", String(filters.limit))
+    if (filters?.offset !== undefined) params.set("offset", String(filters.offset))
+    const qs = params.toString()
+    return this.request<{
+      tasks: Array<{
+        task_id: string
+        goal: string
+        agent_id: string
+        artifact_type: string
+        source_page: string
+        created_at: string
+        artifact_path: string
+        result_path: string
+      }>
+      warnings: string[]
+      total: number
+      limit: number
+      offset: number
+      has_more: boolean
+    }>(`/minidelivery/tasks${qs ? "?" + qs : ""}`)
+  }
+
+  async getMiniDeliveryTaskDetail(taskId: string) {
+    return this.request<{
+      task_id: string
+      goal: string
+      agent_id: string
+      artifact_type: string
+      source_page: string
+      created_at: string
+      ok: boolean
+      mode: string
+      summary: string
+      artifact_path: string
+      raw_agent_result_path: string
+      has_raw_agent_result: boolean
+      agent_result_summary?: string
+    }>(`/minidelivery/tasks/${taskId}`)
+  }
+
+  async getMiniDeliveryArtifact(taskId: string) {
+    return this.request<string>(`/minidelivery/tasks/${taskId}/artifact`)
+  }
+
+  // ── MiniDelivery 下载 URL（Phase 2B）───────────────────────────────────
+
+  getMiniDeliveryDownloadUrl(taskId: string) {
+    return `${API_BASE}/minidelivery/tasks/${taskId}/download`
   }
 }
 

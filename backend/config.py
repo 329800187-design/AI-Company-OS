@@ -75,15 +75,32 @@ BOSS_EXECUTION_PROVIDER: str = os.getenv("BOSS_EXECUTION_PROVIDER", "local_heuri
 # ── Hermes Execution Provider ───────────────────────────────
 HERMES_CLI_PATH: str = os.getenv("HERMES_CLI_PATH", "hermes")
 HERMES_EXECUTION_TIMEOUT_SECONDS: int = _int(os.getenv("HERMES_EXECUTION_TIMEOUT_SECONDS", "180"), 180)
-HERMES_ECOMMERCE_MODE_ENABLED: bool = _bool(os.getenv("HERMES_ECOMMERCE_MODE_ENABLED", "true"), True)
+HERMES_ECOMMERCE_MODE_ENABLED: bool = _bool(os.getenv("HERMES_ECOMMERCE_MODE_ENABLED", "false"), False)
 # Hermes CLI 路径，默认 "hermes"（假设在 PATH 中）
 # 执行超时，默认 180 秒
-# 是否启用电商模式（使用 /ecommerce 技能）
+# 是否启用电商模式（默认关闭，需显式 opt-in）
+
+# ── 浏览器自动化审批闸门 ──────────────────────────────────
+BROWSER_AUTOMATION_REQUIRE_APPROVAL: bool = _bool(os.getenv("BROWSER_AUTOMATION_REQUIRE_APPROVAL", "true"), True)
+BROWSER_AUTOMATION_APPROVED: bool = _bool(os.getenv("BROWSER_AUTOMATION_APPROVED", "false"), False)
+# 默认需要审批才能执行浏览器自动化采集
+# BROWSER_AUTOMATION_APPROVED=true 时允许自动执行
+# 也可通过 API 参数 allow_browser_automation=True 临时授权
 
 # ── 日志 ───────────────────────────────────────────────────
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 LOG_DIR: str = os.getenv("LOG_DIR", "./logs")
 LOG_MAX_DAYS: int = _int(os.getenv("LOG_MAX_DAYS", "7"), 7)
+
+# ── Feishu / Lark Bot ─────────────────────────────────────
+FEISHU_BOT_ENABLED: bool = _bool(os.getenv("FEISHU_BOT_ENABLED", "false"), False)
+FEISHU_APP_ID: str = os.getenv("FEISHU_APP_ID", "")
+FEISHU_APP_SECRET: str = os.getenv("FEISHU_APP_SECRET", "")
+FEISHU_VERIFICATION_TOKEN: str = os.getenv("FEISHU_VERIFICATION_TOKEN", "")
+FEISHU_ENCRYPT_KEY: str = os.getenv("FEISHU_ENCRYPT_KEY", "")
+FEISHU_REPLY_ONLY_MENTION: bool = _bool(os.getenv("FEISHU_REPLY_ONLY_MENTION", "true"), True)
+FEISHU_MAX_REPLY_CHARS: int = _int(os.getenv("FEISHU_MAX_REPLY_CHARS", "1800"), 1800)
+FEISHU_CONNECTION_MODE: str = os.getenv("FEISHU_CONNECTION_MODE", "long_connection")
 
 
 def get_ai_config(provider: Optional[str] = None) -> dict:
