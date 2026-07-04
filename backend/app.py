@@ -47,6 +47,7 @@ from backend.routers.pipeline_router import router as pipeline_router
 from backend.routers.capabilities_router import router as capabilities_router
 from backend.routers.agent_console_router import router as agent_console_router
 from backend.routers.boss_router import router as boss_router
+from backend.routers.collaboration_router import router as collaboration_router
 from backend.database.database import init_db
 from backend import config
 from backend.task_queue.queue import BackgroundTaskManager
@@ -144,6 +145,7 @@ app.include_router(pipeline_router)
 app.include_router(capabilities_router)
 app.include_router(boss_router)
 app.include_router(agent_console_router)
+app.include_router(collaboration_router)
 
 # 多租户认证中间件（轻量 — 解析 Authorization Header 中的用户 token）
 @app.middleware("http")
