@@ -28,7 +28,7 @@ class ExecutionResult:
                  confidence: float = 0.0, warnings: List[str] = None,
                  used_tools: List[str] = None, mode: str = "",
                  error: str = "", next_actions: List[str] = None,
-                 provider: str = ""):
+                 provider: str = "", qa_status: str = ""):
         self.ok = ok
         self.final_answer = final_answer
         self.structured_output = structured_output or {}
@@ -39,6 +39,7 @@ class ExecutionResult:
         self.error = error
         self.next_actions = next_actions or []
         self.provider = provider
+        self.qa_status = qa_status  # v2: QA 状态 pass/partial/needs_input/failed
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -52,6 +53,7 @@ class ExecutionResult:
             "error": self.error,
             "next_actions": self.next_actions,
             "provider": self.provider,
+            "qa_status": self.qa_status,
         }
 
 
@@ -89,6 +91,9 @@ class EcommerceMarketResearchExecutor(ModuleExecutor):
         context = context or {}
         warnings = []
 
+        # 获取浏览器自动化审批状态
+        allow_browser_automation = context.get("allow_browser_automation", False)
+
         # 获取 Provider
         provider = self._get_provider()
         provider_warnings = getattr(self, '_provider_warnings', [])
@@ -99,15 +104,16 @@ class EcommerceMarketResearchExecutor(ModuleExecutor):
         service = get_boss_command_center()
         service._log_event(mission_id, "provider_selected", f"使用 Provider: {provider.name}",
                           module_id=module_id, payload={"provider": provider.name})
-
-        # 如果是 Hermes provider，记录 hermes_invoked 事件
-        if provider.name == "hermes":
-            service._log_event(mission_id, "hermes_invoked", "调用 Hermes CLI",
-                              module_id=module_id, payload={"provider": "hermes"})
+        if provider_warnings:
+            service._log_event(mission_id, "provider_fallback",
+                              f"Provider fallback: {'; '.join(provider_warnings)}",
+                              module_id=module_id,
+                              payload={"provider": provider.name, "warnings": provider_warnings})
 
         # 调用 Provider 执行市场调研
         try:
-            provider_result = provider.execute_market_research(goal, context)
+            provider_result = provider.execute_market_research(goal, context,
+                                                               allow_browser_automation=allow_browser_automation)
         except Exception as e:
             logger.error(f"EcommerceMarketResearch provider failed: {e}")
             # Fallback 到 LocalAgentRuntime
@@ -117,7 +123,30 @@ class EcommerceMarketResearchExecutor(ModuleExecutor):
             if provider.name == "hermes":
                 service._log_event(mission_id, "hermes_failed", f"Hermes 执行失败: {str(e)[:100]}",
                                   module_id=module_id, payload={"error": str(e)})
-            return self._fallback_to_runtime(goal, module_id, mission_id, context)
+            return self._fallback_to_runtime(goal, module_id, mission_id, context, provider_reason=str(e))
+
+        # 检查是否被审批闸门阻止
+        if provider_result.get("blocked"):
+            service._log_event(mission_id, "approval_required",
+                              f"浏览器自动化需要用户授权（模块: {module_id}）",
+                              module_id=module_id, payload={"blocked_reason": "approval_required"})
+            from backend.services.boss_execution_providers import build_approval_required_output
+            structured = build_approval_required_output(module_id)
+            return ExecutionResult(
+                ok=False,
+                final_answer="浏览器自动化采集需要用户确认后才能执行",
+                structured_output=structured,
+                confidence=0.0,
+                warnings=["浏览器自动化采集需要用户确认后才能执行"],
+                used_tools=[],
+                mode="blocked",
+                error="浏览器自动化需要用户授权",
+                provider=provider.name,
+            )
+
+        if provider.name == "hermes":
+            service._log_event(mission_id, "hermes_invoked", "调用 Hermes CLI",
+                              module_id=module_id, payload={"provider": "hermes"})
 
         if not provider_result.get("ok"):
             if provider.name == "hermes":
@@ -128,7 +157,8 @@ class EcommerceMarketResearchExecutor(ModuleExecutor):
             service._log_event(mission_id, "provider_fallback",
                               f"Provider {provider.name} 返回失败，fallback 到 LocalAgentRuntime",
                               module_id=module_id, payload=provider_result)
-            return self._fallback_to_runtime(goal, module_id, mission_id, context)
+            return self._fallback_to_runtime(goal, module_id, mission_id, context,
+                                            provider_reason=provider_result.get("error", "Hermes 执行失败"))
 
         # 如果是 Hermes provider，记录 hermes_response_parsed 和 tool_calls 事件
         if provider.name == "hermes":
@@ -203,18 +233,58 @@ class EcommerceMarketResearchExecutor(ModuleExecutor):
         )
 
     def _fallback_to_runtime(self, goal: str, module_id: str, mission_id: str,
-                             context: Dict[str, Any]) -> ExecutionResult:
-        """Fallback 到 LocalAgentRuntime"""
+                             context: Dict[str, Any], provider_reason: str = "") -> ExecutionResult:
+        """Fallback 到 LocalAgentRuntime
+
+        必须返回标准化 structured_output，不能是空对象。
+        evidence_gate_passed 始终为 False（因为没有通过 Hermes 真实采集）。
+        """
+        from backend.services.boss_command_center import get_boss_command_center
+        from backend.services.boss_execution_providers import build_fallback_structured_output
+        service = get_boss_command_center()
+
+        # 记录 evidence_gate_failed 事件
+        service._log_event(mission_id, "evidence_gate_failed",
+                          f"证据门槛未通过: Hermes 失败/超时，无法采集真实证据",
+                          module_id=module_id, payload={
+                              "reason": provider_reason or "Hermes 执行失败",
+                              "missing_evidence": ["Hermes 工具链未采集到数据"],
+                              "provider": "hermes",
+                              "module_id": module_id,
+                          })
+
+        # 记录 fallback_partial_result 事件
+        service._log_event(mission_id, "fallback_partial_result",
+                          f"Hermes 失败，fallback 到 LocalAgentRuntime，仅返回文本分析（无真实数据采集）",
+                          module_id=module_id, payload={
+                              "provider": "local_heuristic_fallback",
+                              "module_id": module_id,
+                          })
+
         from backend.services.local_agent_runtime import get_local_agent_runtime
         runtime = get_local_agent_runtime()
         result = runtime.execute(goal, context)
 
+        # 构建标准化 structured_output
+        structured = build_fallback_structured_output(
+            module_id=module_id,
+            provider_reason=provider_reason or "Hermes 执行失败",
+            warnings=result.get("warnings", []),
+        )
+
+        # 记录 structured_output_generated 事件
+        service._log_event(mission_id, "structured_output_generated",
+                          f"生成标准化输出（partial, fallback）",
+                          module_id=module_id, payload={"provider": "local_heuristic_fallback"})
+
         return ExecutionResult(
             ok=result.get("ok", False),
             final_answer=result.get("final_answer", ""),
-            structured_output={},
-            confidence=result.get("confidence", 0.0),
-            warnings=result.get("warnings", []),
+            structured_output=structured,
+            confidence=0.3,  # fallback 时 confidence 固定为 0.3
+            warnings=result.get("warnings", []) + [
+                "Hermes 失败/超时，分析基于本地模型已有知识，无真实数据采集",
+            ],
             used_tools=result.get("used_tools", []),
             mode=result.get("mode", ""),
             provider="local_heuristic_fallback",
@@ -233,6 +303,9 @@ class EcommerceCompetitorAnalysisExecutor(ModuleExecutor):
         market_data = prev_results.get("market", {}).get("structured_output", {})
         competitors = market_data.get("competitors", [])
 
+        # 获取浏览器自动化审批状态
+        allow_browser_automation = context.get("allow_browser_automation", False)
+
         # 获取 Provider
         provider = self._get_provider()
         provider_warnings = getattr(self, '_provider_warnings', [])
@@ -242,15 +315,16 @@ class EcommerceCompetitorAnalysisExecutor(ModuleExecutor):
         service = get_boss_command_center()
         service._log_event(mission_id, "provider_selected", f"使用 Provider: {provider.name}",
                           module_id=module_id, payload={"provider": provider.name})
-
-        # 如果是 Hermes provider，记录 hermes_invoked 事件
-        if provider.name == "hermes":
-            service._log_event(mission_id, "hermes_invoked", "调用 Hermes CLI",
-                              module_id=module_id, payload={"provider": "hermes"})
+        if provider_warnings:
+            service._log_event(mission_id, "provider_fallback",
+                              f"Provider fallback: {'; '.join(provider_warnings)}",
+                              module_id=module_id,
+                              payload={"provider": provider.name, "warnings": provider_warnings})
 
         # 调用 Provider 执行竞品分析
         try:
-            provider_result = provider.execute_competitor_analysis(goal, competitors, context)
+            provider_result = provider.execute_competitor_analysis(goal, competitors, context,
+                                                                   allow_browser_automation=allow_browser_automation)
         except Exception as e:
             logger.error(f"EcommerceCompetitorAnalysis provider failed: {e}")
             service._log_event(mission_id, "provider_fallback",
@@ -259,14 +333,43 @@ class EcommerceCompetitorAnalysisExecutor(ModuleExecutor):
             if provider.name == "hermes":
                 service._log_event(mission_id, "hermes_failed", f"Hermes 执行失败: {str(e)[:100]}",
                                   module_id=module_id, payload={"error": str(e)})
-            return self._fallback_to_runtime(goal, module_id, mission_id, context, competitors)
+            return self._fallback_to_runtime(goal, module_id, mission_id, context, competitors,
+                                            provider_reason=str(e))
+
+        # 检查是否被审批闸门阻止
+        if provider_result.get("blocked"):
+            service._log_event(mission_id, "approval_required",
+                              f"浏览器自动化需要用户授权（模块: {module_id}）",
+                              module_id=module_id, payload={"blocked_reason": "approval_required"})
+            from backend.services.boss_execution_providers import build_approval_required_output
+            structured = build_approval_required_output(module_id)
+            return ExecutionResult(
+                ok=False,
+                final_answer="浏览器自动化采集需要用户确认后才能执行",
+                structured_output=structured,
+                confidence=0.0,
+                warnings=["浏览器自动化采集需要用户确认后才能执行"],
+                used_tools=[],
+                mode="blocked",
+                error="浏览器自动化需要用户授权",
+                provider=provider.name,
+            )
+
+        if provider.name == "hermes":
+            service._log_event(mission_id, "hermes_invoked", "调用 Hermes CLI",
+                              module_id=module_id, payload={"provider": "hermes"})
 
         if not provider_result.get("ok"):
             if provider.name == "hermes":
                 service._log_event(mission_id, "hermes_failed",
                                   f"Hermes 返回失败: {provider_result.get('error', '未知错误')[:100]}",
                                   module_id=module_id, payload=provider_result)
-            return ExecutionResult(ok=False, error=provider_result.get("error", "Provider 执行失败"))
+            # Fallback 到 LocalAgentRuntime
+            service._log_event(mission_id, "provider_fallback",
+                              f"Provider {provider.name} 返回失败，fallback 到 LocalAgentRuntime",
+                              module_id=module_id, payload=provider_result)
+            return self._fallback_to_runtime(goal, module_id, mission_id, context, competitors,
+                                            provider_reason=provider_result.get("error", "Hermes 执行失败"))
 
         # 如果是 Hermes provider，记录 hermes_response_parsed 事件
         if provider.name == "hermes":
@@ -339,8 +442,30 @@ class EcommerceCompetitorAnalysisExecutor(ModuleExecutor):
         )
 
     def _fallback_to_runtime(self, goal: str, module_id: str, mission_id: str,
-                             context: Dict[str, Any], competitors: List[Dict]) -> ExecutionResult:
+                             context: Dict[str, Any], competitors: List[Dict],
+                             provider_reason: str = "") -> ExecutionResult:
         """Fallback 到 LocalAgentRuntime"""
+        from backend.services.boss_command_center import get_boss_command_center
+        from backend.services.boss_execution_providers import build_fallback_structured_output
+        service = get_boss_command_center()
+
+        # 记录 evidence_gate_failed 事件
+        service._log_event(mission_id, "evidence_gate_failed",
+                          f"证据门槛未通过: Hermes 失败/超时，无法采集真实竞品数据",
+                          module_id=module_id, payload={
+                              "reason": provider_reason or "Hermes 执行失败",
+                              "missing_evidence": ["Hermes 工具链未采集到竞品数据"],
+                              "provider": "hermes",
+                              "module_id": module_id,
+                          })
+
+        service._log_event(mission_id, "fallback_partial_result",
+                          f"Hermes 失败，fallback 到 LocalAgentRuntime，仅返回文本分析（无真实数据采集）",
+                          module_id=module_id, payload={
+                              "provider": "local_heuristic_fallback",
+                              "module_id": module_id,
+                          })
+
         prompt = f"请基于以下信息，对电商业务「{goal}」做竞品分析：\n\n"
         if competitors:
             prompt += f"已知竞品：{json.dumps(competitors, ensure_ascii=False)}\n\n"
@@ -360,12 +485,26 @@ class EcommerceCompetitorAnalysisExecutor(ModuleExecutor):
         text = result.get("final_answer", "")
         pricing = self._extract_pricing(text)
 
+        # 构建标准化 structured_output
+        structured = build_fallback_structured_output(
+            module_id=module_id,
+            provider_reason=provider_reason or "Hermes 执行失败",
+            warnings=result.get("warnings", []),
+            extra={"competitors": competitors, "pricing": pricing},
+        )
+
+        service._log_event(mission_id, "structured_output_generated",
+                          f"生成标准化输出（partial, fallback）",
+                          module_id=module_id, payload={"provider": "local_heuristic_fallback"})
+
         return ExecutionResult(
             ok=result.get("ok", False),
             final_answer=text,
-            structured_output={"competitors": competitors, "pricing": pricing},
-            confidence=result.get("confidence", 0.0),
-            warnings=result.get("warnings", []),
+            structured_output=structured,
+            confidence=0.3,
+            warnings=result.get("warnings", []) + [
+                "Hermes 失败/超时，竞品分析基于本地模型已有知识，无真实数据采集",
+            ],
             used_tools=result.get("used_tools", []),
             mode=result.get("mode", ""),
             provider="local_heuristic_fallback",
@@ -393,6 +532,9 @@ class EcommerceListingPackExecutor(ModuleExecutor):
         competitors = competitor_data.get("competitors", [])
         pricing = competitor_data.get("pricing", {})
 
+        # 获取浏览器自动化审批状态
+        allow_browser_automation = context.get("allow_browser_automation", False)
+
         # 获取 Provider
         provider = self._get_provider()
         provider_warnings = getattr(self, '_provider_warnings', [])
@@ -402,15 +544,16 @@ class EcommerceListingPackExecutor(ModuleExecutor):
         service = get_boss_command_center()
         service._log_event(mission_id, "provider_selected", f"使用 Provider: {provider.name}",
                           module_id=module_id, payload={"provider": provider.name})
-
-        # 如果是 Hermes provider，记录 hermes_invoked 事件
-        if provider.name == "hermes":
-            service._log_event(mission_id, "hermes_invoked", "调用 Hermes CLI",
-                              module_id=module_id, payload={"provider": "hermes"})
+        if provider_warnings:
+            service._log_event(mission_id, "provider_fallback",
+                              f"Provider fallback: {'; '.join(provider_warnings)}",
+                              module_id=module_id,
+                              payload={"provider": provider.name, "warnings": provider_warnings})
 
         # 调用 Provider 执行上架物料包生成
         try:
-            provider_result = provider.execute_listing_pack(goal, competitors, pricing, context)
+            provider_result = provider.execute_listing_pack(goal, competitors, pricing, context,
+                                                            allow_browser_automation=allow_browser_automation)
         except Exception as e:
             logger.error(f"EcommerceListingPack provider failed: {e}")
             service._log_event(mission_id, "provider_fallback",
@@ -419,14 +562,43 @@ class EcommerceListingPackExecutor(ModuleExecutor):
             if provider.name == "hermes":
                 service._log_event(mission_id, "hermes_failed", f"Hermes 执行失败: {str(e)[:100]}",
                                   module_id=module_id, payload={"error": str(e)})
-            return self._fallback_to_runtime(goal, module_id, mission_id, context, competitors, pricing)
+            return self._fallback_to_runtime(goal, module_id, mission_id, context, competitors, pricing,
+                                            provider_reason=str(e))
+
+        # 检查是否被审批闸门阻止
+        if provider_result.get("blocked"):
+            service._log_event(mission_id, "approval_required",
+                              f"浏览器自动化需要用户授权（模块: {module_id}）",
+                              module_id=module_id, payload={"blocked_reason": "approval_required"})
+            from backend.services.boss_execution_providers import build_approval_required_output
+            structured = build_approval_required_output(module_id)
+            return ExecutionResult(
+                ok=False,
+                final_answer="浏览器自动化采集需要用户确认后才能执行",
+                structured_output=structured,
+                confidence=0.0,
+                warnings=["浏览器自动化采集需要用户确认后才能执行"],
+                used_tools=[],
+                mode="blocked",
+                error="浏览器自动化需要用户授权",
+                provider=provider.name,
+            )
+
+        if provider.name == "hermes":
+            service._log_event(mission_id, "hermes_invoked", "调用 Hermes CLI",
+                              module_id=module_id, payload={"provider": "hermes"})
 
         if not provider_result.get("ok"):
             if provider.name == "hermes":
                 service._log_event(mission_id, "hermes_failed",
                                   f"Hermes 返回失败: {provider_result.get('error', '未知错误')[:100]}",
                                   module_id=module_id, payload=provider_result)
-            return ExecutionResult(ok=False, error=provider_result.get("error", "Provider 执行失败"))
+            # Fallback 到 LocalAgentRuntime
+            service._log_event(mission_id, "provider_fallback",
+                              f"Provider {provider.name} 返回失败，fallback 到 LocalAgentRuntime",
+                              module_id=module_id, payload=provider_result)
+            return self._fallback_to_runtime(goal, module_id, mission_id, context, competitors, pricing,
+                                            provider_reason=provider_result.get("error", "Hermes 执行失败"))
 
         # 如果是 Hermes provider，记录 hermes_response_parsed 事件
         if provider.name == "hermes":
@@ -500,8 +672,29 @@ class EcommerceListingPackExecutor(ModuleExecutor):
 
     def _fallback_to_runtime(self, goal: str, module_id: str, mission_id: str,
                              context: Dict[str, Any], competitors: List[Dict],
-                             pricing: Dict[str, Any]) -> ExecutionResult:
+                             pricing: Dict[str, Any], provider_reason: str = "") -> ExecutionResult:
         """Fallback 到 LocalAgentRuntime"""
+        from backend.services.boss_command_center import get_boss_command_center
+        from backend.services.boss_execution_providers import build_fallback_structured_output
+        service = get_boss_command_center()
+
+        # 记录 evidence_gate_failed 事件
+        service._log_event(mission_id, "evidence_gate_failed",
+                          f"证据门槛未通过: Hermes 失败/超时，无法生成基于真实数据的上架文案",
+                          module_id=module_id, payload={
+                              "reason": provider_reason or "Hermes 执行失败",
+                              "missing_evidence": ["上架文案需要基于前序 evidence，但无真实数据采集"],
+                              "provider": "hermes",
+                              "module_id": module_id,
+                          })
+
+        service._log_event(mission_id, "fallback_partial_result",
+                          f"Hermes 失败，fallback 到 LocalAgentRuntime，仅返回文本分析（无真实数据采集）",
+                          module_id=module_id, payload={
+                              "provider": "local_heuristic_fallback",
+                              "module_id": module_id,
+                          })
+
         prompt = (
             f"请为以下产品生成闲鱼/电商上架物料包：{goal}\n\n"
             f"已知竞品信息：{json.dumps(competitors, ensure_ascii=False)}\n\n"
@@ -526,12 +719,30 @@ class EcommerceListingPackExecutor(ModuleExecutor):
             "上架商品并填写标题和详情",
         ]
 
+        # 构建标准化 structured_output
+        structured = build_fallback_structured_output(
+            module_id=module_id,
+            provider_reason=provider_reason or "Hermes 执行失败",
+            warnings=result.get("warnings", []),
+        )
+        # listing 特有字段
+        structured["listing_copy"] = text
+        structured["image_plan"] = image_plan
+        structured["pricing"] = pricing or {}
+        structured["next_actions"] = next_actions
+
+        service._log_event(mission_id, "structured_output_generated",
+                          f"生成标准化输出（partial, fallback）",
+                          module_id=module_id, payload={"provider": "local_heuristic_fallback"})
+
         return ExecutionResult(
             ok=result.get("ok", False),
             final_answer=text,
-            structured_output={"listing_copy": text, "pricing": pricing, "image_plan": image_plan},
-            confidence=result.get("confidence", 0.0),
-            warnings=result.get("warnings", []),
+            structured_output=structured,
+            confidence=0.3,
+            warnings=result.get("warnings", []) + [
+                "Hermes 失败/超时，上架文案基于本地模型已有知识，无真实数据采集",
+            ],
             used_tools=result.get("used_tools", []),
             mode=result.get("mode", ""),
             next_actions=next_actions,
@@ -549,6 +760,16 @@ class EcommerceListingPackExecutor(ModuleExecutor):
 
 
 # ── 注册表 ──────────────────────────────────────────────
+
+# v2: 模块 owner 固定 — 每个模块只有一个主负责执行器
+# 其他 Agent 只能作为后续优化，不在本轮引入多 Agent 抢任务
+MODULE_OWNER = {
+    "strategy": "local_heuristic",    # 战略摘要：本地模型
+    "market": "hermes",                # 市场调研：Hermes 主负责（可 fallback）
+    "marketing": "local_heuristic",    # 营销方案：本地模型
+    "landing": "local_heuristic",      # 落地页：本地模型
+    "actions": "local_heuristic",      # 执行清单：本地模型
+}
 
 _EXECUTOR_REGISTRY: Dict[str, Dict[str, ModuleExecutor]] = {
     "ecommerce_product_research": {
@@ -576,24 +797,36 @@ class DefaultModuleExecutor(ModuleExecutor):
             return ExecutionResult(ok=False, error=f"未知模块: {module_id}")
 
         prompt = prompt_template.format(goal=goal)
+
+        # v1.5.1: 每个模块加 30s 超时，防止 openclaw 等慢 Agent 卡死整个 Mission
+        import concurrent.futures
         try:
             from backend.services.local_agent_runtime import get_local_agent_runtime
             runtime = get_local_agent_runtime()
-            result = runtime.execute(prompt, {
-                "boss_mission": True,
-                "mission_id": mission_id,
-                "mission_module": module_id,
-                "mission_goal": goal,
-            })
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(runtime.execute, prompt, {
+                    "boss_mission": True,
+                    "mission_id": mission_id,
+                    "mission_module": module_id,
+                    "mission_goal": goal,
+                })
+                result = future.result(timeout=30)
+        except concurrent.futures.TimeoutError:
+            return ExecutionResult(
+                ok=False, error=f"模块 {module_id} 执行超时（30s），已跳过",
+                final_answer="该模块执行超时，请稍后重试或简化目标。",
+                warnings=[f"{module_id} 超时"],
+            )
         except Exception as e:
             return ExecutionResult(ok=False, error=str(e))
 
         # 标准化输出
         from backend.services.boss_execution_providers import create_standard_output
+        owner = MODULE_OWNER.get(module_id, "local_heuristic")
         structured = create_standard_output(
             status="success" if result.get("ok") else "failed",
             summary=result.get("final_answer", "")[:500] if result.get("final_answer") else "",
-            provider="local_heuristic",
+            provider=f"{owner} (via DefaultModuleExecutor)",
         )
 
         return ExecutionResult(
@@ -606,7 +839,7 @@ class DefaultModuleExecutor(ModuleExecutor):
             mode=result.get("mode", ""),
             error=result.get("error", ""),
             next_actions=result.get("next_actions", []),
-            provider="local_heuristic",
+            provider=owner,
         )
 
 

@@ -142,9 +142,11 @@ class OpenClawAgent(BaseAgent):
                   "learn", "chat"]
 
     def __init__(self, headless: bool = True, timeout: int = 30,
-                 screenshot_dir: Optional[str] = None, proxy: Optional[str] = None):
+                 screenshot_dir: Optional[str] = None, proxy: Optional[str] = None,
+                 allow_browser_automation: bool = False):
         super().__init__(name="openclaw", timeout=timeout)
         self.headless = headless
+        self.allow_browser_automation = allow_browser_automation
         self.screenshot_dir = screenshot_dir or os.path.join(tempfile.gettempdir(), "openclaw_screenshots")
         self.proxy = proxy or PROXY_DEFAULT
         os.makedirs(self.screenshot_dir, exist_ok=True)
@@ -163,6 +165,9 @@ class OpenClawAgent(BaseAgent):
     # 主入口
     # ═══════════════════════════════════════════════════════════
 
+    # 需要启动浏览器的任务类型
+    BROWSER_TASK_TYPES = {"browser_scrape", "browser_screenshot", "browser_form_fill", "browser_test"}
+
     def run(self, task: Dict[str, Any]) -> Dict[str, Any]:
         task_id = task.get("task_id", f"oc_{uuid.uuid4().hex[:8]}")
         task_type = task.get("task_type", "browser_scrape")
@@ -170,6 +175,15 @@ class OpenClawAgent(BaseAgent):
 
         if not PLAYWRIGHT_AVAILABLE:
             return self._err(task_id, goal, "Playwright 未安装")
+
+        # ── 浏览器自动化授权检查 ──
+        # research/deep_research/verify 也使用 Playwright 浏览器（_fetch_page），必须经授权
+        BROWSER_LIKE_TASK_TYPES = {
+            "deep_research", "research", "深度研究", "联网研究", "verify",
+        }
+        if (task_type in self.BROWSER_TASK_TYPES or task_type in BROWSER_LIKE_TASK_TYPES) \
+                and not self.allow_browser_automation:
+            return self._browser_approval_blocked(task_id, goal)
 
         # ── v2 新增任务类型 ──
         if task_type in ("deep_research", "research", "深度研究", "联网研究"):
@@ -936,6 +950,19 @@ class OpenClawAgent(BaseAgent):
         return {"agent": "openclaw", "agent_name": "OpenClaw",
                 "task_id": task_id, "title": title, "status": "被拦截",
                 "result": msg, "success": False}
+
+    @staticmethod
+    def _browser_approval_blocked(task_id: str, title: str) -> Dict:
+        return {
+            "agent": "openclaw", "agent_name": "OpenClaw",
+            "task_id": task_id, "title": title,
+            "status": "blocked", "mode": "blocked",
+            "blocked": True,
+            "blocked_reason": "browser_automation_approval_required",
+            "message": "需要用户授权后才能打开浏览器采集",
+            "result": "需要用户授权后才能打开浏览器采集。请在 Boss 指挥台勾选「允许本次打开浏览器采集数据」后重试。",
+            "success": False,
+        }
 
     def _err(self, task_id: str, title: str, msg: str) -> Dict:
         return self.fail(task_id=task_id, error=msg, status="失败")

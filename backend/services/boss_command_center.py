@@ -171,6 +171,10 @@ def _init_boss_tables():
                 db.execute(f"ALTER TABLE boss_missions ADD COLUMN {col}")
             except Exception:
                 pass
+        try:
+            db.execute("ALTER TABLE boss_missions ADD COLUMN allow_browser_automation TEXT DEFAULT '0'")
+        except Exception:
+            pass
         db.execute("""
             CREATE TABLE IF NOT EXISTS boss_mission_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -252,7 +256,8 @@ class BossCommandCenterService:
     def create_mission_from_template(
         self, template_id: str, goal: str = None,
         enabled_modules: List[str] = None, inputs: Dict[str, str] = None,
-        auto_run: bool = False
+        auto_run: bool = False,
+        allow_browser_automation: bool = False
     ) -> Dict[str, Any]:
         """根据模板创建 Mission"""
         template = self.get_template(template_id)
@@ -269,7 +274,8 @@ class BossCommandCenterService:
             if inputs_text:
                 actual_goal = f"{actual_goal}\n\n补充信息：{inputs_text}"
 
-        return self.create_mission(actual_goal, auto_run=auto_run, enabled_modules=actual_modules, template_id=template_id)
+        return self.create_mission(actual_goal, auto_run=auto_run, enabled_modules=actual_modules,
+                                   template_id=template_id, allow_browser_automation=allow_browser_automation)
 
     # ── 指标 ──────────────────────────────────────────────
 
@@ -298,11 +304,46 @@ class BossCommandCenterService:
             "completion_rate": round(completion_rate, 2),
         }
 
+    def _update_mission_status_from_modules(self, mission_id: str):
+        """根据所有模块状态更新 Mission 整体状态（v2：人工审核闭环语义）"""
+        mission = self.get_mission(mission_id)
+        if not mission:
+            return
+
+        active_modules = [m for m in mission["modules"] if m["status"] != "skipped"]
+        if not active_modules:
+            return
+
+        all_done = all(m["status"] == "done" for m in active_modules)
+        any_failed = any(m["status"] == "failed" for m in active_modules)
+        any_running = any(m["status"] == "running" for m in active_modules)
+        has_any_result = any(
+            m.get("result") and len(m.get("result", "").strip()) >= 10
+            for m in active_modules
+        )
+
+        if any_running:
+            self._update_mission_status(mission_id, "running")
+        elif has_any_result:
+            if all_done:
+                self._update_mission_status(mission_id, "ready_for_review")
+                self._log_event(mission_id, "mission_ready", "所有模块执行完成，等待人工审核")
+            else:
+                self._update_mission_status(mission_id, "partial")
+                self._log_event(mission_id, "mission_partial", "部分模块有结果，等待人工审核")
+        elif any_failed:
+            self._update_mission_status(mission_id, "failed")
+            self._log_event(mission_id, "mission_failed", "所有模块均无有效结果")
+        else:
+            # 全部 pending 状态
+            self._update_mission_status(mission_id, "pending_review")
+
     # ── Mission CRUD ──────────────────────────────────────
 
     def create_mission(self, goal: str, auto_run: bool = False,
                        enabled_modules: List[str] = None,
-                       template_id: str = "") -> Dict[str, Any]:
+                       template_id: str = "",
+                       allow_browser_automation: bool = False) -> Dict[str, Any]:
         """创建 Mission
 
         Args:
@@ -310,6 +351,7 @@ class BossCommandCenterService:
             auto_run: 创建后是否立即执行
             enabled_modules: 启用的模块 ID 列表，None 表示全部启用
             template_id: 模板 ID（可选）
+            allow_browser_automation: 是否允许浏览器自动化采集
         """
         mission_id = f"mission_{uuid.uuid4().hex[:8]}"
         now = datetime.now().isoformat()
@@ -325,8 +367,8 @@ class BossCommandCenterService:
 
         with get_db() as db:
             db.execute(
-                "INSERT INTO boss_missions (mission_id, goal, template_id, status, created_at, updated_at) VALUES (?, ?, ?, 'pending', ?, ?)",
-                (mission_id, goal, template_id, now, now)
+                "INSERT INTO boss_missions (mission_id, goal, template_id, status, created_at, updated_at, allow_browser_automation) VALUES (?, ?, ?, 'pending_review', ?, ?, ?)",
+                (mission_id, goal, template_id, now, now, json.dumps(allow_browser_automation))
             )
             for module_id in MODULE_ORDER:
                 definition = MODULE_DEFINITIONS[module_id]
@@ -347,15 +389,18 @@ class BossCommandCenterService:
 
         logger.info(f"BossCommandCenter: Created mission {mission_id} for goal: {goal[:60]}")
         self._log_event(mission_id, "mission_created", f"创建任务: {goal[:60]}",
-                        payload={"enabled_modules": active_modules})
+                        payload={"enabled_modules": active_modules,
+                                 "auto_run": auto_run,
+                                 "allow_browser_automation": allow_browser_automation})
         for module_id in MODULE_ORDER:
             if module_id not in active_modules:
                 self._log_event(mission_id, "module_skipped", f"模块 {MODULE_DEFINITIONS[module_id]['title']} 已跳过（未启用）",
                                 module_id=module_id)
         mission = self.get_mission(mission_id)
 
-        if auto_run:
-            mission = self.run_mission(mission_id)
+        # v2: auto_run is deprecated — mission always stays in pending_review after creation.
+        # Callers must explicitly call run_mission() to execute.
+        # The auto_run parameter is accepted for API compatibility but ignored.
 
         return mission
 
@@ -377,6 +422,11 @@ class BossCommandCenterService:
             if not row:
                 return None
             mission = dict(row)
+            # Parse allow_browser_automation JSON boolean
+            try:
+                mission["allow_browser_automation"] = json.loads(mission.get("allow_browser_automation", "false"))
+            except (json.JSONDecodeError, TypeError):
+                mission["allow_browser_automation"] = False
 
             modules = db.execute(
                 "SELECT * FROM boss_mission_modules WHERE mission_id = ? ORDER BY id",
@@ -405,11 +455,38 @@ class BossCommandCenterService:
 
     # ── 执行 ──────────────────────────────────────────────
 
-    def run_mission(self, mission_id: str) -> Optional[Dict[str, Any]]:
-        """执行整个 Mission（顺序执行，跳过 skipped 模块）"""
+    def accept_mission(self, mission_id: str, comment: str = "") -> Optional[Dict[str, Any]]:
+        """用户确认接受 Mission 结果，状态改为 done"""
         mission = self.get_mission(mission_id)
         if not mission:
             return None
+
+        if mission["status"] not in ("ready_for_review", "partial"):
+            logger.warning(f"Cannot accept mission {mission_id} in status {mission['status']}")
+            return mission
+
+        self._update_mission_status(mission_id, "done")
+        self._log_event(mission_id, "mission_accepted",
+                        f"用户接受结果" + (f": {comment}" if comment else ""),
+                        payload={"comment": comment})
+        logger.info(f"BossCommandCenter: Mission {mission_id} accepted by user")
+        return self.get_mission(mission_id)
+
+    def run_mission(self, mission_id: str, allow_browser_automation: bool = None) -> Optional[Dict[str, Any]]:
+        """执行整个 Mission（顺序执行，跳过 skipped 模块）
+
+        Args:
+            mission_id: Mission ID
+            allow_browser_automation: 是否允许浏览器自动化采集。
+                None (default) → use the saved mission value.
+        """
+        mission = self.get_mission(mission_id)
+        if not mission:
+            return None
+
+        # Default to the saved mission flag when caller did not explicitly pass it
+        if allow_browser_automation is None:
+            allow_browser_automation = mission.get("allow_browser_automation", False)
 
         self._update_mission_status(mission_id, "running")
         self._log_event(mission_id, "mission_started", "开始执行任务")
@@ -418,25 +495,45 @@ class BossCommandCenterService:
             # 跳过已完成或已跳过的模块
             if module["status"] in ("done", "skipped"):
                 continue
-            self.run_module(mission_id, module["module_id"])
+            self.run_module(mission_id, module["module_id"],
+                           allow_browser_automation=allow_browser_automation)
 
-        # 重新读取并计算最终状态
+        # 重新读取并计算最终状态（v2：人工审核闭环语义）
         mission = self.get_mission(mission_id)
         active_modules = [m for m in mission["modules"] if m["status"] != "skipped"]
-        all_done = all(m["status"] == "done" for m in active_modules) if active_modules else True
+        if not active_modules:
+            self._update_mission_status(mission_id, "pending_review")
+            return self.get_mission(mission_id)
+
+        has_any_result = any(m.get("result") and len(m.get("result", "").strip()) >= 10 for m in active_modules)
+        all_ok = all(m["status"] == "done" for m in active_modules)
         any_failed = any(m["status"] == "failed" for m in active_modules)
 
-        if any_failed:
+        if has_any_result:
+            if all_ok:
+                self._update_mission_status(mission_id, "ready_for_review")
+                self._log_event(mission_id, "mission_completed", "所有模块执行完成，等待人工审核")
+            else:
+                self._update_mission_status(mission_id, "partial")
+                self._log_event(mission_id, "mission_partial", "部分模块有结果，等待人工审核")
+        elif any_failed:
             self._update_mission_status(mission_id, "failed")
-            self._log_event(mission_id, "mission_failed", "任务执行失败（部分模块失败）")
+            self._log_event(mission_id, "mission_failed", "所有模块均无有效结果")
         else:
-            self._update_mission_status(mission_id, "done")
-            self._log_event(mission_id, "mission_succeeded", "任务执行完成")
+            self._update_mission_status(mission_id, "pending_review")
+            self._log_event(mission_id, "mission_no_result", "未产生任何结果")
 
         return self.get_mission(mission_id)
 
-    def run_module(self, mission_id: str, module_id: str) -> Optional[Dict[str, Any]]:
-        """执行单个模块 — 通过 ModuleExecutor 分发"""
+    def run_module(self, mission_id: str, module_id: str,
+                   allow_browser_automation: bool = False) -> Optional[Dict[str, Any]]:
+        """执行单个模块 — 通过 ModuleExecutor 分发
+
+        Args:
+            mission_id: Mission ID
+            module_id: 模块 ID
+            allow_browser_automation: 是否允许浏览器自动化采集
+        """
         with get_db() as db:
             row = db.execute(
                 "SELECT * FROM boss_mission_modules WHERE mission_id = ? AND module_id = ?",
@@ -479,11 +576,21 @@ class BossCommandCenterService:
             exec_result = executor.execute(goal, module_id, mission_id, context={
                 "mission": mission,
                 "prev_results": prev_results,
+                "allow_browser_automation": allow_browser_automation,
             })
             duration_ms = int((time.time() - start_time) * 1000)
 
-            # 更新数据库
-            status = "done" if exec_result.ok else "failed"
+            # v2: 模块状态更细腻 — 有结果文本即使执行有瑕疵也保留展示
+            # 但 approval-blocked 的模块不视为 partial，保持 failed
+            if exec_result.ok:
+                status = "done"
+            elif exec_result.mode == "blocked":
+                status = "failed"
+            elif exec_result.final_answer and len(exec_result.final_answer.strip()) >= 10:
+                status = "partial"  # 有可读结果但执行有问题
+            else:
+                status = "failed"
+
             self._update_module_result(
                 mission_id, module_id, status,
                 exec_result.final_answer, exec_result.confidence,
@@ -504,20 +611,23 @@ class BossCommandCenterService:
                                 module_id=module_id,
                                 payload={"error": exec_result.error, "duration_ms": duration_ms, "provider": exec_result.provider})
 
-            return self.get_mission(mission_id)
-
         except Exception as e:
             logger.error(f"BossCommandCenter: Module {module_id} failed: {e}")
             duration_ms = int((time.time() - start_time) * 1000)
+            # v2: 异常时也尽量保留已有结果
             self._update_module_result(
                 mission_id, module_id, "failed",
-                "", 0.0, [], str(e), [], "error", [], duration_ms, {}
+                "", 0.0, [str(e)], str(e), [], "error", [], duration_ms, {}
             )
             self._log_event(mission_id, "module_failed",
                             f"模块 {MODULE_DEFINITIONS.get(module_id, {}).get('title', module_id)} 异常: {str(e)[:100]}",
                             module_id=module_id,
                             payload={"error": str(e), "duration_ms": duration_ms})
-            return self.get_mission(mission_id)
+
+        # 更新 Mission 整体状态
+        self._update_mission_status_from_modules(mission_id)
+
+        return self.get_mission(mission_id)
 
     # ── 导出 ──────────────────────────────────────────────
 
@@ -559,7 +669,11 @@ class BossCommandCenterService:
     def _export_markdown(self, mission: Dict[str, Any]) -> str:
         """生成 Markdown 格式的老板可读报告"""
         lines = []
-        status_text = {"pending": "待执行", "running": "执行中", "done": "已完成", "failed": "失败"}
+        status_text = {
+            "pending_review": "待确认执行", "pending": "待执行",
+            "running": "执行中", "done": "已完成", "failed": "失败",
+            "ready_for_review": "等待审核", "partial": "部分完成",
+        }
         mission_status = status_text.get(mission["status"], mission["status"])
 
         lines.append(f"# 运营指挥台报告")

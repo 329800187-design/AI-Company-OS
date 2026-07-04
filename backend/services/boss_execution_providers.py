@@ -37,6 +37,111 @@ EVIDENCE_GATE_THRESHOLDS = {
     },
 }
 
+# 需要浏览器自动化的模块（涉及 browser/ecommerce/sourcing 工具调用）
+MODULES_REQUIRING_BROWSER = {"market", "competitor_analysis", "marketing"}
+BROWSER_AUTOMATION_PROMPT_KEYWORDS = (
+    "browser",
+    "playwright",
+    "goofish",
+    "taobao",
+    "ecommerce-bridge",
+    "sourcing-price-bridge",
+    "ecommerce_mcp",
+    "sourcing_price",
+)
+
+
+def prompt_requests_browser_automation(prompt: str) -> bool:
+    """Best-effort hard stop for prompts that would launch browser automation."""
+    normalized = (prompt or "").lower()
+    return any(keyword in normalized for keyword in BROWSER_AUTOMATION_PROMPT_KEYWORDS)
+
+
+# ── 浏览器自动化审批闸门 ──────────────────────────────────
+
+def is_browser_automation_allowed(
+    allow_from_request: bool = False,
+    module_id: str = "",
+) -> bool:
+    """检查浏览器自动化是否被允许
+
+    检查顺序：
+    1. 全局配置 BROWSER_AUTOMATION_APPROVED=true → 允许
+    2. 请求参数 allow_browser_automation=true → 允许
+    3. 模块不需要浏览器采集 → 允许（无需审批）
+    4. 其他情况 → 不允许
+
+    注意：每次调用都从 os.getenv() 读取最新值，确保测试 monkeypatch 生效。
+
+    Args:
+        allow_from_request: API 请求中传入的 allow_browser_automation 参数
+        module_id: 模块 ID，用于判断是否需要浏览器采集
+
+    Returns:
+        True if browser automation is allowed, False otherwise
+    """
+    import os
+
+    def _bool(v: str, default: bool = False) -> bool:
+        if not v:
+            return default
+        return v.strip().lower() in ("true", "1", "yes", "on")
+
+    # 从环境变量实时读取（不使用缓存的模块级常量）
+    require_approval = _bool(os.getenv("BROWSER_AUTOMATION_REQUIRE_APPROVAL", "true"), True)
+    global_approved = _bool(os.getenv("BROWSER_AUTOMATION_APPROVED", "false"), False)
+
+    # 如果不需要审批，直接允许
+    if not require_approval:
+        return True
+
+    # 全局审批通过
+    if global_approved:
+        return True
+
+    # 请求级别审批
+    if allow_from_request:
+        return True
+
+    # 模块不需要浏览器采集
+    if module_id and module_id not in MODULES_REQUIRING_BROWSER:
+        return True
+
+    return False
+
+
+def build_approval_required_output(
+    module_id: str,
+    action: str = "浏览器自动化采集",
+) -> Dict[str, Any]:
+    """构建审批未通过时的标准化 structured_output
+
+    当浏览器自动化需要审批但未获得时使用。
+    - status: blocked
+    - evidence_gate_passed: False
+    - 不调用任何外部工具（不启动浏览器、不调用 Hermes CLI）
+    """
+    return create_standard_output(
+        status="blocked",
+        summary="",
+        evidence=[],
+        evidence_files=[],
+        screenshots=[],
+        tool_calls=[],
+        missing_evidence=[f"{action}需要用户授权后才能执行"],
+        evidence_gate_passed=False,
+        competitors=[],
+        pricing={},
+        listing_copy="",
+        image_plan={},
+        next_actions=[
+            "在 API 请求中设置 allow_browser_automation=true",
+            "或在 .env 中设置 BROWSER_AUTOMATION_APPROVED=true",
+        ],
+        warnings=[f"浏览器自动化采集需要用户确认后才能执行（模块: {module_id}）"],
+        provider="blocked_by_approval",
+    )
+
 
 # ── 标准化输出结构 ────────────────────────────────────────
 
@@ -119,17 +224,24 @@ def check_evidence_gate(
 
     # 检查 evidence 数量
     min_evidence = thresholds.get("min_evidence", 0)
-    if len(evidence) < min_evidence:
-        # 对 listing_pack，检查前序 evidence 是否足够
-        if module_id == "listing_pack" and prev_results:
-            prev_evidence = []
+    if module_id == "listing_pack":
+        # listing_pack: accept if either prev_results evidence OR own evidence is sufficient.
+        # Own evidence (e.g. from browser tools within the listing step) should not be rejected
+        # just because upstream modules are sparse.
+        own_evidence_count = len(evidence)
+        prev_evidence = []
+        if prev_results:
             for prev_module in prev_results.values():
                 prev_so = prev_module.get("structured_output", {})
                 prev_evidence.extend(prev_so.get("evidence", []))
-            if len(prev_evidence) < min_evidence:
-                missing.append(f"前序 evidence 不足（需要 {min_evidence} 条，当前 {len(prev_evidence)} 条）")
-        elif module_id != "listing_pack":
-            missing.append(f"evidence 不足（需要 {min_evidence} 条，当前 {len(evidence)} 条）")
+        combined = own_evidence_count + len(prev_evidence)
+        if combined < min_evidence:
+            missing.append(
+                f"evidence 不足（需要 {min_evidence} 条，"
+                f"own={own_evidence_count}, prev={len(prev_evidence)}）"
+            )
+    elif len(evidence) < min_evidence:
+        missing.append(f"evidence 不足（需要 {min_evidence} 条，当前 {len(evidence)} 条）")
 
     # 检查竞品数量
     min_competitors = thresholds.get("min_competitors", 0)
@@ -146,6 +258,79 @@ def check_evidence_gate(
         "missing": missing,
         "details": details,
     }
+
+
+# ── Fallback structured_output 构建 ────────────────────────
+
+def build_fallback_structured_output(
+    module_id: str,
+    provider_reason: str,
+    warnings: List[str] = None,
+    extra: Dict[str, Any] = None,
+) -> Dict[str, Any]:
+    """构建 fallback 时的标准化 structured_output
+
+    当 Hermes 超时/失败 fallback 到 local_heuristic 时使用。
+    - evidence_gate_passed 始终为 False
+    - status 始终为 partial
+    - evidence 为空列表（不伪造任何证据）
+    - missing_evidence 根据模块门槛要求填充
+
+    Args:
+        module_id: 模块 ID（market / competitor_analysis / marketing）
+        provider_reason: fallback 原因描述
+        warnings: 额外警告信息
+        extra: 额外字段（如 competitors, pricing 等，来自 fallback runtime 结果）
+    """
+    # 根据模块门槛确定 missing_evidence
+    from backend.services.boss_execution_providers import EVIDENCE_GATE_THRESHOLDS
+    # module_id 映射：marketing 实际对应 listing_pack 门槛
+    threshold_key = "listing_pack" if module_id == "marketing" else module_id
+    thresholds = EVIDENCE_GATE_THRESHOLDS.get(threshold_key, {})
+    missing_evidence = []
+
+    min_evidence = thresholds.get("min_evidence", 0)
+    if min_evidence > 0:
+        missing_evidence.append(
+            f"evidence 不足（需要 {min_evidence} 条来源，当前 0 条）—— Hermes 工具链未采集到数据"
+        )
+
+    min_competitors = thresholds.get("min_competitors", 0)
+    if min_competitors > 0:
+        missing_evidence.append(
+            f"竞品数据不足（需要 {min_competitors} 个竞品，当前 0 个）—— 未执行真实采集"
+        )
+
+    # 模块特定提示
+    next_actions = [
+        "检查 Hermes CLI 是否可用且网络正常",
+        "尝试缩小任务范围后重试",
+        "或切换到 local_heuristic 模式手动执行",
+    ]
+
+    all_warnings = [f"Hermes 失败/超时，fallback 到 local_heuristic: {provider_reason}"]
+    if warnings:
+        all_warnings.extend(warnings)
+
+    extra = extra or {}
+
+    return create_standard_output(
+        status="partial",
+        summary="",
+        evidence=[],
+        evidence_files=[],
+        screenshots=[],
+        tool_calls=[],
+        missing_evidence=missing_evidence,
+        evidence_gate_passed=False,
+        competitors=extra.get("competitors", []),
+        pricing=extra.get("pricing", {}),
+        listing_copy="",
+        image_plan={},
+        next_actions=next_actions,
+        warnings=all_warnings,
+        provider="local_heuristic_fallback",
+    )
 
 
 # ── Provider 接口 ─────────────────────────────────────────
@@ -166,12 +351,19 @@ class BossExecutionProvider(ABC):
         pass
 
     @abstractmethod
-    def execute_market_research(self, goal: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+    def execute_market_research(self, goal: str, context: Dict[str, Any] = None,
+                                 allow_browser_automation: bool = False) -> Dict[str, Any]:
         """执行市场调研
+
+        Args:
+            goal: 市场调研目标
+            context: 执行上下文
+            allow_browser_automation: 是否允许浏览器自动化采集
 
         Returns:
             {
                 "ok": bool,
+                "blocked": bool,  # True if blocked by approval gate
                 "summary": str,
                 "evidence": list,
                 "competitors": list,
@@ -184,12 +376,20 @@ class BossExecutionProvider(ABC):
 
     @abstractmethod
     def execute_competitor_analysis(self, goal: str, competitors: List[Dict] = None,
-                                     context: Dict[str, Any] = None) -> Dict[str, Any]:
+                                     context: Dict[str, Any] = None,
+                                     allow_browser_automation: bool = False) -> Dict[str, Any]:
         """执行竞品分析
+
+        Args:
+            goal: 竞品分析目标
+            competitors: 已知竞品列表
+            context: 执行上下文
+            allow_browser_automation: 是否允许浏览器自动化采集
 
         Returns:
             {
                 "ok": bool,
+                "blocked": bool,  # True if blocked by approval gate
                 "summary": str,
                 "competitors": list,
                 "pricing": dict,
@@ -202,12 +402,21 @@ class BossExecutionProvider(ABC):
     @abstractmethod
     def execute_listing_pack(self, goal: str, competitors: List[Dict] = None,
                              pricing: Dict[str, Any] = None,
-                             context: Dict[str, Any] = None) -> Dict[str, Any]:
+                             context: Dict[str, Any] = None,
+                             allow_browser_automation: bool = False) -> Dict[str, Any]:
         """执行上架物料包生成
+
+        Args:
+            goal: 上架物料包生成目标
+            competitors: 竞品列表
+            pricing: 定价信息
+            context: 执行上下文
+            allow_browser_automation: 是否允许浏览器自动化采集
 
         Returns:
             {
                 "ok": bool,
+                "blocked": bool,  # True if blocked by approval gate
                 "summary": str,
                 "listing_copy": str,
                 "pricing": dict,
@@ -240,7 +449,8 @@ class LocalMockExecutionProvider(BossExecutionProvider):
     def is_available(self) -> bool:
         return True
 
-    def execute_market_research(self, goal: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+    def execute_market_research(self, goal: str, context: Dict[str, Any] = None,
+                                 allow_browser_automation: bool = False) -> Dict[str, Any]:
         """返回 mock 市场调研数据"""
         return self._mock_data.get("market_research", {
             "ok": True,
@@ -259,7 +469,8 @@ class LocalMockExecutionProvider(BossExecutionProvider):
         })
 
     def execute_competitor_analysis(self, goal: str, competitors: List[Dict] = None,
-                                     context: Dict[str, Any] = None) -> Dict[str, Any]:
+                                     context: Dict[str, Any] = None,
+                                     allow_browser_automation: bool = False) -> Dict[str, Any]:
         """返回 mock 竞品分析数据"""
         return self._mock_data.get("competitor_analysis", {
             "ok": True,
@@ -274,7 +485,8 @@ class LocalMockExecutionProvider(BossExecutionProvider):
 
     def execute_listing_pack(self, goal: str, competitors: List[Dict] = None,
                              pricing: Dict[str, Any] = None,
-                             context: Dict[str, Any] = None) -> Dict[str, Any]:
+                             context: Dict[str, Any] = None,
+                             allow_browser_automation: bool = False) -> Dict[str, Any]:
         """返回 mock 上架物料包数据"""
         return self._mock_data.get("listing_pack", {
             "ok": True,
@@ -388,7 +600,8 @@ class LocalHeuristicExecutionProvider(BossExecutionProvider):
             "raw_text": text[:300] if text else "",
         }
 
-    def execute_market_research(self, goal: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+    def execute_market_research(self, goal: str, context: Dict[str, Any] = None,
+                                 allow_browser_automation: bool = False) -> Dict[str, Any]:
         """执行市场调研"""
         prompt = (
             f"请调研以下电商业务的市场情况：{goal}\n\n"
@@ -423,7 +636,8 @@ class LocalHeuristicExecutionProvider(BossExecutionProvider):
         }
 
     def execute_competitor_analysis(self, goal: str, competitors: List[Dict] = None,
-                                     context: Dict[str, Any] = None) -> Dict[str, Any]:
+                                     context: Dict[str, Any] = None,
+                                     allow_browser_automation: bool = False) -> Dict[str, Any]:
         """执行竞品分析"""
         prompt = f"请基于以下信息，对电商业务「{goal}」做竞品分析：\n\n"
         if competitors:
@@ -454,7 +668,8 @@ class LocalHeuristicExecutionProvider(BossExecutionProvider):
 
     def execute_listing_pack(self, goal: str, competitors: List[Dict] = None,
                              pricing: Dict[str, Any] = None,
-                             context: Dict[str, Any] = None) -> Dict[str, Any]:
+                             context: Dict[str, Any] = None,
+                             allow_browser_automation: bool = False) -> Dict[str, Any]:
         """执行上架物料包生成"""
         import json
         prompt = (
@@ -545,6 +760,8 @@ class HermesExecutionProvider(BossExecutionProvider):
     def _execute_hermes_cli(self, prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
         """执行 Hermes CLI 调用
 
+        使用 Popen + 实时读取，在超时时尽可能保留已产生的 stdout/stderr。
+
         Args:
             prompt: 完整的 prompt 内容
             context: 执行上下文（包含 mission_id, module_id 等）
@@ -559,41 +776,109 @@ class HermesExecutionProvider(BossExecutionProvider):
             }
         """
         import subprocess
-        import json
+        import threading
+
+        context = context or {}
+        allow_from_request = bool(context.get("allow_browser_automation", False))
+        module_id = context.get("module_id", "")
+        if prompt_requests_browser_automation(prompt) and not is_browser_automation_allowed(
+            allow_from_request=allow_from_request,
+            module_id=module_id,
+        ):
+            return {
+                "ok": False,
+                "blocked": True,
+                "stdout": "",
+                "stderr": "",
+                "exit_code": -2,
+                "error": "browser_automation_approval_required",
+            }
 
         cli_path = self._get_cli_path()
         timeout = self._get_timeout()
 
-        # 构建命令：hermes -z "<prompt>"
-        # 使用 -z 标志表示非交互模式
-        cmd = [cli_path, "-z", prompt]
+        # 构建命令：hermes chat -q "<prompt>"
+        # -q 表示快速问答模式，非交互
+        cmd = [cli_path, "chat", "-q", prompt]
+
+        # 使用 Popen + 线程读取，超时时保留已收集的输出
+        proc = None
+        stdout_chunks: list = []
+        stderr_chunks: list = []
+        timed_out = False
+
+        def _reader(pipe, chunks):
+            try:
+                while True:
+                    chunk = pipe.read(4096)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+            except Exception:
+                pass
 
         try:
-            # 执行 subprocess
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=timeout,
                 encoding="utf-8",
             )
 
+            # 启动读取线程
+            t_out = threading.Thread(target=_reader, args=(proc.stdout, stdout_chunks))
+            t_err = threading.Thread(target=_reader, args=(proc.stderr, stderr_chunks))
+            t_out.daemon = True
+            t_err.daemon = True
+            t_out.start()
+            t_err.start()
+
+            # 等待完成或超时
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
+            # 等读取线程结束（最多 2 秒）
+            t_out.join(timeout=2)
+            t_err.join(timeout=2)
+
+            stdout_text = "".join(stdout_chunks)
+            stderr_text = "".join(stderr_chunks)
+
+            if timed_out:
+                # 超时：保留已收集的部分输出（最多 2000 字符）
+                partial_stdout = stdout_text[:2000] if stdout_text else ""
+                partial_stderr = stderr_text[:2000] if stderr_text else ""
+                return {
+                    "ok": False,
+                    "stdout": partial_stdout,
+                    "stderr": partial_stderr,
+                    "exit_code": -1,
+                    "error": (
+                        f"Hermes CLI 执行超时（{timeout}秒）。"
+                        f"已收集 stdout {len(stdout_text)} 字符, stderr {len(stderr_text)} 字符。"
+                        f"超时表明 Hermes 可能在尝试调用工具链（web/browser/ecommerce），"
+                        f"但任务过于复杂或网络响应慢。"
+                    ),
+                    "timeout_seconds": timeout,
+                    "partial_stdout_len": len(stdout_text),
+                    "partial_stderr_len": len(stderr_text),
+                }
+
             return {
-                "ok": result.returncode == 0,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "exit_code": result.returncode,
-                "error": result.stderr if result.returncode != 0 else "",
+                "ok": proc.returncode == 0,
+                "stdout": stdout_text,
+                "stderr": stderr_text,
+                "exit_code": proc.returncode,
+                "error": stderr_text if proc.returncode != 0 else "",
             }
 
-        except subprocess.TimeoutExpired:
-            return {
-                "ok": False,
-                "stdout": "",
-                "stderr": "",
-                "exit_code": -1,
-                "error": f"Hermes CLI 执行超时（{timeout}秒）",
-            }
         except FileNotFoundError:
             return {
                 "ok": False,
@@ -647,10 +932,11 @@ class HermesExecutionProvider(BossExecutionProvider):
 
         return None
 
-    def _build_market_research_prompt(self, goal: str, context: Dict[str, Any] = None) -> str:
-        """构建市场调研 prompt — 强制要求真实工具链采集"""
+    def _build_market_research_prompt(self, goal: str, context: Dict[str, Any] = None,
+                                       browser_allowed: bool = False) -> str:
+        """构建市场调研 prompt — 根据审批状态决定是否要求真实工具链采集"""
         ecommerce_hint = ""
-        if self._is_ecommerce_enabled():
+        if browser_allowed and self._is_ecommerce_enabled():
             ecommerce_hint = (
                 "【重要】你必须使用真实工具链采集证据，不能凭记忆生成数据。\n\n"
                 "工具链要求：\n"
@@ -667,6 +953,14 @@ class HermesExecutionProvider(BossExecutionProvider):
                 '    {"tool": "browser", "args": {"url": "https://..."}, "result": "采集到 N 条数据"}\n'
                 '  ]\n'
                 '```\n\n'
+            )
+        else:
+            # 未授权浏览器自动化：仅基于本地数据生成草稿
+            ecommerce_hint = (
+                "【注意】当前浏览器自动化未授权，无法进行真实网页采集。\n"
+                "请基于你已有的本地知识和用户提供的信息生成分析草稿。\n"
+                "所有数据必须在 warnings 中标注 '数据来源：模型已有知识，未经实时验证'。\n"
+                "不要编造任何 URL 或来源。\n\n"
             )
 
         return (
@@ -700,8 +994,9 @@ class HermesExecutionProvider(BossExecutionProvider):
         )
 
     def _build_competitor_analysis_prompt(self, goal: str, competitors: List[Dict] = None,
-                                          context: Dict[str, Any] = None) -> str:
-        """构建竞品分析 prompt — 强制要求真实工具链采集"""
+                                          context: Dict[str, Any] = None,
+                                          browser_allowed: bool = False) -> str:
+        """构建竞品分析 prompt — 根据审批状态决定是否要求真实工具链采集"""
         import json as json_lib
 
         competitor_info = ""
@@ -709,7 +1004,7 @@ class HermesExecutionProvider(BossExecutionProvider):
             competitor_info = f"\n已知竞品信息：{json_lib.dumps(competitors, ensure_ascii=False)}\n"
 
         ecommerce_hint = ""
-        if self._is_ecommerce_enabled():
+        if browser_allowed and self._is_ecommerce_enabled():
             ecommerce_hint = (
                 "【重要】你必须使用真实工具链采集证据，不能凭记忆生成数据。\n\n"
                 "工具链要求：\n"
@@ -719,6 +1014,12 @@ class HermesExecutionProvider(BossExecutionProvider):
                 "4. 不要执行发布/付款/发消息等操作\n\n"
                 "工具调用记录：\n"
                 "在输出 JSON 中，必须包含 tool_calls 数组，记录你调用的每个工具。\n\n"
+            )
+        else:
+            ecommerce_hint = (
+                "【注意】当前浏览器自动化未授权，无法进行真实网页采集。\n"
+                "请基于你已有的本地知识和用户提供的信息生成分析草稿。\n"
+                "不要编造任何 URL 或来源。\n\n"
             )
 
         return (
@@ -751,8 +1052,9 @@ class HermesExecutionProvider(BossExecutionProvider):
 
     def _build_listing_pack_prompt(self, goal: str, competitors: List[Dict] = None,
                                    pricing: Dict[str, Any] = None,
-                                   context: Dict[str, Any] = None) -> str:
-        """构建上架物料包 prompt — 必须基于前序 evidence"""
+                                   context: Dict[str, Any] = None,
+                                   browser_allowed: bool = False) -> str:
+        """构建上架物料包 prompt — 根据审批状态决定是否要求基于真实数据"""
         import json as json_lib
 
         competitor_info = ""
@@ -774,7 +1076,7 @@ class HermesExecutionProvider(BossExecutionProvider):
                 prev_evidence_info = f"\n前序 evidence（必须基于这些真实数据生成文案）：\n{json_lib.dumps(all_evidence[:10], ensure_ascii=False)}\n"
 
         ecommerce_hint = ""
-        if self._is_ecommerce_enabled():
+        if browser_allowed and self._is_ecommerce_enabled():
             ecommerce_hint = (
                 "【重要】上架文案必须基于前序 evidence 生成，不能凭空编造。\n\n"
                 "要求：\n"
@@ -782,6 +1084,11 @@ class HermesExecutionProvider(BossExecutionProvider):
                 "2. 定价必须基于前序竞品分析的真实价格\n"
                 "3. 如果前序 evidence 不足，必须在 warnings 中说明\n"
                 "4. 不要执行发布/付款/发消息等操作\n\n"
+            )
+        else:
+            ecommerce_hint = (
+                "【注意】当前浏览器自动化未授权，上架文案基于模型知识生成草稿。\n"
+                "请在 warnings 中标注数据不足，建议用户补充真实数据后重新生成。\n\n"
             )
 
         return (
@@ -811,10 +1118,44 @@ class HermesExecutionProvider(BossExecutionProvider):
             f"- 不要执行发布、付款、发消息等操作"
         )
 
-    def execute_market_research(self, goal: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """执行市场调研 — 带 evidence gate 验证"""
-        prompt = self._build_market_research_prompt(goal, context)
+    def execute_market_research(self, goal: str, context: Dict[str, Any] = None,
+                                 allow_browser_automation: bool = False) -> Dict[str, Any]:
+        """执行市场调研 — 带审批闸门和 evidence gate 验证"""
+        # 检查浏览器自动化审批
+        if not is_browser_automation_allowed(allow_from_request=allow_browser_automation, module_id="market"):
+            return {
+                "ok": False,
+                "blocked": True,
+                "summary": "",
+                "evidence": [],
+                "competitors": [],
+                "pricing": {},
+                "warnings": ["浏览器自动化采集需要用户确认后才能执行（模块: market）"],
+                "raw_data": {"blocked_reason": "approval_required"},
+            }
+
+        context = dict(context or {})
+        context.update({"allow_browser_automation": allow_browser_automation, "module_id": "market"})
+
+        # Compute effective browser permission (may be approved via config/env even if request flag is False)
+        browser_approved = is_browser_automation_allowed(
+            allow_from_request=allow_browser_automation, module_id="market"
+        )
+        prompt = self._build_market_research_prompt(goal, context,
+                                                     browser_allowed=browser_approved)
         cli_result = self._execute_hermes_cli(prompt, context)
+
+        if cli_result.get("blocked"):
+            return {
+                "ok": False,
+                "blocked": True,
+                "summary": "",
+                "evidence": [],
+                "competitors": [],
+                "pricing": {},
+                "warnings": [cli_result["error"]],
+                "raw_data": cli_result,
+            }
 
         if not cli_result["ok"]:
             return {
@@ -879,10 +1220,42 @@ class HermesExecutionProvider(BossExecutionProvider):
         }
 
     def execute_competitor_analysis(self, goal: str, competitors: List[Dict] = None,
-                                     context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """执行竞品分析 — 带 evidence gate 验证"""
-        prompt = self._build_competitor_analysis_prompt(goal, competitors, context)
+                                     context: Dict[str, Any] = None,
+                                     allow_browser_automation: bool = False) -> Dict[str, Any]:
+        """执行竞品分析 — 带审批闸门和 evidence gate 验证"""
+        # 检查浏览器自动化审批
+        if not is_browser_automation_allowed(allow_from_request=allow_browser_automation, module_id="competitor_analysis"):
+            return {
+                "ok": False,
+                "blocked": True,
+                "summary": "",
+                "competitors": competitors or [],
+                "pricing": {},
+                "warnings": ["浏览器自动化采集需要用户确认后才能执行（模块: competitor_analysis）"],
+                "raw_data": {"blocked_reason": "approval_required"},
+            }
+
+        context = dict(context or {})
+        context.update({"allow_browser_automation": allow_browser_automation, "module_id": "competitor_analysis"})
+
+        # Compute effective browser permission (may be approved via config/env even if request flag is False)
+        browser_approved = is_browser_automation_allowed(
+            allow_from_request=allow_browser_automation, module_id="competitor_analysis"
+        )
+        prompt = self._build_competitor_analysis_prompt(goal, competitors, context,
+                                                        browser_allowed=browser_approved)
         cli_result = self._execute_hermes_cli(prompt, context)
+
+        if cli_result.get("blocked"):
+            return {
+                "ok": False,
+                "blocked": True,
+                "summary": "",
+                "competitors": competitors or [],
+                "pricing": {},
+                "warnings": [cli_result["error"]],
+                "raw_data": cli_result,
+            }
 
         if not cli_result["ok"]:
             return {
@@ -946,10 +1319,46 @@ class HermesExecutionProvider(BossExecutionProvider):
 
     def execute_listing_pack(self, goal: str, competitors: List[Dict] = None,
                              pricing: Dict[str, Any] = None,
-                             context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """执行上架物料包生成 — 必须基于前序 evidence"""
-        prompt = self._build_listing_pack_prompt(goal, competitors, pricing, context)
+                             context: Dict[str, Any] = None,
+                             allow_browser_automation: bool = False) -> Dict[str, Any]:
+        """执行上架物料包生成 — 带审批闸门，必须基于前序 evidence"""
+        # 检查浏览器自动化审批（marketing 模块需要浏览器采集）
+        if not is_browser_automation_allowed(allow_from_request=allow_browser_automation, module_id="marketing"):
+            return {
+                "ok": False,
+                "blocked": True,
+                "summary": "",
+                "listing_copy": "",
+                "pricing": pricing or {},
+                "image_plan": {},
+                "next_actions": [],
+                "warnings": ["浏览器自动化采集需要用户确认后才能执行（模块: marketing/listing_pack）"],
+                "raw_data": {"blocked_reason": "approval_required"},
+            }
+
+        context = dict(context or {})
+        context.update({"allow_browser_automation": allow_browser_automation, "module_id": "marketing"})
+
+        # Compute effective browser permission (may be approved via config/env even if request flag is False)
+        browser_approved = is_browser_automation_allowed(
+            allow_from_request=allow_browser_automation, module_id="marketing"
+        )
+        prompt = self._build_listing_pack_prompt(goal, competitors, pricing, context,
+                                                 browser_allowed=browser_approved)
         cli_result = self._execute_hermes_cli(prompt, context)
+
+        if cli_result.get("blocked"):
+            return {
+                "ok": False,
+                "blocked": True,
+                "summary": "",
+                "listing_copy": "",
+                "pricing": pricing or {},
+                "image_plan": {},
+                "next_actions": [],
+                "warnings": [cli_result["error"]],
+                "raw_data": cli_result,
+            }
 
         if not cli_result["ok"]:
             return {
