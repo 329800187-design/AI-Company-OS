@@ -46,6 +46,7 @@ from backend.routers.brain_router import router as brain_router
 from backend.routers.pipeline_router import router as pipeline_router
 from backend.routers.capabilities_router import router as capabilities_router
 from backend.routers.agent_console_router import router as agent_console_router
+from backend.routers.boss_router import router as boss_router
 from backend.database.database import init_db
 from backend import config
 from backend.task_queue.queue import BackgroundTaskManager
@@ -84,7 +85,8 @@ app.add_middleware(TierLimitMiddleware)
 
 # 静态文件 (CSS/JS)
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
-app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+if FRONTEND_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
 # 新前端静态文件 (React)
 NEW_FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend-new" / "dist"
@@ -140,6 +142,7 @@ app.include_router(plugin_config_router)
 app.include_router(brain_router)
 app.include_router(pipeline_router)
 app.include_router(capabilities_router)
+app.include_router(boss_router)
 app.include_router(agent_console_router)
 
 # 多租户认证中间件（轻量 — 解析 Authorization Header 中的用户 token）
