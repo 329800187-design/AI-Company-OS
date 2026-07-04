@@ -9,21 +9,21 @@ import {
   FileText,
   Globe2,
   History,
-  Layers3,
   Loader2,
   Megaphone,
   Play,
   RotateCcw,
   Search,
-  Sparkles,
+  Shield,
+  ShieldOff,
   SkipForward,
+  Sparkles,
   Target,
 } from "lucide-react"
 import { api } from "@/api/client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { GlowCard } from "@/components/shared/glow-card"
 import { cn } from "@/lib/utils"
 
 interface ModuleResult {
@@ -130,6 +130,8 @@ export default function BossPage() {
   const [templates, setTemplates] = useState<MissionTemplate[]>([])
   const [showTemplates, setShowTemplates] = useState(false)
   const [selectedTemplate, setSelectedTemplate] = useState<MissionTemplate | null>(null)
+  const [allowBrowserAutomation, setAllowBrowserAutomation] = useState(false)
+  const [exportToast, setExportToast] = useState<"json" | "markdown" | null>(null)
 
   const modules = currentMission?.modules || []
   const activeResult = modules.find((m) => m.module_id === activeModule) || null
@@ -142,22 +144,43 @@ export default function BossPage() {
     try {
       const data = await api.listMissions(10)
       setRecentMissions(data.missions || [])
-    } catch {
-      // 静默失败
+    } catch (error) {
+      console.error("Load recent missions failed:", error)
     }
   }
 
   useEffect(() => {
     loadRecentMissions()
     loadTemplates()
+
+    // Check for mission to load from sessionStorage
+    const loadMissionId = sessionStorage.getItem("load_mission_id")
+    if (loadMissionId) {
+      sessionStorage.removeItem("load_mission_id")
+      loadMission(loadMissionId)
+    }
+
+    // Check for template to load from sessionStorage
+    const tplData = sessionStorage.getItem("boss_selected_template")
+    if (tplData) {
+      sessionStorage.removeItem("boss_selected_template")
+      try {
+        const tpl = JSON.parse(tplData)
+        setSelectedTemplate(tpl)
+        setGoal(tpl.default_goal)
+        setEnabledModules(tpl.default_modules)
+      } catch {
+        // ignore
+      }
+    }
   }, [])
 
   const loadTemplates = async () => {
     try {
       const data = await api.getTemplates()
       setTemplates(data.templates || [])
-    } catch {
-      // 静默
+    } catch (error) {
+      console.error("Load templates failed:", error)
     }
   }
 
@@ -171,8 +194,8 @@ export default function BossPage() {
     }
   }
 
-  // 创建并执行 mission
-  const runMission = async () => {
+  // v2: 两阶段流程 — 阶段1: 只创建计划
+  const createPlan = async () => {
     const trimmed = goal.trim()
     if (!trimmed || isRunning) return
 
@@ -180,72 +203,114 @@ export default function BossPage() {
     setActiveModule("strategy")
 
     try {
-      const mission = await api.createMission(trimmed, false, enabledModules)
+      console.log("Creating mission plan with goal:", trimmed, "modules:", enabledModules)
+      const mission = await api.createMission(trimmed, false, enabledModules, allowBrowserAutomation)
+      console.log("Mission plan created:", mission)
       setCurrentMission({
         ...mission,
         modules: mission.modules || [],
       })
-      loadEvents(mission.mission_id)
-
-      // 后端会按 enabled_modules 标记 skipped，这里只执行非 skipped 的
-      const activeModuleIds = enabledModules
-
-      for (const moduleId of activeModuleIds) {
-        setActiveModule(moduleId)
-
-        setCurrentMission((prev) => {
-          if (!prev) return prev
-          return {
-            ...prev,
-            modules: prev.modules.map((m) =>
-              m.module_id === moduleId ? { ...m, status: "running" } : m
-            ),
-          }
-        })
-
-        try {
-          const updated = await api.runMissionModule(mission.mission_id, moduleId)
-          setCurrentMission({
-            ...updated,
-            modules: updated.modules || [],
-          })
-          loadEvents(mission.mission_id)
-        } catch (err) {
-          setCurrentMission((prev) => {
-            if (!prev) return prev
-            return {
-              ...prev,
-              modules: prev.modules.map((m) =>
-                m.module_id === moduleId
-                  ? { ...m, status: "failed", error: err instanceof Error ? err.message : "模块执行失败" }
-                  : m
-              ),
-            }
-          })
-        }
+      // 不自动执行，状态应为 pending_review
+      console.log("Plan ready for review, status:", mission.status)
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "创建计划失败"
+      console.error("Create plan failed:", error)
+      if (errorMsg.includes("429") || errorMsg.includes("rate")) {
+        alert("请求太频繁，请稍后再试。")
+      } else if (errorMsg.includes("400")) {
+        alert(`参数错误: ${errorMsg}`)
+      } else {
+        alert(`创建计划失败: ${errorMsg}`)
       }
+    } finally {
+      setIsRunning(false)
+    }
+  }
 
+  // v2: 两阶段流程 — 阶段2: 确认执行（逐模块串行，每个120s超时）
+  const confirmRun = async () => {
+    if (!currentMission || isRunning) return
+
+    setIsRunning(true)
+
+    const pendingModules = currentMission.modules.filter(
+      m => m.status !== "skipped" && m.status !== "done"
+    )
+
+    for (const mod of pendingModules) {
+      // 切换到当前正在执行的模块标签
+      setActiveModule(mod.module_id)
+
+      try {
+        // 120秒超时
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 120_000)
+
+        const updated = await api.runMissionModule(
+          currentMission.mission_id,
+          mod.module_id,
+          allowBrowserAutomation,
+          controller.signal
+        )
+        clearTimeout(timeoutId)
+
+        setCurrentMission({ ...updated, modules: updated.modules || [] })
+      } catch (err) {
+        console.error(`Module ${mod.module_id} failed:`, err)
+        // 刷新看部分结果
+        try {
+          const refreshed = await api.getMission(currentMission.mission_id)
+          setCurrentMission({ ...refreshed, modules: refreshed.modules || [] })
+        } catch { /* 静默 */ }
+      }
+    }
+
+    // 最终刷新事件日志
+    try {
+      const final = await api.getMission(currentMission.mission_id)
+      setCurrentMission({ ...final, modules: final.modules || [] })
+      loadEvents(currentMission.mission_id)
+    } catch { /* 静默 */ }
+
+    setIsRunning(false)
+    loadRecentMissions()
+  }
+
+  // 用户接受结果
+  const acceptMission = async () => {
+    if (!currentMission || isRunning) return
+    setIsRunning(true)
+    try {
+      const updated = await api.acceptMission(currentMission.mission_id)
+      setCurrentMission({
+        ...updated,
+        modules: updated.modules || [],
+      })
       loadRecentMissions()
     } catch (error) {
-      console.error("Mission failed:", error)
+      console.error("Accept mission failed:", error)
+      alert(`接受结果失败: ${error instanceof Error ? error.message : "未知错误"}`)
     } finally {
       setIsRunning(false)
     }
   }
 
   // 重跑单个模块
-  const rerunModule = async (moduleId: string) => {
+  const rerunModule = async (moduleId: string, forceAllowBrowser = false) => {
     if (!currentMission || isRunning) return
 
+    const shouldAllow = forceAllowBrowser || allowBrowserAutomation
     setIsRunning(true)
     try {
-      const updated = await api.runMissionModule(currentMission.mission_id, moduleId)
+      const updated = await api.runMissionModule(currentMission.mission_id, moduleId, shouldAllow)
       setCurrentMission({
         ...updated,
         modules: updated.modules || [],
       })
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "重跑失败"
       console.error("Module rerun failed:", error)
+      alert(`重跑模块失败: ${errorMsg}`)
     } finally {
       setIsRunning(false)
     }
@@ -255,16 +320,18 @@ export default function BossPage() {
   const loadMission = async (missionId: string) => {
     try {
       const mission = await api.getMission(missionId)
-      setCurrentMission(mission)
-      setGoal(mission.goal)
+      const safeMission = { ...mission, modules: mission.modules || [] }
+      setCurrentMission(safeMission)
+      setGoal(mission.goal || "")
       loadEvents(missionId)
       // 从 mission 恢复 enabled_modules
-      const activeIds = mission.modules.filter((m) => m.status !== "skipped").map((m) => m.module_id)
+      const activeIds = safeMission.modules.filter((m) => m.status !== "skipped").map((m) => m.module_id)
       setEnabledModules(activeIds.length > 0 ? activeIds : [...MODULE_IDS])
       setActiveModule("strategy")
       setShowHistory(false)
     } catch (error) {
       console.error("Load mission failed:", error)
+      alert(`加载历史任务失败: ${error instanceof Error ? error.message : "未知错误"}`)
     }
   }
 
@@ -273,8 +340,12 @@ export default function BossPage() {
     if (!currentMission) return
     try {
       await api.exportMission(currentMission.mission_id, format)
+      // 显示成功反馈
+      setExportToast(format)
+      setTimeout(() => setExportToast(null), 3000)
     } catch (error) {
       console.error("Export failed:", error)
+      alert(`导出失败: ${error instanceof Error ? error.message : "未知错误"}`)
     }
   }
 
@@ -291,9 +362,27 @@ export default function BossPage() {
   const statusBadge = (status: string) => {
     if (status === "running") return <Badge variant="info">执行中</Badge>
     if (status === "done") return <Badge variant="success">已完成</Badge>
+    if (status === "ready_for_review") return <Badge variant="success">待审核</Badge>
+    if (status === "partial") return <Badge variant="warning">部分结果</Badge>
+    if (status === "pending_review") return <Badge variant="info">待确认</Badge>
     if (status === "failed") return <Badge variant="destructive">需处理</Badge>
+    if (status === "blocked") return <Badge variant="warning">需授权</Badge>
     if (status === "skipped") return <Badge variant="secondary">已跳过</Badge>
     return <Badge variant="secondary">待执行</Badge>
+  }
+
+  // v2: Mission 状态文案映射
+  const missionStatusText = (status: string) => {
+    const map: Record<string, string> = {
+      pending_review: "计划已生成，等待确认执行",
+      pending: "计划已生成，等待确认执行",
+      running: "正在执行模块中...",
+      ready_for_review: "已生成结果，等待人工审核",
+      partial: "证据不足，但已有可参考结果",
+      done: "用户已确认完成",
+      failed: "无有效结果",
+    }
+    return map[status] || status
   }
 
   const formatDuration = (ms?: number) => {
@@ -303,80 +392,83 @@ export default function BossPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-cyan">
-            <Briefcase className="h-6 w-6 text-white" />
-          </div>
+    <div className="space-y-8">
+      {/* Header */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease: [0.23, 1, 0.32, 1] }}
+      >
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <h1 className="text-2xl font-bold">老板运营指挥台</h1>
-            <p className="text-sm text-muted-foreground">
+            <span className="inline-block px-3 py-1 rounded-full border border-[#E5E5E5] text-[11px] text-[#8A8A8A] tracking-wider mb-3">
+              Boss Command Center
+            </span>
+            <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-[#0B0B0B]">
+              老板运营指挥台
+            </h1>
+            <p className="text-sm text-[#8A8A8A] mt-2">
               输入一个业务目标，生成市场、营销、页面和执行清单。
             </p>
           </div>
-        </div>
 
-        <div className="flex items-center gap-2">
-          <Badge variant="info" className="gap-1">
-            <Layers3 className="h-3 w-3" />
-            AI Company OS 子应用
-          </Badge>
-          {modules.length > 0 && (
-            <Badge variant={failedCount > 0 ? "warning" : completedCount === modules.length - skippedCount ? "success" : "secondary"}>
-              {completedCount}/{modules.length - skippedCount} 完成
-            </Badge>
-          )}
-          {currentMission && (
-            <Button variant="outline" size="sm" onClick={() => handleExport("markdown")} className="gap-1">
-              <Download className="h-3.5 w-3.5" />
-              导出
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {modules.length > 0 && (
+              <Badge variant={failedCount > 0 ? "warning" : completedCount === modules.length - skippedCount ? "success" : "secondary"}>
+                {completedCount}/{modules.length - skippedCount} 完成
+              </Badge>
+            )}
+            {currentMission && (
+              <Button variant="outline" size="sm" onClick={() => handleExport("markdown")} className="gap-1">
+                <Download className="h-3.5 w-3.5" />
+                导出
+              </Button>
+            )}
 
-          {/* Metrics 小面板 */}
-          {currentMission?.metrics && (currentMission.status === "done" || currentMission.status === "failed") && (
-            <div className="flex items-center gap-2">
-              <Badge variant="outline">
-                完成率 {Math.round(currentMission.metrics.completion_rate * 100)}%
-              </Badge>
-              <Badge variant="outline">
-                {currentMission.metrics.succeeded_modules}/{currentMission.metrics.total_modules} 成功
-              </Badge>
-              {currentMission.metrics.failed_modules > 0 && (
-                <Badge variant="destructive">{currentMission.metrics.failed_modules} 失败</Badge>
-              )}
-              {currentMission.metrics.skipped_modules > 0 && (
-                <Badge variant="secondary">{currentMission.metrics.skipped_modules} 跳过</Badge>
-              )}
-              {currentMission.metrics.warning_count > 0 && (
-                <Badge variant="warning">{currentMission.metrics.warning_count} 警告</Badge>
-              )}
-              {currentMission.metrics.duration_ms > 0 && (
+            {/* Metrics 小面板 */}
+            {currentMission?.metrics && (currentMission.status !== "pending" && currentMission.status !== "pending_review" && currentMission.status !== "running") && (
+              <div className="flex items-center gap-2">
                 <Badge variant="outline">
-                  {currentMission.metrics.duration_ms < 1000
-                    ? `${currentMission.metrics.duration_ms}ms`
-                    : `${(currentMission.metrics.duration_ms / 1000).toFixed(1)}s`}
+                  完成率 {Math.round(currentMission.metrics.completion_rate * 100)}%
                 </Badge>
-              )}
-            </div>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowHistory(!showHistory)}
-            className="gap-1"
-          >
-            <History className="h-3.5 w-3.5" />
-            历史
-          </Button>
+                <Badge variant="outline">
+                  {currentMission.metrics.succeeded_modules}/{currentMission.metrics.total_modules} 成功
+                </Badge>
+                {currentMission.metrics.failed_modules > 0 && (
+                  <Badge variant="destructive">{currentMission.metrics.failed_modules} 失败</Badge>
+                )}
+                {currentMission.metrics.skipped_modules > 0 && (
+                  <Badge variant="secondary">{currentMission.metrics.skipped_modules} 跳过</Badge>
+                )}
+                {currentMission.metrics.warning_count > 0 && (
+                  <Badge variant="warning">{currentMission.metrics.warning_count} 警告</Badge>
+                )}
+                {currentMission.metrics.duration_ms > 0 && (
+                  <Badge variant="outline">
+                    {currentMission.metrics.duration_ms < 1000
+                      ? `${currentMission.metrics.duration_ms}ms`
+                      : `${(currentMission.metrics.duration_ms / 1000).toFixed(1)}s`}
+                  </Badge>
+                )}
+              </div>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowHistory(!showHistory)}
+              className="gap-1"
+            >
+              <History className="h-3.5 w-3.5" />
+              历史
+            </Button>
+          </div>
         </div>
-      </div>
+      </motion.div>
 
       {/* 历史面板 */}
       {showHistory && (
-        <GlowCard variant="glass" hover={false}>
-          <h3 className="mb-3 font-medium">最近的 Mission</h3>
+        <div className="p-4 rounded-2xl border border-[#E5E5E5] bg-white">
+          <h3 className="mb-3 font-medium text-sm text-[#8A8A8A] tracking-wider uppercase">最近的 Mission</h3>
           {recentMissions.length === 0 ? (
             <p className="text-sm text-muted-foreground">暂无历史记录</p>
           ) : (
@@ -397,21 +489,26 @@ export default function BossPage() {
               ))}
             </div>
           )}
-        </GlowCard>
+        </div>
       )}
 
-      <GlowCard variant="glass" hover={false}>
+      {/* Goal Input Card */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, delay: 0.1 }}
+        className="p-6 rounded-2xl border border-[#E5E5E5] bg-white"
+      >
         <div className="grid gap-4 lg:grid-cols-[1fr_auto]">
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <Sparkles className="h-4 w-4 text-primary" />
+            <div className="flex items-center gap-2 text-sm font-medium text-[#0B0B0B]">
               今天要推进什么业务目标？
             </div>
             <Textarea
               value={goal}
               onChange={(event) => setGoal(event.target.value)}
               placeholder="例如：帮我调研 AI 陪伴产品的市场机会，并生成第一版运营行动包。"
-              className="min-h-[120px] text-base"
+              className="min-h-[120px] text-base bg-[#F4F3EF] border-[#E5E5E5] rounded-xl"
             />
             <div className="flex flex-wrap gap-2">
               {examples.map((example) => (
@@ -419,7 +516,7 @@ export default function BossPage() {
                   key={example}
                   type="button"
                   onClick={() => setGoal(example)}
-                  className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground transition hover:border-primary/40 hover:text-foreground"
+                  className="rounded-full border border-[#E5E5E5] px-3 py-1.5 text-xs text-[#8A8A8A] transition hover:border-[#B5B5B5] hover:text-[#0B0B0B]"
                 >
                   {example}
                 </button>
@@ -494,20 +591,145 @@ export default function BossPage() {
             )}
           </div>
 
-          <div className="flex items-end">
-            <Button
-              onClick={runMission}
-              disabled={!goal.trim() || isRunning || enabledModules.length === 0}
-              variant="glow"
-              size="lg"
-              className="w-full lg:w-auto"
-            >
-              {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-              生成运营行动包
-            </Button>
+          {/* 浏览器自动化授权 */}
+          <div className="flex items-center gap-3 rounded-xl border border-[#E5E5E5] bg-[#F4F3EF] px-4 py-2.5">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={allowBrowserAutomation}
+                onChange={(e) => setAllowBrowserAutomation(e.target.checked)}
+                className="h-4 w-4 rounded border-[#D4D4D4] accent-[#0B0B0B]"
+              />
+              {allowBrowserAutomation ? (
+                <Shield className="h-4 w-4 text-[#4A8A5A]" />
+              ) : (
+                <ShieldOff className="h-4 w-4 text-[#B5B5B5]" />
+              )}
+              <span className="text-sm font-medium text-[#0B0B0B]">
+                允许本次打开浏览器采集数据
+              </span>
+            </label>
+            {allowBrowserAutomation && (
+              <span className="text-xs text-[#8A8A8A]">
+                （仅本次任务生效，不会永久保存）
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-end gap-3">
+            {!currentMission || currentMission.status === "pending_review" || currentMission.status === "pending" ? (
+              <>
+                {/* 阶段1: 生成计划 */}
+                <Button
+                  onClick={createPlan}
+                  disabled={!goal.trim() || isRunning || enabledModules.length === 0}
+                  variant="default"
+                  size="lg"
+                  className="w-full lg:w-auto"
+                >
+                  {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+                  生成计划
+                </Button>
+                {/* 阶段2: 确认执行（仅在计划已创建时显示） */}
+                {currentMission && (
+                  <Button
+                    onClick={confirmRun}
+                    disabled={isRunning}
+                    variant="default"
+                    size="lg"
+                    className="w-full lg:w-auto bg-green hover:bg-green/90"
+                  >
+                    {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                    确认执行
+                  </Button>
+                )}
+              </>
+            ) : (
+              <Button
+                onClick={confirmRun}
+                disabled={isRunning}
+                variant="outline"
+                size="lg"
+                className="w-full lg:w-auto"
+              >
+                {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                重新执行
+              </Button>
+            )}
           </div>
         </div>
-      </GlowCard>
+      </motion.div>
+
+      {/* Mission 状态横幅 + 审核按钮 */}
+      {currentMission && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className={cn(
+            "p-4 rounded-2xl border",
+            currentMission.status === "ready_for_review" ? "border-green/30 bg-green/5" :
+            currentMission.status === "partial" ? "border-yellow/30 bg-yellow/5" :
+            currentMission.status === "failed" ? "border-red/30 bg-red/5" :
+            currentMission.status === "running" ? "border-blue/30 bg-blue/5" :
+            currentMission.status === "done" ? "border-green/20 bg-green/2" :
+            "border-[#E5E5E5] bg-white"
+          )}
+        >
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              {currentMission.status === "running" ? (
+                <Loader2 className="h-5 w-5 animate-spin text-blue-500" />
+              ) : currentMission.status === "ready_for_review" || currentMission.status === "done" ? (
+                <CheckCircle2 className="h-5 w-5 text-green" />
+              ) : currentMission.status === "partial" ? (
+                <AlertCircle className="h-5 w-5 text-yellow" />
+              ) : currentMission.status === "failed" ? (
+                <AlertCircle className="h-5 w-5 text-red-500" />
+              ) : (
+                <FileText className="h-5 w-5 text-muted-foreground" />
+              )}
+              <div>
+                <span className="font-medium text-sm">{missionStatusText(currentMission.status)}</span>
+                {currentMission.metrics && (
+                  <span className="ml-3 text-xs text-muted-foreground">
+                    {currentMission.metrics.succeeded_modules}/{currentMission.metrics.total_modules} 模块完成
+                    {currentMission.metrics.warning_count > 0 && ` · ${currentMission.metrics.warning_count} 警告`}
+                    {currentMission.metrics.failed_modules > 0 && ` · ${currentMission.metrics.failed_modules} 失败`}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {/* 接受结果按钮 */}
+              {(currentMission.status === "ready_for_review" || currentMission.status === "partial") && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={acceptMission}
+                  disabled={isRunning}
+                  className="gap-1 bg-green hover:bg-green/90"
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  接受结果
+                </Button>
+              )}
+              {/* 重新执行按钮 */}
+              {currentMission.status !== "running" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={confirmRun}
+                  disabled={isRunning}
+                  className="gap-1"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  重新执行全部
+                </Button>
+              )}
+            </div>
+          </div>
+        </motion.div>
+      )}
 
       {/* 模块导航 + 结果 */}
       {modules.length > 0 && (
@@ -535,6 +757,8 @@ export default function BossPage() {
                         <Loader2 className="h-4 w-4 animate-spin text-primary" />
                       ) : module.status === "done" ? (
                         <CheckCircle2 className="h-4 w-4 text-green" />
+                      ) : module.status === "failed" && module.mode === "blocked" ? (
+                        <ShieldOff className="h-4 w-4 text-orange-500" />
                       ) : module.status === "failed" ? (
                         <AlertCircle className="h-4 w-4 text-yellow" />
                       ) : module.status === "skipped" ? (
@@ -569,7 +793,7 @@ export default function BossPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.2 }}
           >
-            <GlowCard hover={false} className="min-h-[520px]">
+            <div className="min-h-[520px] p-6 rounded-2xl border border-[#E5E5E5] bg-white">
               {activeResult && (
                 <>
                   <div className="mb-5 flex flex-col gap-3 border-b border-border pb-4 md:flex-row md:items-start md:justify-between">
@@ -613,9 +837,9 @@ export default function BossPage() {
                   {activeResult.status === "pending" && (
                     <div className="flex min-h-[360px] flex-col items-center justify-center rounded-lg border border-dashed border-border bg-background/40 text-center">
                       <FileText className="mb-3 h-10 w-10 text-muted-foreground" />
-                      <h3 className="font-medium">等待生成</h3>
+                      <h3 className="font-medium">模块尚未执行</h3>
                       <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-                        点击「生成运营行动包」开始执行。
+                        点击上方「确认执行」按钮开始生成结果。
                       </p>
                     </div>
                   )}
@@ -640,7 +864,34 @@ export default function BossPage() {
                     </div>
                   )}
 
-                  {activeResult.status === "failed" && (
+                  {activeResult.status === "failed" && activeResult.mode === "blocked" && (
+                    <div className="rounded-lg border border-orange-300 bg-orange-50 p-4">
+                      <div className="flex items-start gap-3">
+                        <ShieldOff className="mt-0.5 h-5 w-5 text-orange-500" />
+                        <div>
+                          <h3 className="font-medium text-orange-700">需要授权浏览器采集</h3>
+                          <p className="mt-1 text-sm text-orange-600">
+                            {activeResult.error || "此模块需要打开浏览器采集数据，请授权后重试。"}
+                          </p>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="mt-3 gap-1"
+                            onClick={() => {
+                              setAllowBrowserAutomation(true)
+                              rerunModule(activeResult.module_id, true)
+                            }}
+                            disabled={isRunning}
+                          >
+                            <Shield className="h-3.5 w-3.5" />
+                            授权并重试本模块
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {activeResult.status === "failed" && activeResult.mode !== "blocked" && (
                     <div className="rounded-lg border border-yellow/20 bg-yellow/10 p-4">
                       <div className="flex items-start gap-3">
                         <AlertCircle className="mt-0.5 h-5 w-5 text-yellow" />
@@ -662,9 +913,9 @@ export default function BossPage() {
                         </pre>
                       </div>
 
-                      {activeResult.used_tools.length > 0 && (
+                      {(activeResult.used_tools || []).length > 0 && (
                         <div className="flex flex-wrap items-center gap-2">
-                          {activeResult.used_tools.map((tool) => (
+                          {(activeResult.used_tools || []).map((tool) => (
                             <Badge key={tool} variant="outline">
                               {tool}
                             </Badge>
@@ -686,9 +937,9 @@ export default function BossPage() {
                         </div>
                       )}
 
-                      {activeResult.warnings.length > 0 && (
+                      {(activeResult.warnings || []).length > 0 && (
                         <div className="rounded-lg border border-yellow/20 bg-yellow/10 p-3">
-                          {activeResult.warnings.map((warning) => (
+                          {(activeResult.warnings || []).map((warning) => (
                             <div key={warning} className="flex items-start gap-2 text-sm text-yellow">
                               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                               <span>{warning}</span>
@@ -909,25 +1160,25 @@ export default function BossPage() {
                   )}
                 </>
               )}
-            </GlowCard>
+            </div>
           </motion.div>
         </div>
       )}
 
       {/* 运行日志面板 */}
       {currentMission && events.length > 0 && (
-        <GlowCard variant="glass" hover={false}>
+        <div className="p-4 rounded-2xl border border-[#E5E5E5] bg-white">
           <button
             type="button"
             onClick={() => setShowEvents(!showEvents)}
             className="flex w-full items-center justify-between text-left"
           >
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <FileText className="h-4 w-4 text-primary" />
+            <div className="flex items-center gap-2 text-sm font-medium text-[#0B0B0B]">
+              <FileText className="h-4 w-4 text-[#8A8A8A]" />
               运行日志
               <Badge variant="secondary" className="ml-1">{events.length}</Badge>
             </div>
-            <span className="text-xs text-muted-foreground">{showEvents ? "收起" : "展开"}</span>
+            <span className="text-xs text-[#8A8A8A]">{showEvents ? "收起" : "展开"}</span>
           </button>
 
           {showEvents && (
@@ -961,20 +1212,34 @@ export default function BossPage() {
               ))}
             </div>
           )}
-        </GlowCard>
+        </div>
       )}
 
       {/* 空状态（无 mission 时） */}
       {!currentMission && !showHistory && (
-        <GlowCard hover={false}>
+        <div className="p-6 rounded-2xl border border-dashed border-[#E5E5E5] bg-white">
           <div className="flex min-h-[300px] flex-col items-center justify-center text-center">
-            <Briefcase className="mb-3 h-12 w-12 text-muted-foreground" />
-            <h3 className="text-lg font-medium">输入业务目标开始</h3>
-            <p className="mt-2 max-w-md text-sm text-muted-foreground">
-              系统会自动拆成 5 个模块（战略、市场、营销、落地页、执行清单），逐一执行并保存结果。
+            <Briefcase className="mb-3 h-12 w-12 text-[#D4D4D4]" />
+            <h3 className="text-lg font-medium text-[#0B0B0B]">输入业务目标开始</h3>
+            <p className="mt-2 max-w-md text-sm text-[#8A8A8A]">
+              系统会先拆成 5 个模块（战略、市场、营销、落地页、执行清单）。您确认后逐一执行，并保存结果供人工审核。
             </p>
           </div>
-        </GlowCard>
+        </div>
+      )}
+
+      {/* Export Toast */}
+      {exportToast && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="fixed bottom-8 right-8 z-50 flex items-center gap-2 px-4 py-3 rounded-xl bg-green text-white shadow-lg"
+        >
+          <CheckCircle2 className="w-4 h-4" />
+          <span className="text-sm font-medium">
+            已导出 {exportToast === "markdown" ? "Markdown" : "JSON"} 报告
+          </span>
+        </motion.div>
       )}
     </div>
   )
