@@ -242,6 +242,44 @@ class MemoryStore:
         conn.execute("DELETE FROM memories")
         conn.commit()
 
+    def delete_by_key(self, key: str) -> bool:
+        """按 key 删除单条记忆，返回是否成功"""
+        conn = self._get_conn()
+        cursor = conn.execute("DELETE FROM memories WHERE key=?", (key,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def update_by_key(self, key: str, content: Optional[str] = None,
+                      source: Optional[str] = None, tags: Optional[List[str]] = None,
+                      importance: Optional[float] = None) -> bool:
+        """按 key 更新单条记忆的部分字段，返回是否成功"""
+        conn = self._get_conn()
+        existing = conn.execute("SELECT id FROM memories WHERE key=?", (key,)).fetchone()
+        if not existing:
+            return False
+        updates = []
+        params = []
+        if content is not None:
+            updates.append("content=?")
+            params.append(content)
+        if source is not None:
+            updates.append("source=?")
+            params.append(source)
+        if tags is not None:
+            updates.append("tags=?")
+            params.append(json.dumps(tags, ensure_ascii=False))
+        if importance is not None:
+            updates.append("importance=?")
+            params.append(importance)
+        if not updates:
+            return False
+        updates.append("accessed_at=?")
+        params.append(datetime.now().isoformat())
+        params.append(key)
+        conn.execute(f"UPDATE memories SET {', '.join(updates)} WHERE key=?", params)
+        conn.commit()
+        return True
+
     # ── 辅助 ──────────────────────────────────────────────
 
     def _row_to_dict(self, row) -> dict:
