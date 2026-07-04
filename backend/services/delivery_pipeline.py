@@ -73,24 +73,27 @@ class DeliveryPipeline:
             logger.warning(f"DeliveryPipeline: Cloud client not available: {e}")
 
     def _init_agents(self):
-        """初始化所有 Agent"""
+        """初始化所有 Agent（使用延迟加载）"""
         try:
-            from agents.ceo_agent.agent import CEOAgent
-            from agents.openclaw_agent.agent import OpenClawAgent
-            from agents.marketing_agent.agent import MarketingAgent
-            from agents.data_agent.agent import DataAgent
-            from agents.qa_agent.agent import QAAgent
-            from agents.cto_agent.agent import CTOAgent
+            from backend.services.agent_loader import load_agent_instance
 
-            self._agents = {
-                "ceo": CEOAgent(),
-                "openclaw": OpenClawAgent(),
-                "marketing": MarketingAgent(),
-                "data": DataAgent(),
-                "qa": QAAgent(),
-                "cto": CTOAgent(),
-            }
-            logger.info("DeliveryPipeline: Agents initialized")
+            agent_configs = [
+                ("ceo", "agents.ceo_agent.agent", "CEOAgent", {}),
+                ("openclaw", "agents.openclaw_agent.agent", "OpenClawAgent", {}),
+                ("marketing", "agents.marketing_agent.agent", "MarketingAgent", {}),
+                ("data", "agents.data_agent.agent", "DataAgent", {}),
+                ("qa", "agents.qa_agent.agent", "QAAgent", {}),
+                ("cto", "agents.cto_agent.agent", "CTOAgent", {}),
+            ]
+
+            for name, entrypoint, class_name, kwargs in agent_configs:
+                agent = load_agent_instance(entrypoint, class_name, **kwargs)
+                if agent is not None:
+                    self._agents[name] = agent
+                else:
+                    logger.warning(f"DeliveryPipeline: Agent '{name}' unavailable")
+
+            logger.info(f"DeliveryPipeline: Agents initialized ({len(self._agents)} available)")
         except Exception as e:
             logger.error(f"DeliveryPipeline: Failed to init agents: {e}")
 
