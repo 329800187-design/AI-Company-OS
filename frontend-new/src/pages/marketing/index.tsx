@@ -98,46 +98,183 @@ function isAgentUnavailable(result: AgentRunResult): boolean {
   )
 }
 
-// ── 结构化字段展示组件 ──────────────────────────────────────────────────────
+// ── 复杂字段渲染辅助 ────────────────────────────────────────────────────────
 
-function StructuredOutput({ output }: { output: Record<string, unknown> }) {
-  const sections: { label: string; value: unknown; isList?: boolean }[] = []
+function renderComplexValue(value: unknown): React.ReactNode {
+  if (value == null) return null
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return <p className="text-sm text-[#333] leading-relaxed">{String(value)}</p>
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <p className="text-xs text-[#8A8A8A]">无</p>
+    // 数组元素是简单值 → badge 展示
+    if (value.every((item) => typeof item === "string" || typeof item === "number")) {
+      return (
+        <div className="flex flex-wrap gap-1.5">
+          {value.map((item, i) => (
+            <Badge key={i} variant="secondary" className="text-xs">{String(item)}</Badge>
+          ))}
+        </div>
+      )
+    }
+    // 数组元素是对象 → 卡片列表
+    return (
+      <div className="space-y-2">
+        {value.map((item, i) => (
+          <div key={i} className="p-2.5 rounded-lg bg-[#F9F9F9] border border-[#E5E5E5] text-sm text-[#333]">
+            {typeof item === "object" && item !== null ? (
+              <div className="space-y-1">
+                {Object.entries(item as Record<string, unknown>).map(([k, v]) => (
+                  <div key={k} className="flex gap-2">
+                    <span className="text-xs text-[#8A8A8A] min-w-[80px] shrink-0">{k}:</span>
+                    <span className="text-xs">{typeof v === "object" ? JSON.stringify(v) : String(v)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <span className="text-xs">{String(item)}</span>
+            )}
+          </div>
+        ))}
+      </div>
+    )
+  }
+  // 对象 → 键值对展示
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+    if (entries.length === 0) return <p className="text-xs text-[#8A8A8A]">空</p>
+    return (
+      <div className="space-y-1.5">
+        {entries.map(([k, v]) => (
+          <div key={k} className="flex gap-2 text-sm">
+            <span className="text-xs text-[#8A8A8A] min-w-[80px] shrink-0 font-medium">{k}</span>
+            <span className="text-[#333]">
+              {typeof v === "object" ? (
+                <pre className="whitespace-pre-wrap text-xs bg-[#F4F3EF] rounded p-2 max-h-[120px] overflow-auto">
+                  {JSON.stringify(v, null, 2)}
+                </pre>
+              ) : (
+                String(v)
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
+    )
+  }
+  return <p className="text-sm text-[#333] leading-relaxed">{String(value)}</p>
+}
 
-  // 标题
-  if (output.headline) sections.push({ label: "标题", value: output.headline })
-  // 副标题
-  if (output.subheadline) sections.push({ label: "副标题", value: output.subheadline })
-  // 正文
-  if (output.body) sections.push({ label: "正文", value: output.body })
-  // CTA
-  if (output.cta) sections.push({ label: "行动号召 (CTA)", value: output.cta })
-  // 标签
+function formatCopyValue(value: unknown): string {
+  if (value == null) return ""
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value)
+  }
+  return JSON.stringify(value, null, 2)
+}
+
+/** 从 sections 中按 task_type 选择展示字段 */
+function buildSections(output: Record<string, unknown>): { label: string; value: unknown; isList?: boolean; complex?: boolean }[] {
+  const sections: { label: string; value: unknown; isList?: boolean; complex?: boolean }[] = []
+
+  // ── seo_article ────────────────────────────────────────────────────────────
+  if (output.meta_title != null) sections.push({ label: "SEO 标题 (Title)", value: output.meta_title })
+  if (output.meta_description != null) sections.push({ label: "Meta 描述", value: output.meta_description })
+  if (output.h1 != null) sections.push({ label: "H1 标题", value: output.h1 })
+  if (output.content != null && output.content !== output.body) sections.push({ label: "正文内容", value: output.content })
+  if (output.keywords != null) {
+    sections.push({
+      label: "关键词",
+      value: output.keywords,
+      isList: Array.isArray(output.keywords),
+      complex: !Array.isArray(output.keywords),
+    })
+  }
+  if (output.estimated_read_time != null) sections.push({ label: "预计阅读时长", value: output.estimated_read_time })
+  if (Array.isArray(output.internal_link_suggestions) && output.internal_link_suggestions.length > 0) {
+    sections.push({ label: "内链建议", value: output.internal_link_suggestions, complex: true })
+  }
+
+  // ── email_campaign ─────────────────────────────────────────────────────────
+  if (output.subject != null) sections.push({ label: "邮件主题", value: output.subject })
+  if (output.preheader != null) sections.push({ label: "预览文本", value: output.preheader })
+  if (output.body != null && !sections.some((s) => s.value === output.body)) sections.push({ label: "邮件正文", value: output.body })
+  if (output.plain_text != null) sections.push({ label: "纯文本版本", value: output.plain_text })
+  if (output.cta_button != null) sections.push({ label: "CTA 按钮文案", value: output.cta_button })
+  if (output.cta_link != null) sections.push({ label: "CTA 链接", value: output.cta_link })
+  if (output.send_timing != null) sections.push({ label: "发送时机建议", value: output.send_timing })
+
+  // ── brand_strategy ─────────────────────────────────────────────────────────
+  if (output.brand_positioning != null) sections.push({ label: "品牌定位", value: output.brand_positioning })
+  if (output.target_audience != null) sections.push({ label: "目标受众", value: output.target_audience, complex: typeof output.target_audience === "object" })
+  if (output.differentiation != null) sections.push({ label: "差异化优势", value: output.differentiation })
+  if (output.brand_voice != null) sections.push({ label: "品牌调性", value: output.brand_voice, complex: typeof output.brand_voice === "object" })
+  if (output.visual_direction != null) sections.push({ label: "视觉方向", value: output.visual_direction })
+  if (Array.isArray(output.tagline_options) && output.tagline_options.length > 0) {
+    sections.push({ label: "Slogan 候选", value: output.tagline_options, isList: true })
+  }
+  if (output.competitor_insight != null) sections.push({ label: "竞品洞察", value: output.competitor_insight })
+
+  // ── campaign_plan ──────────────────────────────────────────────────────────
+  if (output.campaign_name != null) sections.push({ label: "活动名称", value: output.campaign_name })
+  if (output.goal != null && !sections.some((s) => s.value === output.goal)) sections.push({ label: "活动目标", value: output.goal })
+  if (Array.isArray(output.target_segments) && output.target_segments.length > 0) {
+    sections.push({ label: "目标人群", value: output.target_segments, isList: true })
+  }
+  if (output.key_message != null) sections.push({ label: "核心信息", value: output.key_message })
+  if (Array.isArray(output.channels) && output.channels.length > 0) {
+    sections.push({ label: "投放渠道", value: output.channels, isList: true })
+  }
+  if (output.timeline != null) sections.push({ label: "时间规划", value: output.timeline, complex: true })
+  if (Array.isArray(output.kpis) && output.kpis.length > 0) {
+    sections.push({ label: "KPI 指标", value: output.kpis, complex: true })
+  }
+  if (output.budget_suggestion != null) sections.push({ label: "预算建议", value: output.budget_suggestion, complex: true })
+  if (Array.isArray(output.risks) && output.risks.length > 0) {
+    sections.push({ label: "风险提示", value: output.risks, complex: true })
+  }
+
+  // ── social_media ───────────────────────────────────────────────────────────
+  if (output.platform != null && !sections.some((s) => s.value === output.platform)) {
+    sections.push({ label: "目标平台", value: output.platform })
+  }
+  if (output.content != null && !sections.some((s) => s.value === output.content)) {
+    sections.push({ label: "文案内容", value: output.content })
+  }
   if (Array.isArray(output.hashtags) && output.hashtags.length > 0) {
     sections.push({ label: "标签", value: output.hashtags, isList: true })
   }
-  if (Array.isArray(output.keywords) && output.keywords.length > 0) {
-    sections.push({ label: "关键词", value: output.keywords, isList: true })
-  }
-  // 语气
-  if (output.tone) sections.push({ label: "语气风格", value: output.tone })
-  // 平台
-  if (output.platform) sections.push({ label: "目标平台", value: output.platform })
-  // 内容（social_media 场景）
-  if (output.content && output.content !== output.body) {
-    sections.push({ label: "文案内容", value: output.content })
-  }
-  // 推荐发布时间
-  if (output.best_posting_time) sections.push({ label: "推荐发布时间", value: output.best_posting_time })
-  // 互动钩子
+  if (output.best_posting_time != null) sections.push({ label: "推荐发布时间", value: output.best_posting_time })
   if (Array.isArray(output.engagement_hooks) && output.engagement_hooks.length > 0) {
     sections.push({ label: "互动钩子", value: output.engagement_hooks, isList: true })
   }
-  // 媒体建议
-  if (output.media_suggestion) sections.push({ label: "媒体建议", value: output.media_suggestion })
-  // 备选标题
+  if (output.media_suggestion != null) sections.push({ label: "媒体建议", value: output.media_suggestion })
+
+  // ── copywriting (通用文案) ─────────────────────────────────────────────────
+  if (output.headline != null && !sections.some((s) => s.value === output.headline)) {
+    sections.push({ label: "标题", value: output.headline })
+  }
+  if (output.subheadline != null) sections.push({ label: "副标题", value: output.subheadline })
+  if (output.body != null && !sections.some((s) => s.value === output.body)) {
+    sections.push({ label: "正文", value: output.body })
+  }
+  if (output.cta != null && !sections.some((s) => s.value === output.cta)) {
+    sections.push({ label: "行动号召 (CTA)", value: output.cta })
+  }
   if (Array.isArray(output.variations) && output.variations.length > 0) {
     sections.push({ label: "备选方案", value: output.variations, isList: true })
   }
+  if (output.tone != null && !sections.some((s) => s.value === output.tone)) {
+    sections.push({ label: "语气风格", value: output.tone })
+  }
+
+  return sections
+}
+
+// ── 结构化字段展示组件 ──────────────────────────────────────────────────────
+
+function StructuredOutput({ output }: { output: Record<string, unknown> }) {
+  const sections = buildSections(output)
 
   if (sections.length === 0) {
     // 没有识别到已知结构化字段，展示 key 列表
@@ -163,7 +300,7 @@ function StructuredOutput({ output }: { output: Record<string, unknown> }) {
 
   return (
     <div className="space-y-4">
-      {sections.map(({ label, value, isList }) => (
+      {sections.map(({ label, value, isList, complex }) => (
         <div key={label}>
           <h4 className="text-xs font-medium text-[#8A8A8A] mb-1">{label}</h4>
           {isList ? (
@@ -174,6 +311,8 @@ function StructuredOutput({ output }: { output: Record<string, unknown> }) {
                 </Badge>
               ))}
             </div>
+          ) : complex || (typeof value === "object" && value !== null) ? (
+            renderComplexValue(value)
           ) : typeof value === "string" && (value as string).includes("\n") ? (
             <div className="text-sm text-[#333] leading-relaxed whitespace-pre-wrap bg-[#F4F3EF] rounded-lg p-3">
               {String(value)}
@@ -281,17 +420,40 @@ export default function MarketingPage() {
     }
   }
 
-  // 从 agent output 中提取可复制的纯文本
+  // 从 agent output 中提取可复制的纯文本（覆盖所有 task_type）
   const getCopyText = (): string => {
     const output = agentResult?.structured_output || agentResult?.output
     if (agentResult?.ok && output) {
       const o = output
       const parts: string[] = []
+      // 通用字段
       if (o.headline) parts.push(String(o.headline))
       if (o.subheadline) parts.push(String(o.subheadline))
       if (o.body) parts.push(String(o.body))
       if (o.content) parts.push(String(o.content))
       if (o.cta) parts.push(String(o.cta))
+      // seo_article
+      if (o.meta_title) parts.push(`Title: ${String(o.meta_title)}`)
+      if (o.meta_description) parts.push(`Description: ${String(o.meta_description)}`)
+      if (o.h1) parts.push(`H1: ${String(o.h1)}`)
+      if (o.estimated_read_time) parts.push(`阅读时长: ${String(o.estimated_read_time)}`)
+      // email_campaign
+      if (o.subject) parts.push(`主题: ${String(o.subject)}`)
+      if (o.preheader) parts.push(`预览: ${String(o.preheader)}`)
+      if (o.plain_text) parts.push(String(o.plain_text))
+      if (o.cta_button) parts.push(`CTA: ${String(o.cta_button)}`)
+      if (o.cta_link) parts.push(`链接: ${String(o.cta_link)}`)
+      // brand_strategy
+      if (o.brand_positioning) parts.push(String(o.brand_positioning))
+      if (o.target_audience) parts.push(formatCopyValue(o.target_audience))
+      if (o.differentiation) parts.push(formatCopyValue(o.differentiation))
+      if (o.brand_voice) parts.push(formatCopyValue(o.brand_voice))
+      if (o.visual_direction) parts.push(formatCopyValue(o.visual_direction))
+      if (o.competitor_insight) parts.push(formatCopyValue(o.competitor_insight))
+      // campaign_plan
+      if (o.campaign_name) parts.push(`活动: ${String(o.campaign_name)}`)
+      if (o.key_message) parts.push(String(o.key_message))
+      if (Array.isArray(o.kpis) && o.kpis.length > 0) parts.push(`KPI: ${o.kpis.join(", ")}`)
       return parts.join("\n\n")
     }
     if (fallbackArtifact?.content) return fallbackArtifact.content
