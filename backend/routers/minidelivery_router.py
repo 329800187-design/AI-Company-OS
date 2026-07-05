@@ -888,7 +888,7 @@ def list_tasks(
     tasks: List[Dict[str, Any]] = []
     warnings: List[str] = []
 
-    minidelivery_root = OUTPUT_ROOT / "minidelivery"
+    minidelivery_root = OUTPUT_ROOT
     if not minidelivery_root.exists():
         return {"tasks": [], "warnings": [], "total": 0, "limit": limit, "offset": 0, "has_more": False}
 
