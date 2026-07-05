@@ -8,7 +8,7 @@ const backendRoutes = [
   '/admin', '/agent-console', '/agents', '/ai', '/auth', '/boss', '/brain',
   '/capabilities', '/commander', '/commanders', '/config', '/cron', '/cto',
   '/data', '/export', '/image', '/marketplace', '/marketing', '/memory',
-  '/payment', '/pipeline', '/plugins', '/search', '/skills', '/swarm',
+  '/minidelivery', '/payment', '/pipeline', '/plugins', '/search', '/skills', '/swarm',
   '/system', '/tasks', '/templates', '/usage', '/user', '/workflows',
   '/integrations',
 ]
