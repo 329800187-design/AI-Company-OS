@@ -16,6 +16,42 @@ from backend.minidelivery.artifact_writer import OUTPUT_ROOT, ensure_output_dir
 router = APIRouter(prefix="/minidelivery", tags=["MiniDelivery / 最小交付闭环"])
 
 
+def _as_list(val: Any) -> list:
+    """确保值是列表——字符串不会被逐字符拆分"""
+    if isinstance(val, list):
+        return val
+    if isinstance(val, str) and val:
+        return [val]
+    if val:
+        return [str(val)]
+    return []
+
+
+def _has_value(val: Any) -> bool:
+    return val not in (None, "", [], {})
+
+
+def _format_md_value(val: Any) -> str:
+    if isinstance(val, (dict, list)):
+        return json.dumps(val, ensure_ascii=False, indent=2)
+    return str(val)
+
+
+def _append_value_section(lines: list, heading: str, val: Any, level: str = "###") -> None:
+    if _has_value(val):
+        lines += [f"{level} {heading}", "", _format_md_value(val), ""]
+
+
+def _append_list_section(lines: list, heading: str, val: Any, level: str = "###") -> None:
+    items = _as_list(val)
+    if not items:
+        return
+    lines += [f"{level} {heading}", ""]
+    for item in items:
+        lines.append(f"- {_format_md_value(item)}")
+    lines.append("")
+
+
 # ── 旧接口（兼容保留）──────────────────────────────────────
 
 @router.post("/xhs-copy-pack", summary="小红书文案包生成（旧接口）",
@@ -55,26 +91,133 @@ def _render_marketing(result: Dict, goal: str, title: Optional[str] = None) -> s
     so = result.get("structured_output") or result.get("output") or {}
     lines = [f"# {title or '营销文案包'}", "", f"> 目标：{goal}", ""]
 
+    # ── brand_strategy 子对象 ──
+    brand_strategy = so.get("brand_strategy", {})
+    if not isinstance(brand_strategy, dict):
+        brand_strategy = {}
+    if not brand_strategy:
+        brand_strategy = {
+            key: so.get(key)
+            for key in [
+                "brand_positioning",
+                "target_audience",
+                "differentiation",
+                "brand_voice",
+                "visual_direction",
+                "tagline_options",
+                "competitor_insight",
+            ]
+            if _has_value(so.get(key))
+        }
+    if brand_strategy:
+        lines += ["## 品牌策略", ""]
+        _append_value_section(lines, "品牌定位", brand_strategy.get("brand_positioning"))
+        _append_value_section(lines, "目标受众", brand_strategy.get("target_audience"))
+        _append_value_section(lines, "差异化", brand_strategy.get("differentiation"))
+        _append_value_section(lines, "品牌调性", brand_strategy.get("brand_voice"))
+        _append_value_section(lines, "视觉方向", brand_strategy.get("visual_direction"))
+        _append_list_section(lines, "标语备选", brand_strategy.get("tagline_options", []))
+        _append_value_section(lines, "竞品洞察", brand_strategy.get("competitor_insight"))
+
+    # ── campaign_plan 子对象 ──
+    campaign_plan = so.get("campaign_plan", {})
+    if not isinstance(campaign_plan, dict):
+        campaign_plan = {}
+    if not campaign_plan:
+        campaign_plan = {
+            key: so.get(key)
+            for key in [
+                "campaign_name",
+                "goal",
+                "target_segments",
+                "key_message",
+                "channels",
+                "timeline",
+                "kpis",
+                "budget_suggestion",
+                "risks",
+            ]
+            if _has_value(so.get(key))
+        }
+    if campaign_plan:
+        lines += ["## 活动方案", ""]
+        _append_value_section(lines, "活动名称", campaign_plan.get("campaign_name"))
+        _append_value_section(lines, "目标", campaign_plan.get("goal"))
+        _append_list_section(lines, "目标人群", campaign_plan.get("target_segments", []))
+        _append_value_section(lines, "核心信息", campaign_plan.get("key_message"))
+        _append_list_section(lines, "投放渠道", campaign_plan.get("channels", []))
+        _append_value_section(lines, "时间表", campaign_plan.get("timeline"))
+        _append_list_section(lines, "关键指标 (KPI)", campaign_plan.get("kpis", []))
+        _append_value_section(lines, "预算建议", campaign_plan.get("budget_suggestion"))
+        _append_list_section(lines, "风险", campaign_plan.get("risks", []))
+
+    # ── 原有顶层字段 ──
+    # 标题
     headline = so.get("headline") or so.get("title", "")
     if headline:
         lines += ["## 标题", "", headline, ""]
 
+    # 副标题
+    subheadline = so.get("subheadline", "")
+    if subheadline:
+        lines += ["## 副标题", "", subheadline, ""]
+
+    # 正文 / 内容
     body = so.get("body") or so.get("content", "")
     if body:
         lines += ["## 正文", "", body, ""]
 
+    # 行动号召
     cta = so.get("cta") or so.get("call_to_action", "")
     if cta:
         lines += ["## 行动号召", "", cta, ""]
 
-    hashtags = so.get("hashtags") or so.get("tags", [])
+    # 标签
+    hashtags = _as_list(so.get("hashtags") or so.get("tags", []))
     if hashtags:
-        tag_str = " ".join(f"#{t}" if not t.startswith("#") else t for t in hashtags)
+        tag_str = " ".join(f"#{t}" if not str(t).startswith("#") else str(t) for t in hashtags)
         lines += ["## 标签", "", tag_str, ""]
 
-    keywords = so.get("keywords", [])
+    # 关键词
+    keywords = _as_list(so.get("keywords", []))
     if keywords:
         lines += ["## 关键词", "", ", ".join(keywords), ""]
+
+    # 语气风格
+    tone = so.get("tone", "")
+    if tone:
+        lines += ["## 语气风格", "", tone, ""]
+
+    # 目标平台
+    platform = so.get("platform", "")
+    if platform:
+        lines += ["## 目标平台", "", platform, ""]
+
+    # 推荐发布时间
+    best_posting_time = so.get("best_posting_time", "")
+    if best_posting_time:
+        lines += ["## 推荐发布时间", "", best_posting_time, ""]
+
+    # 互动钩子
+    engagement_hooks = _as_list(so.get("engagement_hooks", []))
+    if engagement_hooks:
+        lines += ["## 互动钩子", ""]
+        for hook in engagement_hooks:
+            lines.append(f"- {hook}")
+        lines.append("")
+
+    # 媒体建议
+    media_suggestion = so.get("media_suggestion", "")
+    if media_suggestion:
+        lines += ["## 媒体建议", "", media_suggestion, ""]
+
+    # 备选方案
+    variations = _as_list(so.get("variations", []))
+    if variations:
+        lines += ["## 备选方案", ""]
+        for v in variations:
+            lines.append(f"- {v}")
+        lines.append("")
 
     # 保留 warnings/errors/metadata
     _append_meta(lines, result)
@@ -86,25 +229,93 @@ def _render_image(result: Dict, goal: str, title: Optional[str] = None) -> str:
     so = result.get("structured_output") or result.get("output") or {}
     lines = [f"# {title or '图片提示词 / 视觉 Brief'}", "", f"> 目标：{goal}", ""]
 
-    for key, label in [
-        ("main_prompt", "主提示词"),
-        ("detail_prompt", "细节提示词"),
-        ("scene_prompt", "场景提示词"),
-        ("negative_prompt", "负向提示词"),
-    ]:
-        val = so.get(key, "")
-        if val:
-            lines += [f"## {label}", "", val, ""]
+    # 图片提示词（优先 image_prompt，兼容旧字段）
+    image_prompt = so.get("image_prompt") or so.get("main_prompt", "")
+    if image_prompt:
+        lines += ["## 图片提示词", "", image_prompt, ""]
+
+    # 细节提示词
+    detail_prompt = so.get("detail_prompt", "")
+    if detail_prompt:
+        lines += ["## 细节提示词", "", detail_prompt, ""]
+
+    # 场景提示词
+    scene_prompt = so.get("scene_prompt", "")
+    if scene_prompt:
+        lines += ["## 场景提示词", "", scene_prompt, ""]
+
+    # 负向提示词
+    negative_prompt = so.get("negative_prompt", "")
+    if negative_prompt:
+        lines += ["## 负向提示词", "", negative_prompt, ""]
+
+    # 主体
+    subject = so.get("subject", "")
+    if subject:
+        lines += ["## 主体", "", subject, ""]
+
+    # 背景
+    background = so.get("background", "")
+    if background:
+        lines += ["## 背景", "", background, ""]
+
+    # 风格
+    style = so.get("style", "")
+    if style:
+        lines += ["## 风格", "", style, ""]
+
+    # 宽高比
+    aspect_ratio = so.get("aspect_ratio", "")
+    if aspect_ratio:
+        lines += ["## 宽高比", "", aspect_ratio, ""]
+
+    # 构图
+    composition = so.get("composition", "")
+    if composition:
+        lines += ["## 构图", "", composition, ""]
+
+    # 光线
+    lighting = so.get("lighting", "")
+    if lighting:
+        lines += ["## 光线", "", lighting, ""]
+
+    # 色彩方案
+    color_palette = so.get("color_palette", "")
+    if color_palette:
+        lines += ["## 色彩方案", "", color_palette, ""]
+
+    # 使用建议
+    tips = so.get("usage_tips") or so.get("usage_suggestions") or so.get("tips", "")
+    if tips:
+        if isinstance(tips, list):
+            lines += ["## 使用建议", ""]
+            for tip in tips:
+                lines.append(f"- {tip}")
+            lines.append("")
+        else:
+            lines += ["## 使用建议", "", tips, ""]
+
+    # 变体方案
+    variations = _as_list(so.get("variations", []))
+    if variations:
+        lines += ["## 变体方案", ""]
+        for v in variations:
+            lines.append(f"- {v}")
+        lines.append("")
+
+    # 限制说明
+    limitations = _as_list(so.get("limitations", []))
+    if limitations:
+        lines += ["## 限制说明", ""]
+        for lim in limitations:
+            lines.append(f"- {lim}")
+        lines.append("")
 
     # 如果以上都没有，尝试通用 content
-    if not any(so.get(k) for k in ["main_prompt", "detail_prompt", "scene_prompt", "negative_prompt"]):
+    if not any(so.get(k) for k in ["image_prompt", "main_prompt", "detail_prompt", "scene_prompt", "negative_prompt", "subject", "style"]):
         content = so.get("content", "")
         if content:
             lines += ["## 内容", "", content, ""]
-
-    tips = so.get("usage_tips") or so.get("tips", "")
-    if tips:
-        lines += ["## 使用建议", "", tips, ""]
 
     _append_meta(lines, result)
     return "\n".join(lines)
@@ -115,21 +326,133 @@ def _render_data(result: Dict, goal: str, title: Optional[str] = None) -> str:
     so = result.get("structured_output") or result.get("output") or {}
     lines = [f"# {title or '数据分析报告'}", "", f"> 目标：{goal}", ""]
 
-    for key, label in [
-        ("analysis_goal", "分析目标"),
-        ("data_scope", "数据范围"),
-        ("core_metrics", "核心指标"),
-        ("trend_observations", "趋势观察"),
-        ("anomaly_checks", "异常检查"),
-        ("business_interpretation", "业务解读"),
-        ("action_recommendations", "行动建议"),
-    ]:
-        val = so.get(key, "")
-        if val:
-            val_str = json.dumps(val, ensure_ascii=False) if isinstance(val, (dict, list)) else str(val)
-            lines += [f"## {label}", "", val_str, ""]
+    # 分析问题
+    analysis_question = so.get("analysis_question", "")
+    if analysis_question:
+        lines += ["## 分析问题", "", analysis_question, ""]
 
-    if not any(so.get(k) for k in ["analysis_goal", "data_scope", "core_metrics"]):
+    # 分析目标（兼容旧字段）
+    analysis_goal = so.get("analysis_goal", "")
+    if analysis_goal and not analysis_question:
+        lines += ["## 分析目标", "", analysis_goal, ""]
+
+    # 数据概况
+    data_summary = so.get("data_summary", "")
+    if data_summary:
+        lines += ["## 数据概况", "", data_summary, ""]
+
+    # 数据范围（兼容旧字段）
+    data_scope = so.get("data_scope", "")
+    if data_scope and not data_summary:
+        lines += ["## 数据范围", "", data_scope, ""]
+
+    # 关键指标
+    key_metrics = so.get("key_metrics", [])
+    if key_metrics:
+        lines += ["## 关键指标", ""]
+        if isinstance(key_metrics, list):
+            for m in key_metrics:
+                if isinstance(m, dict):
+                    desc = f"{m.get('name', '')}: {m.get('description', '')}"
+                    if m.get('formula'):
+                        desc += f" ({m['formula']})"
+                    lines.append(f"- {desc}")
+                else:
+                    lines.append(f"- {m}")
+        else:
+            lines.append(str(key_metrics))
+        lines.append("")
+
+    # 核心指标（兼容旧字段）
+    core_metrics = so.get("core_metrics", "")
+    if core_metrics and not key_metrics:
+        lines += ["## 核心指标", "", str(core_metrics), ""]
+
+    # 趋势
+    trends = _as_list(so.get("trends", []))
+    if trends:
+        lines += ["## 趋势", ""]
+        for t in trends:
+            lines.append(f"- {t}")
+        lines.append("")
+
+    # 趋势观察（兼容旧字段）
+    trend_observations = so.get("trend_observations", "")
+    if trend_observations and not trends:
+        lines += ["## 趋势观察", "", str(trend_observations), ""]
+
+    # 关键发现
+    findings = _as_list(so.get("findings", []))
+    if not findings:
+        findings = _as_list(so.get("key_findings", []))
+    if findings:
+        lines += ["## 关键发现", ""]
+        for f in findings:
+            lines.append(f"- {f}")
+        lines.append("")
+
+    # 风险
+    risks = _as_list(so.get("risks", []))
+    if risks:
+        lines += ["## 风险", ""]
+        for r in risks:
+            lines.append(f"- {r}")
+        lines.append("")
+
+    # 建议
+    recommendations = _as_list(so.get("recommendations", []))
+    if not recommendations:
+        recommendations = _as_list(so.get("action_recommendations", []))
+    if recommendations:
+        lines += ["## 建议", ""]
+        for rec in recommendations:
+            lines.append(f"- {rec}")
+        lines.append("")
+
+    # 行动建议（兼容旧字段）
+    action_recommendations = so.get("action_recommendations", "")
+    if action_recommendations and not recommendations:
+        lines += ["## 行动建议", "", str(action_recommendations), ""]
+
+    # 假设前提
+    assumptions = _as_list(so.get("assumptions", []))
+    if assumptions:
+        lines += ["## 假设前提", ""]
+        for a in assumptions:
+            lines.append(f"- {a}")
+        lines.append("")
+
+    # 限制说明
+    limitations = _as_list(so.get("limitations", []))
+    if limitations:
+        lines += ["## 限制说明", ""]
+        for lim in limitations:
+            lines.append(f"- {lim}")
+        lines.append("")
+
+    # 建议图表
+    charts_suggested = _as_list(so.get("charts_suggested", []))
+    if charts_suggested:
+        lines += ["## 建议图表", ""]
+        for c in charts_suggested:
+            if isinstance(c, dict):
+                lines.append(f"- {c.get('type', '')}: {c.get('x_axis', '')} vs {c.get('y_axis', '')} — {c.get('purpose', '')}")
+            else:
+                lines.append(f"- {c}")
+        lines.append("")
+
+    # 异常检查（兼容旧字段）
+    anomaly_checks = so.get("anomaly_checks", "")
+    if anomaly_checks:
+        lines += ["## 异常检查", "", str(anomaly_checks), ""]
+
+    # 业务解读（兼容旧字段）
+    business_interpretation = so.get("business_interpretation", "")
+    if business_interpretation:
+        lines += ["## 业务解读", "", str(business_interpretation), ""]
+
+    # 如果以上都没有，尝试通用 content
+    if not any(so.get(k) for k in ["analysis_question", "data_summary", "key_metrics", "trends", "findings"]):
         content = so.get("content", "")
         if content:
             lines += ["## 内容", "", content, ""]
@@ -143,21 +466,126 @@ def _render_research(result: Dict, goal: str, title: Optional[str] = None) -> st
     so = result.get("structured_output") or result.get("output") or {}
     lines = [f"# {title or '调研简报'}", "", f"> 目标：{goal}", ""]
 
-    for key, label in [
-        ("research_goal", "调研目标"),
-        ("target_users", "目标用户"),
-        ("competitor_dimensions", "竞品维度"),
-        ("pain_points", "痛点分析"),
-        ("content_opportunities", "内容机会"),
-        ("risk_warnings", "风险提示"),
-        ("next_steps", "下一步"),
-    ]:
-        val = so.get(key, "")
-        if val:
-            val_str = json.dumps(val, ensure_ascii=False) if isinstance(val, (dict, list)) else str(val)
-            lines += [f"## {label}", "", val_str, ""]
+    # 调研问题
+    research_question = so.get("research_question", "")
+    if research_question:
+        lines += ["## 调研问题", "", research_question, ""]
 
-    if not any(so.get(k) for k in ["research_goal", "target_users"]):
+    # 调研目标（兼容旧字段）
+    research_goal = so.get("research_goal", "")
+    if research_goal and not research_question:
+        lines += ["## 调研目标", "", research_goal, ""]
+
+    # 市场概况
+    market_summary = so.get("market_summary", "")
+    if market_summary:
+        lines += ["## 市场概况", "", market_summary, ""]
+
+    # 关键发现
+    key_findings = _as_list(so.get("key_findings", []))
+    if key_findings:
+        lines += ["## 关键发现", ""]
+        for f in key_findings:
+            lines.append(f"- {f}")
+        lines.append("")
+
+    # 竞品分析
+    competitors = _as_list(so.get("competitors", []))
+    if competitors:
+        lines += ["## 竞品分析", ""]
+        for c in competitors:
+            if isinstance(c, dict):
+                lines.append(f"### {c.get('name', '竞品')}")
+                lines.append(f"- 优势: {c.get('strength', '')}")
+                lines.append(f"- 劣势: {c.get('weakness', '')}")
+                lines.append(f"- 定位: {c.get('positioning', '')}")
+                lines.append("")
+            else:
+                lines.append(f"- {c}")
+        lines.append("")
+
+    # 竞品维度（兼容旧字段）
+    competitor_dimensions = so.get("competitor_dimensions", "")
+    if competitor_dimensions and not competitors:
+        lines += ["## 竞品维度", "", str(competitor_dimensions), ""]
+
+    # 机会
+    opportunities = _as_list(so.get("opportunities", []))
+    if not opportunities:
+        opportunities = _as_list(so.get("content_opportunities", []))
+    if opportunities:
+        lines += ["## 机会", ""]
+        for o in opportunities:
+            lines.append(f"- {o}")
+        lines.append("")
+
+    # 内容机会（兼容旧字段）
+    content_opportunities = _as_list(so.get("content_opportunities", []))
+    if content_opportunities and not opportunities:
+        lines += ["## 内容机会", ""]
+        for o in content_opportunities:
+            lines.append(f"- {o}")
+        lines.append("")
+
+    # 风险
+    risks = _as_list(so.get("risks", []))
+    if not risks:
+        risks = _as_list(so.get("risk_warnings", []))
+    if risks:
+        lines += ["## 风险", ""]
+        for r in risks:
+            lines.append(f"- {r}")
+        lines.append("")
+
+    # 风险提示（兼容旧字段）
+    risk_warnings = _as_list(so.get("risk_warnings", []))
+    if risk_warnings and not risks:
+        lines += ["## 风险提示", ""]
+        for r in risk_warnings:
+            lines.append(f"- {r}")
+        lines.append("")
+
+    # 建议行动
+    recommended_actions = _as_list(so.get("recommended_actions", []))
+    if recommended_actions:
+        lines += ["## 建议行动", ""]
+        for i, a in enumerate(recommended_actions, 1):
+            lines.append(f"{i}. {a}")
+        lines.append("")
+
+    # 目标用户（兼容旧字段）
+    target_users = so.get("target_users", "")
+    if target_users:
+        lines += ["## 目标用户", "", str(target_users), ""]
+
+    # 痛点分析（兼容旧字段）
+    pain_points = so.get("pain_points", "")
+    if pain_points:
+        lines += ["## 痛点分析", "", str(pain_points), ""]
+
+    # 下一步（兼容旧字段）
+    next_steps = so.get("next_steps", "")
+    if next_steps:
+        lines += ["## 下一步", "", str(next_steps), ""]
+
+    # 限制说明
+    limitations = _as_list(so.get("limitations", []))
+    if limitations:
+        lines += ["## 限制说明", ""]
+        for lim in limitations:
+            lines.append(f"- {lim}")
+        lines.append("")
+
+    # 信息来源
+    sources = _as_list(so.get("sources", []))
+    if sources:
+        lines += ["## 信息来源", ""]
+        for s in sources:
+            lines.append(f"- {s}")
+        lines.append("")
+
+    # 如果以上都没有，尝试通用 content
+    if not any(so.get(k) for k in ["research_question", "market_summary", "key_findings", "competitors"]):
         content = so.get("content", "")
         if content:
             lines += ["## 内容", "", content, ""]
@@ -171,22 +599,161 @@ def _render_website(result: Dict, goal: str, title: Optional[str] = None) -> str
     so = result.get("structured_output") or result.get("output") or {}
     lines = [f"# {title or '落地页草稿'}", "", f"> 目标：{goal}", ""]
 
-    for key, label in [
-        ("page_positioning", "页面定位"),
-        ("hero_title", "主标题"),
-        ("subtitle", "副标题"),
-        ("selling_points", "卖点"),
-        ("page_structure", "页面结构"),
-        ("cta", "行动号召"),
-        ("faq", "常见问题"),
-        ("visual_suggestions", "视觉建议"),
-    ]:
-        val = so.get(key, "")
-        if val:
-            val_str = json.dumps(val, ensure_ascii=False) if isinstance(val, (dict, list)) else str(val)
-            lines += [f"## {label}", "", val_str, ""]
+    # 页面目标
+    page_goal = so.get("page_goal", "")
+    if page_goal:
+        lines += ["## 页面目标", "", page_goal, ""]
 
-    if not any(so.get(k) for k in ["hero_title", "page_positioning"]):
+    # 目标受众
+    target_audience = so.get("target_audience", "")
+    if target_audience:
+        lines += ["## 目标受众", "", target_audience, ""]
+
+    # 页面定位（兼容旧字段）
+    page_positioning = so.get("page_positioning", "")
+    if page_positioning and not page_goal:
+        lines += ["## 页面定位", "", page_positioning, ""]
+
+    # Hero 区域
+    hero = so.get("hero", {})
+    if hero:
+        lines += ["## Hero 区域", ""]
+        if hero.get("headline"):
+            lines.append(f"**标题:** {hero['headline']}")
+        if hero.get("subheadline"):
+            lines.append(f"**副标题:** {hero['subheadline']}")
+        if hero.get("primary_cta"):
+            lines.append(f"**CTA:** {hero['primary_cta']}")
+        lines.append("")
+
+    # Hero 标题（兼容旧字段）
+    hero_title = so.get("hero_title", "")
+    if hero_title and not hero:
+        lines += ["## Hero 标题", "", hero_title, ""]
+
+    # 副标题（兼容旧字段）
+    subtitle = so.get("subtitle", "")
+    if subtitle and not hero:
+        lines += ["## 副标题", "", subtitle, ""]
+
+    # 内容板块
+    sections = _as_list(so.get("sections", []))
+    if sections:
+        lines += [f"## 内容板块 ({len(sections)})", ""]
+        for i, section in enumerate(sections, 1):
+            if isinstance(section, dict):
+                lines.append(f"### {section.get('title', f'板块 {i}')}")
+                if section.get("content"):
+                    lines.append(section["content"])
+                if section.get("cta"):
+                    lines.append(f"\n**CTA:** {section['cta']}")
+            else:
+                lines.append(f"### 板块 {i}\n{section}")
+            lines.append("")
+
+    # 卖点（兼容旧字段）
+    selling_points = so.get("selling_points", "")
+    if selling_points and not sections:
+        lines += ["## 卖点", "", str(selling_points), ""]
+
+    # 页面结构（兼容旧字段）
+    page_structure = so.get("page_structure", "")
+    if page_structure and not sections:
+        lines += ["## 页面结构", "", str(page_structure), ""]
+
+    # 行动号召
+    ctas = so.get("ctas", {})
+    if ctas:
+        lines += ["## 行动号召", ""]
+        if ctas.get("primary"):
+            lines.append(f"**主要 CTA:** {ctas['primary']}")
+        if ctas.get("secondary"):
+            lines.append(f"**次要 CTA:** {ctas['secondary']}")
+        if ctas.get("exit_intent"):
+            lines.append(f"**退出弹窗:** {ctas['exit_intent']}")
+        lines.append("")
+
+    # CTA（兼容旧字段，单个字符串）
+    cta = so.get("cta", "")
+    if cta and not ctas:
+        lines += ["## 行动号召", "", cta, ""]
+
+    # 信任元素
+    trust_elements = _as_list(so.get("trust_elements", []))
+    if trust_elements:
+        lines += ["## 信任元素", ""]
+        for t in trust_elements:
+            lines.append(f"- {t}")
+        lines.append("")
+
+    # SEO 信息
+    seo = so.get("seo", {})
+    if seo:
+        lines += ["## SEO 信息", ""]
+        if seo.get("title"):
+            lines.append(f"**Title:** {seo['title']}")
+        if seo.get("description"):
+            lines.append(f"**Description:** {seo['description']}")
+        if seo.get("keywords"):
+            lines.append(f"**Keywords:** {', '.join(seo['keywords'])}")
+        lines.append("")
+
+    # 设计方向
+    design_direction = so.get("design_direction", "")
+    if design_direction:
+        lines += ["## 设计方向", "", design_direction, ""]
+
+    # 风险
+    risks = _as_list(so.get("risks", []))
+    if risks:
+        lines += ["## 风险", ""]
+        for r in risks:
+            lines.append(f"- {r}")
+        lines.append("")
+
+    # 建议
+    recommendations = _as_list(so.get("recommendations", []))
+    if recommendations:
+        lines += ["## 建议", ""]
+        for rec in recommendations:
+            lines.append(f"- {rec}")
+        lines.append("")
+
+    # 假设前提
+    assumptions = _as_list(so.get("assumptions", []))
+    if assumptions:
+        lines += ["## 假设前提", ""]
+        for a in assumptions:
+            lines.append(f"- {a}")
+        lines.append("")
+
+    # 限制说明
+    limitations = _as_list(so.get("limitations", []))
+    if limitations:
+        lines += ["## 限制说明", ""]
+        for lim in limitations:
+            lines.append(f"- {lim}")
+        lines.append("")
+
+    # FAQ（兼容旧字段）
+    faq = _as_list(so.get("faq", []))
+    if faq:
+        lines += ["## 常见问题", ""]
+        for item in faq:
+            if isinstance(item, dict):
+                lines.append(f"**Q: {item.get('question', '')}**")
+                lines.append(f"A: {item.get('answer', '')}")
+            else:
+                lines.append(f"- {item}")
+            lines.append("")
+
+    # 视觉建议（兼容旧字段）
+    visual_suggestions = so.get("visual_suggestions", "")
+    if visual_suggestions:
+        lines += ["## 视觉建议", "", str(visual_suggestions), ""]
+
+    # 如果以上都没有，尝试通用 content
+    if not any(so.get(k) for k in ["page_goal", "hero", "sections", "page_positioning", "hero_title"]):
         content = so.get("content", "")
         if content:
             lines += ["## 内容", "", content, ""]
