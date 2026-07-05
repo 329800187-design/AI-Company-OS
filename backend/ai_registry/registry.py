@@ -453,6 +453,10 @@ class AIRegistry:
         self.scan_all()
         return [s.to_dict() for s in self._services.values()]
 
+    def list_cached(self) -> List[Dict[str, Any]]:
+        """Return the last scanned services without triggering a fresh scan."""
+        return [s.to_dict() for s in self._services.values()]
+
     def list_online(self) -> List[Dict[str, Any]]:
         self.scan_all()
         return [s.to_dict() for s in self._services.values() if s.status in ("online", "running")]
@@ -599,6 +603,7 @@ class AIRegistry:
             agent = OpenClawAgent(
                 headless=payload.get("headless", True),
                 timeout=payload.get("timeout", 30),
+                allow_browser_automation=payload.get("allow_browser_automation", False),
             )
 
             task = {
@@ -612,6 +617,14 @@ class AIRegistry:
             }
 
             result = agent.run(task)
+            # 检查浏览器授权拦截
+            if result.get("status") == "blocked":
+                return {
+                    "success": False,
+                    "service": "openclaw",
+                    "error": result.get("message", "需要用户授权浏览器采集"),
+                    "blocked_reason": result.get("blocked_reason", "browser_automation_approval_required"),
+                }
             return {
                 "success": result.get("success", False),
                 "service": "openclaw",

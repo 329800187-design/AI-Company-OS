@@ -9,14 +9,15 @@ LABEL org.opencontainers.image.version="0.5.0"
 
 WORKDIR /app
 
-# 安装系统依赖 + Chromium（Playwright 用完整 python 镜像确保 --with-deps 成功）
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# 安装系统依赖（使用国内镜像源加速）
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 安装 Python 依赖
+# 安装 Python 依赖（使用国内 pip 镜像）
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn -r requirements.txt
 
 # 安装 Playwright + Chromium（完整 python 镜像有足够系统库）
 RUN playwright install --with-deps chromium

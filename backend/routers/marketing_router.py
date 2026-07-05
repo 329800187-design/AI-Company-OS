@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional
 
-from agents.marketing_agent.agent import MarketingAgent
+from backend.services.agent_loader import load_agent_instance
 
 router = APIRouter(prefix="/marketing", tags=["Marketing / 营销内容"])
 
@@ -15,7 +15,12 @@ class MarketingRequest(BaseModel):
     language: str = "zh"
 
 
-marketing_agent = MarketingAgent()
+def _get_marketing_agent():
+    """延迟加载 Marketing Agent"""
+    agent = load_agent_instance("agents.marketing_agent.agent", "MarketingAgent")
+    if agent is None:
+        raise HTTPException(status_code=503, detail="Marketing Agent unavailable")
+    return agent
 
 
 @router.post("/copywriting", summary="文案生成",
@@ -23,7 +28,14 @@ marketing_agent = MarketingAgent()
 def copywriting(request: MarketingRequest):
     if not request.prompt.strip():
         raise HTTPException(status_code=400, detail="请提供文案需求描述")
-    return marketing_agent.run({
+
+    # Governance Guard: 拦截不支持的目标
+    from backend.governance.guard import guard_payload, governance_block_response
+    blocked, classification = guard_payload(request.model_dump())
+    if blocked:
+        return governance_block_response(classification)
+
+    return _get_marketing_agent().run({
         "task_id": "mkt_copy", "task_type": "copywriting",
         "prompt": request.prompt,
     })
@@ -34,7 +46,14 @@ def copywriting(request: MarketingRequest):
 def social_media(request: MarketingRequest):
     if not request.prompt.strip():
         raise HTTPException(status_code=400, detail="请提供内容主题")
-    return marketing_agent.run({
+
+    # Governance Guard: 拦截不支持的目标
+    from backend.governance.guard import guard_payload, governance_block_response
+    blocked, classification = guard_payload(request.model_dump())
+    if blocked:
+        return governance_block_response(classification)
+
+    return _get_marketing_agent().run({
         "task_id": "mkt_social", "task_type": "social_media",
         "prompt": request.prompt,
     })
@@ -45,7 +64,14 @@ def social_media(request: MarketingRequest):
 def seo_article(request: MarketingRequest):
     if not request.prompt.strip():
         raise HTTPException(status_code=400, detail="请提供文章主题")
-    return marketing_agent.run({
+
+    # Governance Guard: 拦截不支持的目标
+    from backend.governance.guard import guard_payload, governance_block_response
+    blocked, classification = guard_payload(request.model_dump())
+    if blocked:
+        return governance_block_response(classification)
+
+    return _get_marketing_agent().run({
         "task_id": "mkt_seo", "task_type": "seo_article",
         "prompt": request.prompt,
     })
@@ -56,7 +82,14 @@ def seo_article(request: MarketingRequest):
 def email_campaign(request: MarketingRequest):
     if not request.prompt.strip():
         raise HTTPException(status_code=400, detail="请提供邮件营销需求")
-    return marketing_agent.run({
+
+    # Governance Guard: 拦截不支持的目标
+    from backend.governance.guard import guard_payload, governance_block_response
+    blocked, classification = guard_payload(request.model_dump())
+    if blocked:
+        return governance_block_response(classification)
+
+    return _get_marketing_agent().run({
         "task_id": "mkt_email", "task_type": "email_campaign",
         "prompt": request.prompt,
     })
@@ -67,7 +100,14 @@ def email_campaign(request: MarketingRequest):
 def brand_strategy(request: MarketingRequest):
     if not request.prompt.strip():
         raise HTTPException(status_code=400, detail="请提供品牌背景")
-    return marketing_agent.run({
+
+    # Governance Guard: 拦截不支持的目标
+    from backend.governance.guard import guard_payload, governance_block_response
+    blocked, classification = guard_payload(request.model_dump())
+    if blocked:
+        return governance_block_response(classification)
+
+    return _get_marketing_agent().run({
         "task_id": "mkt_brand", "task_type": "brand_strategy",
         "prompt": request.prompt,
     })
@@ -78,7 +118,14 @@ def brand_strategy(request: MarketingRequest):
 def campaign_plan(request: MarketingRequest):
     if not request.prompt.strip():
         raise HTTPException(status_code=400, detail="请提供活动目标")
-    return marketing_agent.run({
+
+    # Governance Guard: 拦截不支持的目标
+    from backend.governance.guard import guard_payload, governance_block_response
+    blocked, classification = guard_payload(request.model_dump())
+    if blocked:
+        return governance_block_response(classification)
+
+    return _get_marketing_agent().run({
         "task_id": "mkt_campaign", "task_type": "campaign_plan",
         "prompt": request.prompt,
     })

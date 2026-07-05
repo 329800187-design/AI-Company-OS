@@ -9,7 +9,10 @@ Marketing Agent — 营销内容智能体
 5. brand_strategy: 品牌策略建议
 6. campaign_plan: 营销活动策划
 
-纯文本 AI 驱动，调用现有 AI Provider。
+执行路径：
+  1. 有 API key/provider → 调用真实 LLM（通过 BrainManager）
+  2. LLM 返回有效 JSON → 规范化 structured_output
+  3. 无 key / 调用失败 / 返回无效 JSON → 模板 fallback
 """
 import json
 import os
@@ -18,7 +21,6 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from agents.base_agent import BaseAgent
-from backend.config import get_ai_config, AI_PROVIDER
 
 
 # ── System Prompts ────────────────────────────────────────
@@ -164,12 +166,28 @@ CAMPAIGN_PROMPT = """你是一位营销活动策划专家。设计完整的营�
 
 
 class MarketingAgent(BaseAgent):
-    """Marketing Agent — 营销内容生成"""
+    """Marketing Agent — 营销内容生成
+
+    执行优先级：
+      1. 调用真实 LLM（BrainManager 自动选 provider）
+      2. LLM 返回有效 JSON → 规范化 structured_output
+      3. 无 key / 调用失败 / 无效 JSON → 模板 fallback
+    """
 
     AGENT_ID = "marketing"
     DISPLAY_NAME = "营销内容"
     CAPABILITIES = ["copywriting", "social_media", "seo", "email", "brand"]
     TASK_TYPES = ["copywriting", "social_media", "seo_article", "email_campaign", "brand_strategy", "campaign_plan"]
+
+    # required_keys: 每种 task_type 至少要有的 structured_output 字段
+    REQUIRED_KEYS = {
+        "copywriting":   ["headline", "body", "cta"],
+        "social_media":  ["content", "hashtags"],
+        "seo_article":   ["meta_title", "h1", "content"],
+        "email_campaign": ["subject", "body"],
+        "brand_strategy": ["brand_positioning"],
+        "campaign_plan":  ["campaign_name", "goal"],
+    }
 
     PROMPTS = {
         "copywriting": COPYWRITING_PROMPT,
@@ -182,15 +200,8 @@ class MarketingAgent(BaseAgent):
 
     def __init__(self, api_key: Optional[str] = None, timeout: int = 60):
         super().__init__(name="marketing", timeout=timeout)
-        try:
-            config = get_ai_config()
-            self.api_key = api_key or config["api_key"]
-            self.model = config["model"]
-            self.api_base = config["base_url"]
-        except RuntimeError:
-            self.api_key = ""
-            self.model = "deepseek-chat"
-            self.api_base = "https://api.deepseek.com"
+        # api_key 仅供外部显式传入；BrainManager 自动管理 provider 选择
+        self.api_key = api_key or ""
 
     def run(self, task: Dict[str, Any]) -> Dict[str, Any]:
         task_id = task.get("task_id", f"mkt_{uuid.uuid4().hex[:8]}")
@@ -199,75 +210,103 @@ class MarketingAgent(BaseAgent):
         prompt = task.get("prompt", task.get("content_brief", goal))
 
         if not prompt:
-            return self._result(task_id, "失败", "缺少营销内容需求描述", {})
+            return self.fail(
+                task_id,
+                error="缺少营销内容需求描述",
+                status="failed",
+                meta={"fallback": True},
+            )
 
         sys_prompt = self.PROMPTS.get(task_type, COPYWRITING_PROMPT)
 
-        if self.api_key:
-            ai_result = self._call_ai(sys_prompt, prompt)
-            if ai_result:
-                result_data = dict(ai_result)
-                result_data["content_type"] = task_type
-                return self._result(
-                    task_id, "生成完成",
-                    self._extract_summary(task_type, ai_result),
-                    result_data,
-                )
+        # ── 尝试真实 LLM ────────────────────────────────────
+        llm_result = self._try_llm(sys_prompt, prompt, task_type)
+        if llm_result is not None:
+            # LLM 成功
+            result_data = dict(llm_result)
+            result_data["content_type"] = task_type
+            return self.ok(
+                task_id,
+                status="completed",
+                data=result_data,
+                meta={
+                    "fallback": False,
+                    "model": getattr(self, "model", ""),
+                    "source": "llm",
+                },
+            )
 
-        # 规则降级
+        # ── 模板 fallback ────────────────────────────────────
         return self._rule_fallback(task_id, task_type, prompt)
 
-    # ── AI 调用 ──────────────────────────────────────────
+    # ── LLM 调用（复用 BrainManager）───────────────────────
 
-    def _call_ai(self, system_prompt: str, user_prompt: str) -> Optional[Dict]:
+    def _try_llm(self, system_prompt: str, user_prompt: str,
+                 task_type: str) -> Optional[Dict]:
+        """
+        尝试调用真实 LLM。
+        返回规范化后的 structured_output dict，失败返回 None。
+        """
         try:
-            import urllib.request
-
-            if AI_PROVIDER == "claude":
-                payload = json.dumps({
-                    "model": self.model,
-                    "max_tokens": 3000,
-                    "system": system_prompt,
-                    "messages": [{"role": "user", "content": user_prompt}],
-                }).encode("utf-8")
-                req = urllib.request.Request(
-                    f"{self.api_base.rstrip('/')}/v1/messages",
-                    data=payload,
-                    headers={
-                        "Content-Type": "application/json",
-                        "x-api-key": self.api_key,
-                        "anthropic-version": "2023-06-01",
-                    },
+            resp = self.call_ai(
+                message=user_prompt,
+                system=system_prompt,
+                temperature=0.8,
+                max_tokens=3000,
+            )
+            if not resp.get("ok"):
+                self.logger.warning(
+                    "[Marketing Agent] LLM 调用失败: %s", resp.get("error", "unknown")
                 )
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                    body = json.loads(resp.read().decode("utf-8"))
-                    text = body["content"][0]["text"]
-            else:
-                payload = json.dumps({
-                    "model": self.model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "temperature": 0.8,
-                    "max_tokens": 3000,
-                }).encode("utf-8")
-                req = urllib.request.Request(
-                    f"{self.api_base.rstrip('/')}/chat/completions",
-                    data=payload,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {self.api_key}",
-                    },
-                )
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                    body = json.loads(resp.read().decode("utf-8"))
-                    text = body["choices"][0]["message"]["content"]
+                return None
 
-            return self._extract_json(text)
+            text = resp.get("reply", "")
+            raw = self._extract_json(text)
+            if raw is None:
+                self.logger.warning("[Marketing Agent] LLM 返回无效 JSON，回退模板")
+                return None
+
+            return self._normalize_structured_output(raw, task_type)
+
         except Exception as e:
-            print(f"[Marketing Agent] AI 调用失败: {e}")
+            self.logger.error("[Marketing Agent] LLM 调用异常: %s", e)
             return None
+
+    # ── structured_output 规范化 ─────────────────────────────
+
+    def _normalize_structured_output(self, raw: Dict, task_type: str) -> Dict:
+        """
+        规范化 LLM 输出，确保至少包含 headline/body/cta/hashtags/keywords。
+        不同 task_type 的输出形状不同，这里做交叉补全。
+        """
+        out = dict(raw)
+
+        # 确保通用字段存在
+        if "headline" not in out:
+            out["headline"] = (
+                out.get("meta_title")
+                or out.get("h1")
+                or out.get("subject")
+                or out.get("campaign_name")
+                or out.get("brand_positioning", "")[:50]
+                or "营销内容"
+            )
+        if "body" not in out:
+            out["body"] = (
+                out.get("content")
+                or out.get("plain_text")
+                or out.get("core_concept", "")
+            )
+        if "cta" not in out:
+            out["cta"] = out.get("cta_button", "了解更多")
+        if "hashtags" not in out:
+            out["hashtags"] = []
+        if "keywords" not in out:
+            out["keywords"] = []
+
+        return out
+
+    # ── JSON 提取 ────────────────────────────────────────────
 
     @staticmethod
     def _extract_json(text: str) -> Optional[Dict]:
@@ -277,8 +316,10 @@ class MarketingAgent(BaseAgent):
         except json.JSONDecodeError:
             match = re.search(r"\{[\s\S]*\}", text)
             if match:
-                try: return json.loads(match.group())
-                except json.JSONDecodeError: pass
+                try:
+                    return json.loads(match.group())
+                except json.JSONDecodeError:
+                    pass
         return None
 
     @staticmethod
@@ -332,33 +373,28 @@ class MarketingAgent(BaseAgent):
         }
         data = templates.get(task_type, templates["copywriting"])
         data["content_type"] = task_type
-        data["mode"] = "template_fallback"
 
-        return self._result(
-            task_id, f"生成完成（模板模式）",
-            f"使用模板生成{task_type}内容。配置 AI API Key 获得智能定制。",
-            data,
+        result = self.ok(
+            task_id,
+            status="模板模式（未调用 AI）",
+            data=data,
+            meta={
+                "fallback": True,
+                "fallback_reason": "无可用 LLM provider 或 API key，使用模板占位内容",
+                "source": "template",
+            },
         )
+        result["warnings"] = [
+            "当前为模板/规则降级产物，非真实 LLM 生成。配置 AI API Key 后可获得定制内容。",
+        ]
+        return result
 
     @staticmethod
     def _extract_topic(text: str, max_len: int = 20) -> str:
         """从文本中提取主题词"""
-        stopwords = {"帮我","请","写","生成","一个","一份","一篇","的","和","与","了"}
+        stopwords = {"帮我", "请", "写", "生成", "一个", "一份", "一篇", "的", "和", "与", "了"}
         for sw in stopwords:
             text = text.replace(sw, " ")
         words = [w for w in text.split() if len(w) >= 2]
         topic = " ".join(words[:4]) if words else text[:30]
         return topic[:max_len]
-
-    def _result(self, task_id: str, status: str, summary: str,
-                data: Dict = None) -> Dict:
-        return {
-            "task_id": task_id,
-            "agent": "marketing_agent",
-            "agent_name": "Marketing 营销内容",
-            "status": status,
-            "summary": summary,
-            "result": summary,
-            "data": data or {},
-            "output": data or {},
-        }

@@ -248,14 +248,18 @@ class LocalAgentRuntime:
                 confidence=0.0
             )
 
-        # 7. 结果验证
+        # 7. 结果验证（Boss 模块跳过严格验证，由模块执行器自行处理）
         verification = {"passed": True, "score": 100, "issues": []}
-        if self._result_verifier:
+        is_boss_mission = context and context.get("boss_mission")
+        if self._result_verifier and not is_boss_mission:
+            # Use strict mode for task types where partial means real failure
+            strict_task_types = {"website", "code"}
+            strict = task_type in strict_task_types
             verification = self._result_verifier.verify(task_type, {
                 "final_answer": content,
                 "sources": sources,
                 "deliverables": result.get("result", {})
-            })
+            }, strict=strict)
 
             tool_trace.append({
                 "tool": "result_verifier",
@@ -274,6 +278,7 @@ class LocalAgentRuntime:
                     task_type=task_type,
                     used_tools=used_tools,
                     tool_trace=tool_trace,
+                    final_answer=content,
                     error="结果验证失败",
                     warnings=verification.get("issues", []),
                     fix_hints=fix_hints,
@@ -369,8 +374,16 @@ class LocalAgentRuntime:
                 if adapter.health_check().get("available"):
                     return adapter
 
-        # 调研任务：优先 MiMo
+        # 调研任务：优先 openclaw_agent（有浏览器），再 openclaw（HTTP），再 MiMo
         if task_type in {"research", "competitor_analysis", "market_analysis"}:
+            if "openclaw_agent" in self._adapters:
+                adapter = self._adapters["openclaw_agent"]
+                if adapter.health_check().get("available"):
+                    return adapter
+            if "openclaw" in self._adapters:
+                adapter = self._adapters["openclaw"]
+                if adapter.health_check().get("available"):
+                    return adapter
             if "mimo" in self._adapters:
                 adapter = self._adapters["mimo"]
                 if adapter.health_check().get("available"):

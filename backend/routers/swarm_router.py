@@ -15,9 +15,11 @@ class SwarmStep(BaseModel):
     url: str = ""
 
 class ChainRequest(BaseModel):
+    goal: str = ""
     chain: list = Field(default_factory=list)
 
 class FanoutRequest(BaseModel):
+    goal: str = ""
     tasks: list = Field(default_factory=list)
 
 @router.get("/agents", summary="Swarm Agent 列表")
@@ -26,12 +28,30 @@ def list_agents():
 
 @router.post("/chain", summary="串行链")
 def run_chain(req: ChainRequest):
+    # Governance Guard
+    from backend.governance.guard import guard_payload, governance_block_response
+    blocked, classification = guard_payload(req.model_dump())
+    if blocked:
+        return governance_block_response(classification)
+
     return get_swarm().execute_chain(req.chain)
 
 @router.post("/fanout", summary="并行分发")
 def run_fanout(req: FanoutRequest):
+    # Governance Guard
+    from backend.governance.guard import guard_payload, governance_block_response
+    blocked, classification = guard_payload(req.model_dump())
+    if blocked:
+        return governance_block_response(classification)
+
     return get_swarm().execute_fanout(req.tasks)
 
 @router.post("/pipeline", summary="流水线")
 def run_pipeline(req: ChainRequest):
+    # Governance Guard
+    from backend.governance.guard import guard_payload, governance_block_response
+    blocked, classification = guard_payload(req.model_dump())
+    if blocked:
+        return governance_block_response(classification)
+
     return get_swarm().execute_pipeline(req.chain)

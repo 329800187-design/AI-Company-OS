@@ -248,10 +248,21 @@ export default function ResearchPage() {
           </div>
 
           {/* Summary */}
-          {result.summary && (
+          {Boolean(result.summary) && (
             <div className="p-4 rounded-xl border border-[#E5E5E5] bg-white">
               <h4 className="text-sm font-medium mb-2">执行摘要</h4>
-              <p className="text-sm text-[#333]">{result.summary}</p>
+              <p className="text-sm text-[#333]">{String(result.summary)}</p>
+            </div>
+          )}
+
+          {/* 降级原因 */}
+          {isFallback && Boolean(result.metadata?.fallback_reason) && (
+            <div className="p-4 rounded-xl border border-yellow/30 bg-yellow/5 flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-yellow flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-[#666]">
+                <p className="font-medium text-yellow mb-1">降级原因</p>
+                <p>{String(result.metadata?.fallback_reason)}</p>
+              </div>
             </div>
           )}
 

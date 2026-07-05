@@ -31,6 +31,12 @@ def commander_run(request: RunGoalRequest):
     if not goal:
         raise HTTPException(status_code=400, detail="目标不能为空")
 
+    # Governance Guard: 拦截不在受控能力范围内的目标
+    from backend.governance.guard import should_block_goal, governance_block_response
+    blocked, classification = should_block_goal(goal)
+    if blocked:
+        return governance_block_response(classification)
+
     init_db()
     session_id = f"session_{uuid.uuid4().hex[:8]}"
 
@@ -109,6 +115,12 @@ async def commander_run_async(request: RunGoalRequest, fastapi_request: Request)
     goal = request.目标
     if not goal:
         raise HTTPException(status_code=400, detail="目标不能为空")
+
+    # Governance Guard: 拦截不在受控能力范围内的目标
+    from backend.governance.guard import should_block_goal, governance_block_response
+    blocked, classification = should_block_goal(goal)
+    if blocked:
+        return governance_block_response(classification)
 
     # 获取 BackgroundTaskManager 实例（挂载在 app.state）
     manager: BackgroundTaskManager = fastapi_request.app.state.manager
@@ -220,11 +232,11 @@ class ContinueRequest(BaseModel):
              description="当 Commander 需要用户确认时卡住了，从这里回复继续。")
 def continue_session(session_id: str, request: ContinueRequest):
     """继续被暂停的 Commander 执行"""
-    init_db()
-    result = CommanderAgent().continue_session(session_id, request.用户输入 or "")
-    if result.get("status") == "error":
-        raise HTTPException(status_code=400, detail=result.get("message", ""))
-    return result
+    from backend.governance.deprecated import deprecated_route_response
+    return deprecated_route_response(
+        f"/commander/sessions/{session_id}/continue",
+        reason="Commander 旧会话继续执行已停用，避免恢复旧编排绕过 Governance。",
+    )
 
 
 # ── 纯 AI 对话（不经过 Commander 任务编排）───────────────

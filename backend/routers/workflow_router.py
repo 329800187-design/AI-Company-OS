@@ -5,11 +5,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from agents.ceo_agent.agent import CEOAgent
-from agents.codex_agent.agent import CodexAgent
-from agents.qa_agent.agent import QAAgent
-from agents.system_agent.agent import SystemAgent
-from agents.openclaw_agent.agent import OpenClawAgent
+from backend.services.agent_loader import load_agent, load_agent_instance
 from backend.schemas.task_schema import TaskCreate
 from backend.services.task_service import task_service
 from backend.ai_registry.registry import get_registry
@@ -22,7 +18,15 @@ router = APIRouter(prefix="/workflows", tags=["工作流 / Workflows"])
 @router.post("/ceo-create-task", summary="CEO 拆解 → 存入任务中心",
              description="接收一个用户目标，由 CEO Agent 拆解为多个任务并存入任务中心")
 def ceo_create_task(user_request: Dict[str, Any]):
-    ceo_agent = CEOAgent()
+    from backend.governance.deprecated import deprecated_route_response
+    return deprecated_route_response(
+        "/workflows/ceo-create-task",
+        reason="CEO 拆解旧入口已停用，避免绕过受控能力目录。",
+    )
+
+    ceo_agent = load_agent_instance("agents.ceo_agent.agent", "CEOAgent")
+    if ceo_agent is None:
+        raise HTTPException(status_code=503, detail="CEO Agent unavailable")
     ceo_result = ceo_agent.run(user_request)
 
     created_tasks_data = ceo_result.get("output", {}).get("created_tasks", [])
@@ -51,11 +55,31 @@ def ceo_create_task(user_request: Dict[str, Any]):
 4. 所有结果写入任务中心
              """)
 def ceo_codex_task(user_request: Dict[str, Any]):
-    ceo_agent = CEOAgent()
-    codex_agent = CodexAgent(timeout=30)
-    openclaw_agent = OpenClawAgent(headless=True, timeout=30)
-    system_agent = SystemAgent(timeout=120)
-    qa_agent = QAAgent()
+    from backend.governance.deprecated import deprecated_route_response
+    return deprecated_route_response(
+        "/workflows/ceo-codex-task",
+        reason="CEO+Codex 多 Agent 旧流程已停用，避免绕过 Governance。",
+    )
+
+    ceo_agent = load_agent_instance("agents.ceo_agent.agent", "CEOAgent")
+    codex_agent = load_agent_instance("agents.codex_agent.agent", "CodexAgent", timeout=30)
+    allow_browser = user_request.get("allow_browser_automation", False)
+    openclaw_agent = load_agent_instance(
+        "agents.openclaw_agent.agent", "OpenClawAgent",
+        headless=True, timeout=30, allow_browser_automation=allow_browser
+    )
+    system_agent = load_agent_instance("agents.system_agent.agent", "SystemAgent", timeout=120)
+    qa_agent = load_agent_instance("agents.qa_agent.agent", "QAAgent")
+
+    # 检查所有 agent 是否可用
+    if not all([ceo_agent, codex_agent, openclaw_agent, system_agent, qa_agent]):
+        unavailable = []
+        if not ceo_agent: unavailable.append("CEO")
+        if not codex_agent: unavailable.append("Codex")
+        if not openclaw_agent: unavailable.append("OpenClaw")
+        if not system_agent: unavailable.append("System")
+        if not qa_agent: unavailable.append("QA")
+        raise HTTPException(status_code=503, detail=f"Agents unavailable: {', '.join(unavailable)}")
 
     # Step 1: CEO 拆解
     ceo_result = ceo_agent.run(user_request)
@@ -184,6 +208,12 @@ def dag_detail(name: str):
 
 @router.post("/dag/run", summary="执行 DAG 工作流（同步）")
 def dag_run(request: RunWorkflowDAGRequest):
+    from backend.governance.deprecated import deprecated_route_response
+    return deprecated_route_response(
+        "/workflows/dag/run",
+        reason="DAG 同步执行旧入口已停用，避免绕过 Governance。",
+    )
+
     engine = get_workflow_engine()
     result = engine.run(request.workflow, inputs=request.inputs)
     if result.get("status") == "error":
@@ -193,6 +223,12 @@ def dag_run(request: RunWorkflowDAGRequest):
 
 @router.post("/dag/run-async", summary="执行 DAG 工作流（异步）")
 async def dag_run_async(request: RunWorkflowDAGRequest, fastapi_request: Request):
+    from backend.governance.deprecated import deprecated_route_response
+    return deprecated_route_response(
+        "/workflows/dag/run-async",
+        reason="DAG 异步执行旧入口已停用，避免绕过 Governance。",
+    )
+
     manager: BackgroundTaskManager = fastapi_request.app.state.manager
     task_id = f"wfdag_{uuid.uuid4().hex[:12]}"
     engine = get_workflow_engine()

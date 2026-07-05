@@ -355,7 +355,7 @@ class CTOAgent(BaseAgent):
 
             return self._extract_json(content)
         except Exception as e:
-            print(f"[CTO Agent] AI 调用失败: {e}")
+            self.logger.error(f"[CTO Agent] AI 调用失败: {e}")
             return None
 
     @staticmethod

@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional
 
-from agents.image_agent.agent import ImageAgent
+from backend.services.agent_loader import load_agent_instance
 
 router = APIRouter(prefix="/image", tags=["Image / 图片生成"])
 
@@ -21,7 +21,12 @@ class ImageAnalyzeRequest(BaseModel):
     image_path: str = ""
 
 
-image_agent = ImageAgent()
+def _get_image_agent():
+    """延迟加载 Image Agent"""
+    agent = load_agent_instance("agents.image_agent.agent", "ImageAgent")
+    if agent is None:
+        raise HTTPException(status_code=503, detail="Image Agent unavailable")
+    return agent
 
 
 @router.post("/generate", summary="AI 图片生成",
@@ -29,6 +34,13 @@ image_agent = ImageAgent()
 def generate_image(request: ImageGenerateRequest):
     if not request.prompt.strip():
         raise HTTPException(status_code=400, detail="请提供图片描述")
+
+    # Governance Guard
+    from backend.governance.guard import guard_payload, governance_block_response
+    blocked, classification = guard_payload(request.model_dump())
+    if blocked:
+        return governance_block_response(classification)
+
     task = {
         "task_id": "img_gen",
         "task_type": "image_generate",
@@ -37,7 +49,7 @@ def generate_image(request: ImageGenerateRequest):
         "style": request.style,
         "n": request.n,
     }
-    return image_agent.run(task)
+    return _get_image_agent().run(task)
 
 
 @router.post("/analyze", summary="图片分析",
@@ -45,6 +57,13 @@ def generate_image(request: ImageGenerateRequest):
 def analyze_image(request: ImageAnalyzeRequest):
     if not request.image_url and not request.image_path:
         raise HTTPException(status_code=400, detail="请提供 image_url 或 image_path")
+
+    # Governance Guard
+    from backend.governance.guard import guard_payload, governance_block_response
+    blocked, classification = guard_payload(request.model_dump())
+    if blocked:
+        return governance_block_response(classification)
+
     task = {
         "task_id": "img_analyze",
         "task_type": "image_analyze",
@@ -52,4 +71,4 @@ def analyze_image(request: ImageAnalyzeRequest):
         "image_url": request.image_url,
         "image_path": request.image_path,
     }
-    return image_agent.run(task)
+    return _get_image_agent().run(task)

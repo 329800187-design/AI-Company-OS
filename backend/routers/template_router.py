@@ -10,29 +10,29 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from backend.services.agent_loader import load_agent_instance
+
 router = APIRouter(prefix="/templates", tags=["模板 / Templates"])
 
 # ── Agent 懒加载 ──────────────────────────────────────────
 
 _agents = {}
 
+# Agent 配置：name -> (entrypoint, class_name, kwargs)
+_AGENT_CONFIG = {
+    "ceo": ("agents.ceo_agent.agent", "CEOAgent", {}),
+    "codex": ("agents.codex_agent.agent", "CodexAgent", {"timeout": 30}),
+    "openclaw": ("agents.openclaw_agent.agent", "OpenClawAgent", {"headless": True, "timeout": 30}),
+    "qa": ("agents.qa_agent.agent", "QAAgent", {}),
+    "system": ("agents.system_agent.agent", "SystemAgent", {"timeout": 120}),
+}
+
 def _get_agent(name: str):
     if name not in _agents:
-        if name == "ceo":
-            from agents.ceo_agent.agent import CEOAgent
-            _agents[name] = CEOAgent()
-        elif name == "codex":
-            from agents.codex_agent.agent import CodexAgent
-            _agents[name] = CodexAgent(timeout=30)
-        elif name == "openclaw":
-            from agents.openclaw_agent.agent import OpenClawAgent
-            _agents[name] = OpenClawAgent(headless=True, timeout=30)
-        elif name == "qa":
-            from agents.qa_agent.agent import QAAgent
-            _agents[name] = QAAgent()
-        elif name == "system":
-            from agents.system_agent.agent import SystemAgent
-            _agents[name] = SystemAgent(timeout=120)
+        config = _AGENT_CONFIG.get(name)
+        if config:
+            entrypoint, class_name, kwargs = config
+            _agents[name] = load_agent_instance(entrypoint, class_name, **kwargs)
     return _agents.get(name)
 
 
@@ -296,6 +296,13 @@ def get_template(template_id: str):
              description="选择一个模板，填入参数后执行。系统会自动调用多个 Agent 完成任务，返回最终可用结果。")
 def run_template(template_id: str, request: RunTemplateRequest):
     """执行模板工作流"""
+    from backend.governance.deprecated import deprecated_route_response
+    return deprecated_route_response(
+        f"/templates/run/{template_id}",
+        replacement=None,
+        reason="模板多 Agent 执行旧入口已停用，请先迁移为受控能力后再执行。",
+    )
+
     # 找到模板
     template = None
     for t in TEMPLATES:

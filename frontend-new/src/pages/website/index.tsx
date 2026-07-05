@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { motion } from "framer-motion"
-import { Globe, Sparkles, Loader2, Copy, Check, AlertCircle, CheckCircle2, ChevronDown, FileText, Eye, Search, Palette } from "lucide-react"
+import { Globe, Sparkles, Loader2, AlertCircle, CheckCircle2, ChevronDown, FileText, Eye, Search, Palette } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
@@ -20,7 +20,7 @@ interface WebsiteAgentResult {
   task_type?: string
   summary?: string
   structured_output?: {
-    page_type?: string
+    page_goal?: string
     target_audience?: string
     hero?: {
       headline?: string
@@ -32,16 +32,23 @@ interface WebsiteAgentResult {
       content?: string
       cta?: string | null
     }>
+    ctas?: {
+      primary?: string
+      secondary?: string
+      exit_intent?: string
+    }
+    trust_elements?: string[]
     seo?: {
       title?: string
       description?: string
       keywords?: string[]
     }
-    design_notes?: string
-    html_preview?: string
-    markdown_preview?: string
+    design_direction?: string
+    risks?: string[]
+    recommendations?: string[]
+    assumptions?: string[]
     limitations?: string[]
-    sources?: string[]
+    content_type?: string
   }
   output?: Record<string, unknown>
   artifacts?: string[]
@@ -56,9 +63,7 @@ export default function WebsitePage() {
   const [isLoading, setIsLoading] = useState(false)
   const [result, setResult] = useState<WebsiteAgentResult | null>(null)
   const [showResult, setShowResult] = useState(false)
-  const [showPreview, setShowPreview] = useState<"markdown" | "html" | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
 
   const handleGenerate = async () => {
     if (!description.trim()) return
@@ -79,12 +84,6 @@ export default function WebsitePage() {
     } finally {
       setIsLoading(false)
     }
-  }
-
-  const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
   }
 
   const isFallback = result?.metadata?.fallback === true
@@ -201,7 +200,7 @@ export default function WebsitePage() {
           )}
 
           {/* Warnings */}
-          {hasWarnings && (
+          {Boolean(hasWarnings) && (
             <div className="p-4 rounded-xl border border-yellow/30 bg-yellow/5">
               <div className="flex items-center gap-2 mb-2">
                 <AlertCircle className="w-4 h-4 text-yellow" />
@@ -209,7 +208,7 @@ export default function WebsitePage() {
               </div>
               <ul className="text-sm text-[#666] space-y-1">
                 {result.warnings!.map((w, i) => (
-                  <li key={i}>• {w}</li>
+                  <li key={i}>• {String(w)}</li>
                 ))}
               </ul>
             </div>
@@ -231,10 +230,40 @@ export default function WebsitePage() {
           )}
 
           {/* Summary */}
-          {result.summary && (
+          {Boolean(result.summary) && (
             <div className="p-4 rounded-xl border border-[#E5E5E5] bg-white">
               <h4 className="text-sm font-medium mb-2">执行摘要</h4>
               <p className="text-sm text-[#333]">{result.summary}</p>
+            </div>
+          )}
+
+          {/* 降级原因 */}
+          {isFallback && Boolean(result.metadata?.fallback_reason) && (
+            <div className="p-4 rounded-xl border border-yellow/30 bg-yellow/5 flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-yellow flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-[#666]">
+                <p className="font-medium text-yellow mb-1">降级原因</p>
+                <p>{String(result.metadata?.fallback_reason)}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Page Goal */}
+          {output?.page_goal && (
+            <div className="p-5 rounded-xl border border-[#E5E5E5] bg-white">
+              <div className="flex items-center gap-2 mb-3">
+                <Eye className="w-4 h-4" />
+                <h4 className="text-sm font-medium">页面目标</h4>
+              </div>
+              <p className="text-sm text-[#333] leading-relaxed">{output.page_goal}</p>
+            </div>
+          )}
+
+          {/* Target Audience */}
+          {output?.target_audience && (
+            <div className="p-5 rounded-xl border border-[#E5E5E5] bg-white">
+              <h4 className="text-sm font-medium mb-2">目标受众</h4>
+              <p className="text-sm text-[#333] leading-relaxed">{output.target_audience}</p>
             </div>
           )}
 
@@ -313,81 +342,80 @@ export default function WebsitePage() {
             </div>
           )}
 
-          {/* Design Notes */}
-          {output?.design_notes && (
+          {/* CTAs */}
+          {output?.ctas && (
             <div className="p-5 rounded-xl border border-[#E5E5E5] bg-white">
-              <div className="flex items-center gap-2 mb-3">
-                <Palette className="w-4 h-4" />
-                <h4 className="text-sm font-medium">设计建议</h4>
+              <h4 className="text-sm font-medium mb-3">行动号召</h4>
+              <div className="space-y-2 text-sm">
+                {output.ctas.primary && (
+                  <div><span className="text-[#8A8A8A]">主要 CTA:</span> <Badge variant="default">{output.ctas.primary}</Badge></div>
+                )}
+                {output.ctas.secondary && (
+                  <div><span className="text-[#8A8A8A]">次要 CTA:</span> <Badge variant="outline">{output.ctas.secondary}</Badge></div>
+                )}
+                {output.ctas.exit_intent && (
+                  <div><span className="text-[#8A8A8A]">退出弹窗:</span> <Badge variant="outline">{output.ctas.exit_intent}</Badge></div>
+                )}
               </div>
-              <p className="text-sm text-[#666] whitespace-pre-wrap">{output.design_notes}</p>
             </div>
           )}
 
-          {/* Preview Tabs */}
-          {(output?.markdown_preview || output?.html_preview) && (
-            <div className="rounded-xl border border-[#E5E5E5] bg-white overflow-hidden">
-              <div className="flex border-b border-[#E5E5E5]">
-                {output?.markdown_preview && (
-                  <button
-                    type="button"
-                    onClick={() => setShowPreview(showPreview === "markdown" ? null : "markdown")}
-                    className={`px-4 py-2 text-sm font-medium transition-colors ${
-                      showPreview === "markdown" ? "text-[#0B0B0B] border-b-2 border-[#0B0B0B]" : "text-[#8A8A8A] hover:text-[#333]"
-                    }`}
-                  >
-                    Markdown 预览
-                  </button>
-                )}
-                {output?.html_preview && (
-                  <button
-                    type="button"
-                    onClick={() => setShowPreview(showPreview === "html" ? null : "html")}
-                    className={`px-4 py-2 text-sm font-medium transition-colors ${
-                      showPreview === "html" ? "text-[#0B0B0B] border-b-2 border-[#0B0B0B]" : "text-[#8A8A8A] hover:text-[#333]"
-                    }`}
-                  >
-                    HTML 预览
-                  </button>
-                )}
+          {/* Trust Elements */}
+          {output?.trust_elements && output.trust_elements.length > 0 && (
+            <div className="p-5 rounded-xl border border-[#E5E5E5] bg-white">
+              <h4 className="text-sm font-medium mb-2">信任元素</h4>
+              <div className="flex flex-wrap gap-1.5">
+                {output.trust_elements.map((t, i) => (
+                  <Badge key={i} variant="secondary" className="text-xs">{t}</Badge>
+                ))}
               </div>
-              <div className="p-4">
-                {showPreview === "markdown" && output?.markdown_preview && (
-                  <div className="relative">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleCopy(output.markdown_preview!)}
-                      className="absolute top-2 right-2 gap-1"
-                    >
-                      {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                      {copied ? "已复制" : "复制"}
-                    </Button>
-                    <pre className="text-sm whitespace-pre-wrap font-sans leading-relaxed text-[#333] bg-[#F4F3EF] rounded-lg p-4 max-h-[400px] overflow-auto">
-                      {output.markdown_preview}
-                    </pre>
-                  </div>
-                )}
-                {showPreview === "html" && output?.html_preview && (
-                  <div className="relative">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleCopy(output.html_preview!)}
-                      className="absolute top-2 right-2 gap-1"
-                    >
-                      {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                      {copied ? "已复制" : "复制"}
-                    </Button>
-                    <pre className="text-xs text-[#666] bg-[#F4F3EF] rounded-lg p-4 max-h-[400px] overflow-auto whitespace-pre-wrap">
-                      {output.html_preview}
-                    </pre>
-                  </div>
-                )}
-                {!showPreview && (
-                  <p className="text-sm text-[#8A8A8A] text-center py-4">点击上方标签查看预览</p>
-                )}
+            </div>
+          )}
+
+          {/* Design Direction */}
+          {output?.design_direction && (
+            <div className="p-5 rounded-xl border border-[#E5E5E5] bg-white">
+              <div className="flex items-center gap-2 mb-3">
+                <Palette className="w-4 h-4" />
+                <h4 className="text-sm font-medium">设计方向</h4>
               </div>
+              <p className="text-sm text-[#666] whitespace-pre-wrap">{output.design_direction}</p>
+            </div>
+          )}
+
+          {/* Risks */}
+          {output?.risks && output.risks.length > 0 && (
+            <div className="p-5 rounded-xl border border-[#E5E5E5] bg-white">
+              <h4 className="text-sm font-medium mb-2">⚠️ 风险</h4>
+              <ul className="text-sm text-[#333] space-y-1">
+                {output.risks.map((r, i) => (
+                  <li key={i}>• {r}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Recommendations */}
+          {output?.recommendations && output.recommendations.length > 0 && (
+            <div className="p-5 rounded-xl border border-[#E5E5E5] bg-white">
+              <h4 className="text-sm font-medium mb-2">💡 建议</h4>
+              <ul className="text-sm text-[#333] space-y-1">
+                {output.recommendations.map((r, i) => (
+                  <li key={i}>• {r}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Assumptions */}
+          {output?.assumptions && output.assumptions.length > 0 && (
+            <div className="p-5 rounded-xl border border-[#E5E5E5] bg-white">
+              <h4 className="text-sm font-medium mb-2">假设前提</h4>
+              <ul className="text-sm text-[#666] space-y-1">
+                {output.assumptions.map((a, i) => (
+                  <li key={i}>• {a}</li>
+                ))}
+              </ul>
             </div>
           )}
 

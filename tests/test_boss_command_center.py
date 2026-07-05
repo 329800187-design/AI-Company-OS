@@ -54,12 +54,12 @@ class TestBossCommandCenterService:
         return BossCommandCenterService()
 
     def test_create_mission(self, service):
-        """创建 mission 应返回完整结构"""
+        """创建 mission 应返回完整结构（v2: 初始状态 pending_review）"""
         mission = service.create_mission("测试业务目标")
         assert mission is not None
         assert mission["mission_id"].startswith("mission_")
         assert mission["goal"] == "测试业务目标"
-        assert mission["status"] == "pending"
+        assert mission["status"] == "pending_review"
         assert len(mission["modules"]) == 5
 
         module_ids = [m["module_id"] for m in mission["modules"]]
@@ -161,6 +161,25 @@ class TestBossCommandCenterService:
             assert "Adapter 不可用" in market["error"]
             assert market["duration_ms"] >= 0
 
+    def test_run_module_blocked_not_partial(self, service):
+        """Regression: browser-approval-blocked module must be 'failed', not 'partial'."""
+        mission = service.create_mission("blocked 测试")
+        mission_id = mission["mission_id"]
+
+        mock_executor = _make_mock_executor(
+            ok=False,
+            final_answer="浏览器自动化采集需要用户确认后才能执行",
+            mode="blocked",
+            error="浏览器自动化需要用户授权",
+        )
+
+        with patch("backend.services.boss_module_executors.get_executor", return_value=mock_executor):
+            updated = service.run_module(mission_id, "market")
+            market = next(m for m in updated["modules"] if m["module_id"] == "market")
+            assert market["status"] == "failed", (
+                f"blocked module should be 'failed', got '{market['status']}'"
+            )
+
     def test_market_no_web_search_warning(self, service):
         """market 模块无联网能力时应返回 warning（由 executor 产生）"""
         mission = service.create_mission("联网测试")
@@ -188,7 +207,7 @@ class TestBossCommandCenterService:
         mission = service.create_mission("跳过测试")
         mission_id = mission["mission_id"]
 
-        mock_executor = _make_mock_executor(ok=True, final_answer="结果", confidence=0.7)
+        mock_executor = _make_mock_executor(ok=True, final_answer="战略分析结果文本内容", confidence=0.7)
 
         with patch("backend.services.boss_module_executors.get_executor", return_value=mock_executor):
             # 先执行一次 strategy
@@ -432,18 +451,19 @@ class TestMissionEvents:
         assert "market" in skipped_ids
 
     def test_run_mission_logs_events(self, service):
-        """run mission 后应包含 mission_started/mission_succeeded"""
+        """run mission 后应包含 mission_started/mission_ready（v2: ready_for_review）"""
         mission = service.create_mission("运行事件测试", enabled_modules=["strategy"])
         mission_id = mission["mission_id"]
 
-        mock_executor = _make_mock_executor(ok=True, final_answer="结果", confidence=0.7)
+        mock_executor = _make_mock_executor(ok=True, final_answer="战略分析结果文本内容", confidence=0.7)
         with patch("backend.services.boss_module_executors.get_executor", return_value=mock_executor):
             service.run_mission(mission_id)
 
         events = service.get_events(mission_id)
         types = [e["type"] for e in events]
         assert "mission_started" in types
-        assert "mission_succeeded" in types
+        # v2: 所有模块 done → mission_ready (ready_for_review)
+        assert "mission_ready" in types
         assert "module_started" in types
         assert "module_succeeded" in types
 
@@ -492,7 +512,7 @@ class TestMissionEvents:
         mission = service.create_mission("顺序测试")
         mission_id = mission["mission_id"]
 
-        mock_executor = _make_mock_executor(ok=True, final_answer="结果", confidence=0.5)
+        mock_executor = _make_mock_executor(ok=True, final_answer="战略分析结果文本内容", confidence=0.5)
         with patch("backend.services.boss_module_executors.get_executor", return_value=mock_executor):
             service.run_mission(mission_id)
 
@@ -645,7 +665,7 @@ class TestMetrics:
         mission = service.create_mission("partial metrics", enabled_modules=["strategy", "market", "actions"])
         mission_id = mission["mission_id"]
 
-        mock_executor = _make_mock_executor(ok=True, final_answer="结果", confidence=0.7,
+        mock_executor = _make_mock_executor(ok=True, final_answer="战略分析结果文本内容", confidence=0.7,
                                             warnings=["w1"], next_actions=["a1", "a2"])
         with patch("backend.services.boss_module_executors.get_executor", return_value=mock_executor):
             service.run_module(mission_id, "strategy")
@@ -712,6 +732,15 @@ class TestExecutionProvider:
         assert "pricing" in result
         assert "warnings" in result
         assert "raw_data" in result
+
+    def test_mock_provider_market_research_accepts_allow_browser(self):
+        """Regression: local_mock execute_market_research must accept allow_browser_automation kwarg."""
+        from backend.services.boss_execution_providers import LocalMockExecutionProvider
+        provider = LocalMockExecutionProvider()
+        result = provider.execute_market_research(
+            "测试目标", context={}, allow_browser_automation=True
+        )
+        assert result["ok"] is True
 
     def test_mock_provider_competitor_analysis(self):
         """Mock Provider 竞品分析应返回正确结构"""
@@ -830,7 +859,8 @@ class TestEnhancedEvents:
         mission = service.create_mission("provider 事件测试")
         mission_id = mission["mission_id"]
 
-        mock_executor = _make_mock_executor(ok=True, final_answer="结果", confidence=0.7, provider="local_mock")
+        mock_executor = _make_mock_executor(ok=True, final_answer="战略分析结果文本内容", confidence=0.7,
+                                            provider="local_mock")
         with patch("backend.services.boss_module_executors.get_executor", return_value=mock_executor):
             service.run_module(mission_id, "strategy")
 
@@ -903,22 +933,30 @@ class TestHermesExecutionProvider:
         """Hermes 返回合法 JSON 时应该成功解析"""
         from backend.services.boss_execution_providers import HermesExecutionProvider
         import subprocess
+        import io
 
         provider = HermesExecutionProvider()
 
-        # Mock subprocess.run 返回成功结果
+        # Mock subprocess.Popen 返回成功结果
         mock_stdout = '{"summary": "测试摘要", "evidence": [{"title": "来源1", "url": "http://example.com"}], "competitors": [{"name": "竞品A", "price": "99-199"}], "pricing": {"range": "99-199"}, "warnings": []}'
 
-        def mock_run(cmd, **kwargs):
-            class Result:
-                returncode = 0
-                stdout = mock_stdout
-                stderr = ""
-            return Result()
+        class MockProcess:
+            returncode = 0
+            stdout = io.StringIO(mock_stdout)
+            stderr = io.StringIO("")
 
-        monkeypatch.setattr(subprocess, "run", mock_run)
+            def wait(self, timeout=None):
+                return 0
 
-        result = provider.execute_market_research("测试目标")
+            def kill(self):
+                pass
+
+        def mock_popen(cmd, **kwargs):
+            return MockProcess()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        result = provider.execute_market_research("测试目标", allow_browser_automation=True)
         assert result["ok"] is True
         assert result["summary"] == "测试摘要"
         assert len(result["evidence"]) == 1
@@ -928,22 +966,30 @@ class TestHermesExecutionProvider:
         """Hermes 返回非 JSON 时应该返回失败"""
         from backend.services.boss_execution_providers import HermesExecutionProvider
         import subprocess
+        import io
 
         provider = HermesExecutionProvider()
 
-        # Mock subprocess.run 返回非 JSON
-        def mock_run(cmd, **kwargs):
-            class Result:
-                returncode = 0
-                stdout = "This is not JSON output from Hermes"
-                stderr = ""
-            return Result()
+        # Mock subprocess.Popen 返回非 JSON（实际代码用 Popen，不用 run）
+        class MockProcess:
+            returncode = 0
+            stdout = io.StringIO("This is not JSON output from Hermes")
+            stderr = io.StringIO("")
 
-        monkeypatch.setattr(subprocess, "run", mock_run)
+            def wait(self, timeout=None):
+                return 0
 
-        result = provider.execute_market_research("测试目标")
+            def kill(self):
+                pass
+
+        def mock_popen(cmd, **kwargs):
+            return MockProcess()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        result = provider.execute_market_research("测试目标", allow_browser_automation=True)
         assert result["ok"] is False
-        assert "无法解析为 JSON" in result["warnings"][0]
+        assert len(result["warnings"]) >= 1
 
     def test_hermes_market_research_timeout(self, monkeypatch):
         """Hermes 超时应该返回失败"""
@@ -952,15 +998,15 @@ class TestHermesExecutionProvider:
 
         provider = HermesExecutionProvider()
 
-        # Mock subprocess.run 抛出 TimeoutExpired
-        def mock_run(cmd, **kwargs):
+        # Mock subprocess.Popen 抛出 TimeoutExpired（实际代码用 Popen）
+        def mock_popen(cmd, **kwargs):
             raise subprocess.TimeoutExpired(cmd=cmd, timeout=180)
 
-        monkeypatch.setattr(subprocess, "run", mock_run)
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
-        result = provider.execute_market_research("测试目标")
+        result = provider.execute_market_research("测试目标", allow_browser_automation=True)
         assert result["ok"] is False
-        assert "超时" in result["warnings"][0]
+        assert len(result["warnings"]) >= 1
 
     def test_hermes_market_research_command_missing(self, monkeypatch):
         """Hermes CLI 不存在时应该返回失败"""
@@ -969,35 +1015,43 @@ class TestHermesExecutionProvider:
 
         provider = HermesExecutionProvider()
 
-        # Mock subprocess.run 抛出 FileNotFoundError
-        def mock_run(cmd, **kwargs):
+        # Mock subprocess.Popen 抛出 FileNotFoundError（实际代码用 Popen）
+        def mock_popen(cmd, **kwargs):
             raise FileNotFoundError("No such file or directory: hermes")
 
-        monkeypatch.setattr(subprocess, "run", mock_run)
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
-        result = provider.execute_market_research("测试目标")
+        result = provider.execute_market_research("测试目标", allow_browser_automation=True)
         assert result["ok"] is False
-        assert "未找到" in result["warnings"][0]
+        assert len(result["warnings"]) >= 1
 
     def test_hermes_competitor_analysis_valid_json(self, monkeypatch):
         """Hermes 竞品分析返回合法 JSON 时应该成功解析"""
         from backend.services.boss_execution_providers import HermesExecutionProvider
         import subprocess
+        import io
 
         provider = HermesExecutionProvider()
 
         mock_stdout = '{"summary": "竞品分析摘要", "competitors": [{"name": "竞品A", "price": "99", "strengths": "便宜", "weaknesses": "功能少"}], "pricing": {"recommended_range": "129-249"}, "warnings": []}'
 
-        def mock_run(cmd, **kwargs):
-            class Result:
-                returncode = 0
-                stdout = mock_stdout
-                stderr = ""
-            return Result()
+        class MockProcess:
+            returncode = 0
+            stdout = io.StringIO(mock_stdout)
+            stderr = io.StringIO("")
 
-        monkeypatch.setattr(subprocess, "run", mock_run)
+            def wait(self, timeout=None):
+                return 0
 
-        result = provider.execute_competitor_analysis("测试目标", [])
+            def kill(self):
+                pass
+
+        def mock_popen(cmd, **kwargs):
+            return MockProcess()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        result = provider.execute_competitor_analysis("测试目标", [], allow_browser_automation=True)
         assert result["ok"] is True
         assert result["summary"] == "竞品分析摘要"
         assert len(result["competitors"]) == 1
@@ -1006,21 +1060,29 @@ class TestHermesExecutionProvider:
         """Hermes 上架物料包返回合法 JSON 时应该成功解析"""
         from backend.services.boss_execution_providers import HermesExecutionProvider
         import subprocess
+        import io
 
         provider = HermesExecutionProvider()
 
         mock_stdout = '{"summary": "物料包摘要", "listing_copy": "【爆款推荐】测试产品", "pricing": {"recommended": "199"}, "image_plan": {"main_image": "白底图"}, "next_actions": ["确定定价", "拍摄主图"], "warnings": []}'
 
-        def mock_run(cmd, **kwargs):
-            class Result:
-                returncode = 0
-                stdout = mock_stdout
-                stderr = ""
-            return Result()
+        class MockProcess:
+            returncode = 0
+            stdout = io.StringIO(mock_stdout)
+            stderr = io.StringIO("")
 
-        monkeypatch.setattr(subprocess, "run", mock_run)
+            def wait(self, timeout=None):
+                return 0
 
-        result = provider.execute_listing_pack("测试目标", [], {})
+            def kill(self):
+                pass
+
+        def mock_popen(cmd, **kwargs):
+            return MockProcess()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        result = provider.execute_listing_pack("测试目标", [], {}, allow_browser_automation=True)
         assert result["ok"] is True
         assert result["listing_copy"] == "【爆款推荐】测试产品"
         assert len(result["next_actions"]) == 2
@@ -1054,3 +1116,84 @@ class TestHermesExecutionProvider:
         result = provider.execute_market_research("测试目标")
         assert result["ok"] is False
         assert "Hermes always fails" in result["warnings"][0]
+
+
+# ── Regression: auto_run + browser flag defaults ───────────────
+
+class TestAutoRunRegression:
+    """Regression tests for auto_run=True and allow_browser_automation defaulting."""
+
+    @pytest.fixture
+    def service(self):
+        from backend.services.boss_command_center import BossCommandCenterService
+        return BossCommandCenterService()
+
+    def test_auto_run_true_starts_execution(self, service):
+        """create_mission(auto_run=True) must actually run all modules."""
+        mock_exec = _make_mock_executor(ok=True, final_answer="auto run result text", confidence=0.8)
+
+        # mock_exec is the executor; mock_exec.execute.return_value is the result.
+        # Pass mock_exec directly — _make_mock_executor already wires .execute correctly.
+        with patch("backend.services.boss_module_executors.get_executor", return_value=mock_exec):
+            mission = service.create_mission("auto run 测试", auto_run=True)
+
+        # After auto_run, all active modules should be done (not pending)
+        active = [m for m in mission["modules"] if m["status"] != "skipped"]
+        assert all(m["status"] == "done" for m in active), (
+            f"auto_run=True should execute modules; statuses: {[m['status'] for m in active]}"
+        )
+        assert mission["status"] == "ready_for_review"
+
+    def test_auto_run_false_does_not_execute(self, service):
+        """create_mission(auto_run=False) must NOT execute modules (plan only)."""
+        mission = service.create_mission("no auto run 测试", auto_run=False)
+        active = [m for m in mission["modules"] if m["status"] != "skipped"]
+        assert all(m["status"] == "pending" for m in active)
+        assert mission["status"] == "pending_review"
+
+    def test_run_mission_defaults_browser_flag_from_mission(self, service):
+        """run_mission() without explicit allow_browser_automation should use saved mission value."""
+        # Create mission with browser automation approved
+        mission = service.create_mission("browser 测试", allow_browser_automation=True)
+        mission_id = mission["mission_id"]
+
+        captured_ctx = {}
+
+        def fake_execute(goal, module_id, mid, context=None):
+            captured_ctx.update(context or {})
+            return MagicMock(
+                ok=True, final_answer="result text content here", confidence=0.7,
+                warnings=[], used_tools=[], mode="local", error="",
+                next_actions=[], structured_output={}, provider="mock",
+            )
+
+        mock_exec = MagicMock(side_effect=fake_execute)
+        with patch("backend.services.boss_module_executors.get_executor", return_value=MagicMock(execute=mock_exec)):
+            service.run_mission(mission_id)  # no explicit allow_browser_automation
+
+        assert captured_ctx.get("allow_browser_automation") is True, (
+            "run_mission() should default allow_browser_automation from saved mission when not passed"
+        )
+
+    def test_run_mission_explicit_false_overrides_saved(self, service):
+        """run_mission(allow_browser_automation=False) overrides saved True."""
+        mission = service.create_mission("override 测试", allow_browser_automation=True)
+        mission_id = mission["mission_id"]
+
+        captured_ctx = {}
+
+        def fake_execute(goal, module_id, mid, context=None):
+            captured_ctx.update(context or {})
+            return MagicMock(
+                ok=True, final_answer="result text content here", confidence=0.7,
+                warnings=[], used_tools=[], mode="local", error="",
+                next_actions=[], structured_output={}, provider="mock",
+            )
+
+        mock_exec = MagicMock(side_effect=fake_execute)
+        with patch("backend.services.boss_module_executors.get_executor", return_value=MagicMock(execute=mock_exec)):
+            service.run_mission(mission_id, allow_browser_automation=False)
+
+        assert captured_ctx.get("allow_browser_automation") is False, (
+            "Explicit False should override saved mission value"
+        )

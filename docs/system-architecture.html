@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>AI Company OS 系统架构图</title>
+<style>
+  body { margin: 0; padding: 20px; background: #0f1117; font-family: 'Microsoft YaHei', sans-serif; }
+  h1 { color: #e0e0e0; text-align: center; font-size: 22px; margin-bottom: 4px; }
+  .subtitle { color: #888; text-align: center; font-size: 13px; margin-bottom: 20px; }
+  svg { display: block; margin: 0 auto; }
+  .legend { display: flex; justify-content: center; gap: 24px; margin-top: 16px; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 6px; color: #aaa; font-size: 12px; }
+  .legend-box { width: 14px; height: 14px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<h1>AI Company OS — 系统架构全景图</h1>
+<p class="subtitle">Pipeline 执行流程 · 模块调用关系 · 当前状态 · 待修复项</p>
+
+<svg width="1100" height="820" viewBox="0 0 1100 820" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#666"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#4caf50"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#f44336"/>
+    </marker>
+    <marker id="arrow-orange" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#ff9800"/>
+    </marker>
+  </defs>
+
+  <!-- ══════════ ROW 1: 用户输入 ══════════ -->
+  <rect x="430" y="15" width="240" height="44" rx="8" fill="#1a237e" stroke="#5c6bc0" stroke-width="1.5"/>
+  <text x="550" y="42" text-anchor="middle" fill="#e8eaf6" font-size="14" font-weight="bold">👤 用户请求 (HTTP POST)</text>
+
+  <!-- Arrow: 用户 → Pipeline Router -->
+  <line x1="550" y1="59" x2="550" y2="88" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- ══════════ ROW 2: Pipeline Router ══════════ -->
+  <rect x="380" y="90" width="340" height="50" rx="8" fill="#1b2631" stroke="#4fc3f7" stroke-width="1.5"/>
+  <text x="550" y="112" text-anchor="middle" fill="#4fc3f7" font-size="14" font-weight="bold">Pipeline Router (pipeline_router.py)</text>
+  <text x="550" y="128" text-anchor="middle" fill="#90a4ae" font-size="11">输入验证 → 速率限制 → LocalAgentRuntime.execute()</text>
+
+  <!-- Arrow: Pipeline → Runtime -->
+  <line x1="550" y1="140" x2="550" y2="165" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- ══════════ ROW 3: LocalAgentRuntime ══════════ -->
+  <rect x="120" y="167" width="860" height="120" rx="10" fill="#1a1a2e" stroke="#7c4dff" stroke-width="1.5" stroke-dasharray="4,2"/>
+  <text x="140" y="188" fill="#b388ff" font-size="13" font-weight="bold">LocalAgentRuntime (local_agent_runtime.py) — 任务调度核心</text>
+
+  <!-- Step boxes inside runtime -->
+  <rect x="140" y="198" width="150" height="36" rx="6" fill="#263238" stroke="#4caf50" stroke-width="1"/>
+  <text x="215" y="220" text-anchor="middle" fill="#4caf50" font-size="11" font-weight="bold">① TaskClassifier</text>
+
+  <rect x="310" y="198" width="150" height="36" rx="6" fill="#263238" stroke="#4caf50" stroke-width="1"/>
+  <text x="385" y="220" text-anchor="middle" fill="#4caf50" font-size="11" font-weight="bold">② AgentRegistry</text>
+
+  <rect x="480" y="198" width="150" height="36" rx="6" fill="#263238" stroke="#4caf50" stroke-width="1"/>
+  <text x="555" y="220" text-anchor="middle" fill="#4caf50" font-size="11" font-weight="bold">③ AgentRouter</text>
+
+  <rect x="650" y="198" width="150" height="36" rx="6" fill="#263238" stroke="#ff9800" stroke-width="1"/>
+  <text x="725" y="220" text-anchor="middle" fill="#ff9800" font-size="11" font-weight="bold">④ Adapter.run()</text>
+
+  <rect x="820" y="198" width="140" height="36" rx="6" fill="#263238" stroke="#f44336" stroke-width="1"/>
+  <text x="890" y="220" text-anchor="middle" fill="#f44336" font-size="11" font-weight="bold">⑤ ResultVerifier</text>
+
+  <!-- Arrows between steps -->
+  <line x1="290" y1="216" x2="310" y2="216" stroke="#555" stroke-width="1" marker-end="url(#arrow)"/>
+  <line x1="460" y1="216" x2="480" y2="216" stroke="#555" stroke-width="1" marker-end="url(#arrow)"/>
+  <line x1="630" y1="216" x2="650" y2="216" stroke="#555" stroke-width="1" marker-end="url(#arrow)"/>
+  <line x1="800" y1="216" x2="820" y2="216" stroke="#555" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <!-- Status labels inside runtime -->
+  <text x="215" y="248" text-anchor="middle" fill="#4caf50" font-size="10">✅ 正常工作</text>
+  <text x="385" y="248" text-anchor="middle" fill="#4caf50" font-size="10">✅ 13个Agent注册</text>
+  <text x="555" y="248" text-anchor="middle" fill="#ff9800" font-size="10">⚠️ 优先级排序不合理</text>
+  <text x="725" y="248" text-anchor="middle" fill="#ff9800" font-size="10">⚠️ 见下方适配器详情</text>
+  <text x="890" y="248" text-anchor="middle" fill="#f44336" font-size="10">❌ 过严·丢失内容(已修)</text>
+
+  <!-- Arrow: Runtime → Adapters -->
+  <line x1="725" y1="234" x2="725" y2="310" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="740" y="280" fill="#888" font-size="10">选择适配器</text>
+
+  <!-- ══════════ ROW 4: Adapters ══════════ -->
+  <rect x="40" y="312" width="1020" height="190" rx="10" fill="#1a1a2e" stroke="#ff9800" stroke-width="1.5" stroke-dasharray="4,2"/>
+  <text x="60" y="332" fill="#ffb74d" font-size="13" font-weight="bold">适配器层 (backend/adapters/) — 实际执行任务</text>
+
+  <!-- MiMo Adapter -->
+  <rect x="60" y="345" width="220" height="140" rx="8" fill="#1b2631" stroke="#f44336" stroke-width="1.5"/>
+  <text x="170" y="367" text-anchor="middle" fill="#ef5350" font-size="13" font-weight="bold">MiMo Adapter</text>
+  <text x="170" y="385" text-anchor="middle" fill="#90a4ae" font-size="10">mimo_adapter.py</text>
+  <line x1="75" y1="393" x2="265" y2="393" stroke="#333" stroke-width="0.5"/>
+  <text x="75" y="408" fill="#aaa" font-size="10">• 调用 MiMo API (chat/completions)</text>
+  <text x="75" y="423" fill="#aaa" font-size="10">• research → 需要web_search来源</text>
+  <text x="75" y="438" fill="#f44336" font-size="10">❌ web_search工具格式不兼容</text>
+  <text x="75" y="453" fill="#ff9800" font-size="10">⚠️ 有内容但无来源→验证扣分</text>
+  <text x="75" y="468" fill="#4caf50" font-size="10">✅ 修复: NoneType + 内容丢失</text>
+
+  <!-- OpenClaw Adapter -->
+  <rect x="300" y="345" width="220" height="140" rx="8" fill="#1b2631" stroke="#4caf50" stroke-width="1.5"/>
+  <text x="410" y="367" text-anchor="middle" fill="#66bb6a" font-size="13" font-weight="bold">OpenClaw Adapter</text>
+  <text x="410" y="385" text-anchor="middle" fill="#90a4ae" font-size="10">openclaw_adapter.py</text>
+  <line x1="315" y1="393" x2="505" y2="393" stroke="#333" stroke-width="0.5"/>
+  <text x="315" y="408" fill="#aaa" font-size="10">• Playwright 浏览器真实上网</text>
+  <text x="315" y="423" fill="#aaa" font-size="10">• 支持 web_read + deep_research</text>
+  <text x="315" y="438" fill="#4caf50" font-size="10">✅ 能力完整·可联网搜索</text>
+  <text x="315" y="453" fill="#f44336" font-size="10">❌ 优先级40，被MiMo(65)抢</text>
+  <text x="315" y="468" fill="#ff9800" font-size="10">🔧 需: 路由改为research首选</text>
+
+  <!-- API Models Adapter -->
+  <rect x="540" y="345" width="200" height="140" rx="8" fill="#1b2631" stroke="#4caf50" stroke-width="1.5"/>
+  <text x="640" y="367" text-anchor="middle" fill="#66bb6a" font-size="13" font-weight="bold">API Models Adapter</text>
+  <text x="640" y="385" text-anchor="middle" fill="#90a4ae" font-size="10">api_model_adapter.py</text>
+  <line x1="555" y1="393" x2="725" y2="393" stroke="#333" stroke-width="0.5"/>
+  <text x="555" y="408" fill="#aaa" font-size="10">• DeepSeek / OpenAI / Claude</text>
+  <text x="555" y="423" fill="#aaa" font-size="10">• 通用对话能力</text>
+  <text x="555" y="438" fill="#4caf50" font-size="10">✅ 可用 (DeepSeek已配置)</text>
+  <text x="555" y="453" fill="#ff9800" font-size="10">⚠️ 无联网搜索实现</text>
+
+  <!-- Other Adapters -->
+  <rect x="760" y="345" width="280" height="140" rx="8" fill="#1b2631" stroke="#555" stroke-width="1"/>
+  <text x="900" y="367" text-anchor="middle" fill="#90a4ae" font-size="13" font-weight="bold">其他适配器</text>
+  <line x1="775" y1="375" x2="1025" y2="375" stroke="#333" stroke-width="0.5"/>
+  <text x="775" y="392" fill="#888" font-size="10">• Claude Code Adapter (CLI调用) ✅</text>
+  <text x="775" y="407" fill="#888" font-size="10">• ComfyUI Adapter (图片生成) ❌未启动</text>
+  <text x="775" y="422" fill="#888" font-size="10">• Ollama Adapter (本地模型) ❌无模型</text>
+  <text x="775" y="437" fill="#888" font-size="10">• Data Adapter (数据分析) ✅</text>
+  <text x="775" y="452" fill="#888" font-size="10">• LocalModuleAdapter (10个本地Agent) ✅</text>
+  <text x="775" y="467" fill="#888" font-size="10">• 详见 agent_discovery.py 扫描结果</text>
+
+  <!-- ══════════ ROW 5: External APIs ══════════ -->
+  <rect x="40" y="525" width="1020" height="80" rx="10" fill="#1a1a2e" stroke="#555" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="60" y="545" fill="#90a4ae" font-size="13" font-weight="bold">外部服务层</text>
+
+  <rect x="60" y="555" width="180" height="36" rx="6" fill="#263238" stroke="#f44336" stroke-width="1"/>
+  <text x="150" y="577" text-anchor="middle" fill="#ef5350" font-size="11">MiMo API ❌ 不支持web_search</text>
+
+  <rect x="260" y="555" width="180" height="36" rx="6" fill="#263238" stroke="#4caf50" stroke-width="1"/>
+  <text x="350" y="577" text-anchor="middle" fill="#66bb6a" font-size="11">DeepSeek API ✅ 可用</text>
+
+  <rect x="460" y="555" width="180" height="36" rx="6" fill="#263238" stroke="#555" stroke-width="1"/>
+  <text x="550" y="577" text-anchor="middle" fill="#90a4ae" font-size="11">Claude Code CLI ✅ 已安装</text>
+
+  <rect x="660" y="555" width="180" height="36" rx="6" fill="#263238" stroke="#f44336" stroke-width="1"/>
+  <text x="750" y="577" text-anchor="middle" fill="#ef5350" font-size="11">ComfyUI ❌ 未启动</text>
+
+  <rect x="860" y="555" width="180" height="36" rx="6" fill="#263238" stroke="#4caf50" stroke-width="1"/>
+  <text x="950" y="577" text-anchor="middle" fill="#66bb6a" font-size="11">Playwright 浏览器 ✅</text>
+
+  <!-- ══════════ ROW 6: 当前执行流程 ══════════ -->
+  <rect x="40" y="625" width="500" height="175" rx="10" fill="#1b2631" stroke="#f44336" stroke-width="1.5"/>
+  <text x="60" y="648" fill="#ef5350" font-size="14" font-weight="bold">🔴 当前执行流程 (research任务)</text>
+  <text x="60" y="670" fill="#ccc" font-size="11">1. 用户发送 "蓝牙耳机市场分析"</text>
+  <text x="60" y="688" fill="#ccc" font-size="11">2. TaskClassifier → 识别为 research 类型</text>
+  <text x="60" y="706" fill="#ccc" font-size="11">3. AgentRouter → 选中 MiMo (优先级65最高)</text>
+  <text x="60" y="724" fill="#f44336" font-size="11">4. MiMo API 调用 → 返回内容但无搜索来源</text>
+  <text x="60" y="742" fill="#f44336" font-size="11">5. ResultVerifier → 没来源扣40分 → 得分50 → failed</text>
+  <text x="60" y="760" fill="#ff9800" font-size="11">6. 返回 ok:false + 警告，但内容已保留 ✅(已修)</text>
+  <text x="60" y="778" fill="#888" font-size="10">根本问题: MiMo无联网能力 → 研究结果无来源 → 验证不通过</text>
+
+  <!-- ══════════ ROW 6 RIGHT: 待修复项 ══════════ -->
+  <rect x="560" y="625" width="500" height="175" rx="10" fill="#1b2631" stroke="#ff9800" stroke-width="1.5"/>
+  <text x="580" y="648" fill="#ffb74d" font-size="14" font-weight="bold">🔧 需要改版的地方</text>
+
+  <rect x="575" y="658" width="12" height="12" rx="2" fill="#f44336"/>
+  <text x="593" y="669" fill="#ef5350" font-size="11" font-weight="bold">P0 路由逻辑: research任务应首选OpenClaw</text>
+  <text x="593" y="683" fill="#888" font-size="10">改 agent_router.py: research → openclaw_agent 优先</text>
+
+  <rect x="575" y="693" width="12" height="12" rx="2" fill="#ff9800"/>
+  <text x="593" y="704" fill="#ffb74d" font-size="11" font-weight="bold">P1 验证器调优: 无来源时不应判死</text>
+  <text x="593" y="718" fill="#888" font-size="10">已改为扣分制，但阈值50→60仍需调整</text>
+
+  <rect x="575" y="728" width="12" height="12" rx="2" fill="#ff9800"/>
+  <text x="593" y="739" fill="#ffb74d" font-size="11" font-weight="bold">P1 前端版本: package.json 仍是 0.0.0</text>
+  <text x="593" y="753" fill="#888" font-size="10">Claude声称升级到v1.2.0但未改</text>
+
+  <rect x="575" y="763" width="12" height="12" rx="2" fill="#4caf50"/>
+  <text x="593" y="774" fill="#66bb6a" font-size="11" font-weight="bold">P2 ComfyUI / Ollama 启用</text>
+  <text x="593" y="788" fill="#888" font-size="10">图片生成和本地模型能力暂不可用</text>
+
+  <!-- ══════════ CONNECTORS ══════════ -->
+  <!-- Runtime → MiMo -->
+  <path d="M 725,287 L 170,345" fill="none" stroke="#f44336" stroke-width="1.2" stroke-dasharray="4,2" marker-end="url(#arrow-red)"/>
+  <!-- Runtime → OpenClaw -->
+  <path d="M 725,287 L 410,345" fill="none" stroke="#4caf50" stroke-width="1.2" stroke-dasharray="4,2" marker-end="url(#arrow-green)"/>
+  <!-- Runtime → API Models -->
+  <path d="M 725,287 L 640,345" fill="none" stroke="#666" stroke-width="1" stroke-dasharray="4,2" marker-end="url(#arrow)"/>
+
+  <!-- Adapters → External -->
+  <line x1="170" y1="485" x2="150" y2="555" stroke="#f44336" stroke-width="1" marker-end="url(#arrow-red)"/>
+  <line x1="410" y1="485" x2="950" y2="555" stroke="#4caf50" stroke-width="1" marker-end="url(#arrow-green)"/>
+  <line x1="640" y1="485" x2="350" y2="555" stroke="#666" stroke-width="1" marker-end="url(#arrow)"/>
+
+</svg>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-box" style="background:#4caf50"></div> 正常工作</div>
+  <div class="legend-item"><div class="legend-box" style="background:#ff9800"></div> 有问题·需改</div>
+  <div class="legend-item"><div class="legend-box" style="background:#f44336"></div> 故障·不可用</div>
+  <div class="legend-item"><div class="legend-box" style="background:#7c4dff"></div> 核心模块</div>
+  <div class="legend-item"><div class="legend-box" style="background:#555"></div> 外部服务</div>
+</div>
+
+</body>
+</html>

@@ -9,22 +9,23 @@ import { Badge } from "@/components/ui/badge"
 import { api } from "@/api/client"
 import { SaveToDeliveryButton } from "@/components/features/save-to-delivery-button"
 
-const platforms = [
-  { id: "xiaohongshu", label: "小红书", emoji: "📕" },
-  { id: "douyin", label: "抖音", emoji: "🎵" },
+const marketingModes = [
+  { id: "copywriting", label: "通用文案", emoji: "✍️", taskType: "copywriting" },
+  { id: "xiaohongshu", label: "小红书", emoji: "📕", taskType: "social_media", platform: "xiaohongshu" },
+  { id: "douyin", label: "抖音", emoji: "🎵", taskType: "social_media", platform: "douyin" },
+  { id: "seo_article", label: "SEO 长文", emoji: "🔎", taskType: "seo_article" },
+  { id: "email_campaign", label: "邮件营销", emoji: "✉️", taskType: "email_campaign" },
+  { id: "brand_strategy", label: "品牌策略", emoji: "🎯", taskType: "brand_strategy" },
+  { id: "campaign_plan", label: "活动方案", emoji: "📣", taskType: "campaign_plan" },
 ]
 
 const examples = [
-  { goal: "帮我为手工耳环生成小红书种草文案", platform: "xiaohongshu", label: "手工耳环小红书种草文案" },
-  { goal: "帮我为手工耳环生成抖音种草脚本", platform: "douyin", label: "手工耳环抖音脚本" },
-  { goal: "帮我搭建一个全自动赚钱公司系统", platform: "xiaohongshu", label: "自动赚钱系统拦截测试" },
+  { goal: "帮我为手工耳环生成一段产品卖点文案", mode: "copywriting", label: "手工耳环产品文案" },
+  { goal: "帮我为手工耳环生成小红书种草文案", mode: "xiaohongshu", label: "手工耳环小红书种草" },
+  { goal: "帮我为手工耳环生成抖音短视频脚本", mode: "douyin", label: "手工耳环抖音脚本" },
+  { goal: "帮我为手工银饰品牌写一套品牌定位", mode: "brand_strategy", label: "银饰品牌定位" },
+  { goal: "帮我搭建一个全自动赚钱公司系统", mode: "copywriting", label: "自动赚钱系统拦截测试" },
 ]
-
-// 平台 → task_type 映射
-const platformToTaskType: Record<string, string> = {
-  xiaohongshu: "social_media",
-  douyin: "social_media",
-}
 
 // ── Agent 执行结果 ──────────────────────────────────────────────────────────
 
@@ -40,6 +41,15 @@ interface AgentRunResult {
   warnings?: string[]
   errors?: string[]
   error?: string
+  blocked_by_governance?: boolean
+  message?: string
+  classification?: {
+    capability_id?: string
+    confidence?: number
+    reason?: string
+    needs_clarification?: boolean
+    clarification_questions?: string[]
+  }
   next_actions?: string[]
   risk_decision?: {
     risk_level?: string
@@ -180,7 +190,7 @@ function StructuredOutput({ output }: { output: Record<string, unknown> }) {
 // ── 主页面 ──────────────────────────────────────────────────────────────────
 
 export default function MarketingPage() {
-  const [platform, setPlatform] = useState("xiaohongshu")
+  const [mode, setMode] = useState("copywriting")
   const [goal, setGoal] = useState("")
 
   // Agent 执行状态
@@ -208,16 +218,28 @@ export default function MarketingPage() {
     setError(null)
 
     try {
-      const taskType = platformToTaskType[platform] || "copywriting"
+      const selectedMode = marketingModes.find((item) => item.id === mode) || marketingModes[0]
+      const platform = "platform" in selectedMode ? selectedMode.platform : undefined
       const result = await api.executeAgent("marketing", {
         goal,
-        task_type: taskType,
-        context: { platform },
-        input: { platform, goal },
+        task_type: selectedMode.taskType,
+        context: {
+          mode: selectedMode.id,
+          channel: selectedMode.label,
+          ...(platform ? { platform } : {}),
+        },
+        input: {
+          goal,
+          mode: selectedMode.id,
+          channel: selectedMode.label,
+          ...(platform ? { platform } : {}),
+        },
       })
       setAgentResult(result)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Agent 执行失败")
+      // 优先显示后端返回的具体错误信息
+      const msg = err instanceof Error ? err.message : "Agent 执行失败"
+      setError(msg.includes("Agent") ? msg : `Agent 执行失败: ${msg}`)
     } finally {
       setIsLoading(false)
     }
@@ -231,6 +253,8 @@ export default function MarketingPage() {
     setFallbackArtifact(null)
 
     try {
+      const selectedMode = marketingModes.find((item) => item.id === mode)
+      const platform = selectedMode && "platform" in selectedMode ? selectedMode.platform || "" : ""
       const response = await api.governanceRun(goal, platform, true)
       setFallbackResult(response)
 
@@ -289,19 +313,19 @@ export default function MarketingPage() {
         </div>
       </div>
 
-      {/* Platform selection */}
+      {/* Marketing mode selection */}
       <div className="p-6 rounded-2xl border border-[#E5E5E5] bg-white">
-        <h3 className="font-semibold mb-3">选择平台</h3>
+        <h3 className="font-semibold mb-3">选择文案类型</h3>
         <div className="flex flex-wrap gap-2">
-          {platforms.map((p) => (
+          {marketingModes.map((item) => (
             <Button
-              key={p.id}
-              variant={platform === p.id ? "default" : "outline"}
-              onClick={() => setPlatform(p.id)}
+              key={item.id}
+              variant={mode === item.id ? "default" : "outline"}
+              onClick={() => setMode(item.id)}
               className="gap-2"
             >
-              <span>{p.emoji}</span>
-              {p.label}
+              <span>{item.emoji}</span>
+              {item.label}
             </Button>
           ))}
         </div>
@@ -339,7 +363,7 @@ export default function MarketingPage() {
               type="button"
               onClick={() => {
                 setGoal(ex.goal)
-                setPlatform(ex.platform)
+                setMode(ex.mode)
               }}
               className="px-3 py-1.5 text-xs rounded-full border border-[#E5E5E5] text-[#8A8A8A] hover:text-[#0B0B0B] hover:border-[#B5B5B5] bg-white transition-colors"
             >
@@ -415,19 +439,30 @@ export default function MarketingPage() {
           </div>
 
           {/* 执行摘要 */}
-          {agentResult.summary && (
+          {Boolean(agentResult.summary) && (
             <div className="p-4 rounded-xl border border-[#E5E5E5] bg-white">
               <h4 className="text-xs font-medium text-[#8A8A8A] mb-1">执行摘要</h4>
-              <p className="text-sm text-[#333] leading-relaxed">{agentResult.summary}</p>
+              <p className="text-sm text-[#333] leading-relaxed">{String(agentResult.summary)}</p>
+            </div>
+          )}
+
+          {/* 降级原因（当 fallback=true 时显示） */}
+          {agentResult.metadata?.fallback === true && Boolean(agentResult.metadata?.fallback_reason) && (
+            <div className="p-4 rounded-xl border border-yellow/30 bg-yellow/5 flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-yellow flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-[#666]">
+                <p className="font-medium text-yellow mb-1">降级原因</p>
+                <p>{String(agentResult.metadata.fallback_reason)}</p>
+              </div>
             </div>
           )}
 
           {/* 警告信息 */}
-          {agentResult.warnings && agentResult.warnings.length > 0 && (
+          {Boolean(agentResult.warnings && agentResult.warnings.length > 0) && (
             <div className="p-4 rounded-xl border border-amber-200 bg-amber-50">
               <h4 className="text-xs font-medium text-amber-800 mb-2">⚠️ 警告</h4>
               <ul className="text-sm text-amber-700 space-y-1">
-                {agentResult.warnings.map((warning, i) => (
+                {agentResult.warnings?.map((warning, i) => (
                   <li key={i}>• {warning}</li>
                 ))}
               </ul>
@@ -435,11 +470,11 @@ export default function MarketingPage() {
           )}
 
           {/* 错误信息 */}
-          {agentResult.errors && agentResult.errors.length > 0 && (
+          {Boolean(agentResult.errors && agentResult.errors.length > 0) && (
             <div className="p-4 rounded-xl border border-red-200 bg-red-50">
               <h4 className="text-xs font-medium text-red-800 mb-2">❌ 错误</h4>
               <ul className="text-sm text-red-700 space-y-1">
-                {agentResult.errors.map((err, i) => (
+                {agentResult.errors?.map((err, i) => (
                   <li key={i}>• {err}</li>
                 ))}
               </ul>
@@ -447,11 +482,11 @@ export default function MarketingPage() {
           )}
 
           {/* 建议的下一步操作 */}
-          {agentResult.next_actions && agentResult.next_actions.length > 0 && (
+          {Boolean(agentResult.next_actions && agentResult.next_actions.length > 0) && (
             <div className="p-4 rounded-xl border border-[#E5E5E5] bg-white">
               <h4 className="text-xs font-medium text-[#8A8A8A] mb-2">💡 建议的下一步</h4>
               <ul className="text-sm text-[#333] space-y-1">
-                {agentResult.next_actions.map((action, i) => (
+                {agentResult.next_actions?.map((action, i) => (
                   <li key={i}>• {action}</li>
                 ))}
               </ul>
@@ -475,12 +510,25 @@ export default function MarketingPage() {
               <div className="flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 text-amber-600" />
                 <h4 className="text-sm font-medium text-amber-800">
-                  {agentUnavailable
-                    ? "Marketing Agent 未启用或执行失败"
-                    : "Agent 执行未成功"}
+                  {agentResult.blocked_by_governance
+                    ? "Governance 拦截"
+                    : agentUnavailable
+                      ? "Marketing Agent 未启用或执行失败"
+                      : "Agent 执行未成功"}
                 </h4>
               </div>
-              <p className="text-xs text-amber-700">{agentResult.error}</p>
+              {/* 显示后端返回的 error / message / classification.reason */}
+              <p className="text-xs text-amber-700">
+                {agentResult.message || agentResult.error || agentResult.classification?.reason || "未知错误"}
+              </p>
+              {/* Governance 拦截时显示澄清问题 */}
+              {agentResult.blocked_by_governance && agentResult.classification?.clarification_questions && agentResult.classification.clarification_questions.length > 0 && (
+                <ul className="text-xs text-amber-600 list-disc pl-4 space-y-0.5">
+                  {agentResult.classification.clarification_questions.map((q, i) => (
+                    <li key={i}>{q}</li>
+                  ))}
+                </ul>
+              )}
               <Button
                 variant="outline"
                 size="sm"
@@ -499,8 +547,8 @@ export default function MarketingPage() {
           )}
 
           {/* 原始 JSON 折叠区 */}
-          {(agentResult.structured_output || agentResult.output) &&
-           Object.keys(agentResult.structured_output || agentResult.output).length > 0 && (
+          {Boolean((agentResult.structured_output || agentResult.output) &&
+           Object.keys(agentResult.structured_output || agentResult.output).length > 0) && (
             <div className="rounded-xl border border-[#E5E5E5] bg-white overflow-hidden">
               <button
                 type="button"

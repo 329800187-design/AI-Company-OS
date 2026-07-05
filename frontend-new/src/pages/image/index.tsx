@@ -99,35 +99,35 @@ function isAgentUnavailable(result: AgentRunResult): boolean {
 function StructuredOutput({ output }: { output: Record<string, unknown> }) {
   const sections: { label: string; value: unknown; isList?: boolean }[] = []
 
-  // 增强后的提示词
-  if (output.enhanced_prompt) sections.push({ label: "增强提示词", value: output.enhanced_prompt })
+  // 图片提示词（后端字段名 image_prompt）
+  if (output.image_prompt) sections.push({ label: "图片提示词", value: output.image_prompt })
   // 负面提示词
   if (output.negative_prompt) sections.push({ label: "负面提示词", value: output.negative_prompt })
   // 风格
   if (output.style) sections.push({ label: "风格", value: output.style })
   // 宽高比
   if (output.aspect_ratio) sections.push({ label: "宽高比", value: output.aspect_ratio })
-  // 模型建议
-  if (output.model_suggestion) sections.push({ label: "推荐模型", value: output.model_suggestion })
-  // 图片 URL（如果有）
-  if (Array.isArray(output.images) && output.images.length > 0) {
-    sections.push({ label: "生成的图片", value: output.images, isList: true })
+  // 主体
+  if (output.subject) sections.push({ label: "主体", value: output.subject })
+  // 背景
+  if (output.background) sections.push({ label: "背景", value: output.background })
+  // 构图
+  if (output.composition) sections.push({ label: "构图", value: output.composition })
+  // 光线
+  if (output.lighting) sections.push({ label: "光线", value: output.lighting })
+  // 色彩方案
+  if (output.color_palette) sections.push({ label: "色彩方案", value: output.color_palette })
+  // 使用建议
+  if (Array.isArray(output.usage_suggestions) && output.usage_suggestions.length > 0) {
+    sections.push({ label: "使用建议", value: output.usage_suggestions, isList: true })
   }
-  // 本地路径
-  if (output.local_path) sections.push({ label: "本地保存路径", value: output.local_path })
-  // 输出目录
-  if (output.output_dir) sections.push({ label: "输出目录", value: output.output_dir })
-  // 使用的 prompt
-  if (output.prompt_used && output.prompt_used !== output.enhanced_prompt) {
-    sections.push({ label: "实际使用的提示词", value: output.prompt_used })
+  // 变体
+  if (Array.isArray(output.variations) && output.variations.length > 0) {
+    sections.push({ label: "变体方案", value: output.variations, isList: true })
   }
-  // 模型
-  if (output.model) sections.push({ label: "使用模型", value: output.model })
-  // 注意事项
-  if (output.note) sections.push({ label: "⚠️ 注意", value: output.note })
-  // 修复建议
-  if (Array.isArray(output.fix_hints) && output.fix_hints.length > 0) {
-    sections.push({ label: "修复建议", value: output.fix_hints, isList: true })
+  // 限制说明
+  if (Array.isArray(output.limitations) && output.limitations.length > 0) {
+    sections.push({ label: "限制说明", value: output.limitations, isList: true })
   }
 
   if (sections.length === 0) {
@@ -195,6 +195,8 @@ export default function ImagePage() {
   const [copied, setCopied] = useState(false)
   const [showResult, setShowResult] = useState(false)
 
+  const isFallback = agentResult?.metadata?.fallback === true
+
   // ── Agent 优先执行 ──────────────────────────────────────────────────────
 
   const handleGenerate = async () => {
@@ -259,12 +261,13 @@ export default function ImagePage() {
     if (agentResult?.ok) {
       const o = agentResult.structured_output || agentResult.output
       const parts: string[] = []
-      if (o.enhanced_prompt) parts.push(String(o.enhanced_prompt))
+      if (o.image_prompt) parts.push(String(o.image_prompt))
       if (o.negative_prompt) parts.push(`Negative: ${String(o.negative_prompt)}`)
       if (o.style) parts.push(`Style: ${String(o.style)}`)
       if (o.aspect_ratio) parts.push(`Aspect: ${String(o.aspect_ratio)}`)
-      if (o.note) parts.push(String(o.note))
-      if (o.fix_hints) parts.push(String(o.fix_hints))
+      if (o.composition) parts.push(`Composition: ${String(o.composition)}`)
+      if (o.lighting) parts.push(`Lighting: ${String(o.lighting)}`)
+      if (o.color_palette) parts.push(`Color: ${String(o.color_palette)}`)
       return parts.join("\n\n")
     }
     if (fallbackArtifact?.content) return fallbackArtifact.content
@@ -406,19 +409,30 @@ export default function ImagePage() {
           </div>
 
           {/* 执行摘要 */}
-          {agentResult.summary && (
+          {Boolean(agentResult.summary) && (
             <div className="p-4 rounded-xl border border-[#E5E5E5] bg-white">
               <h4 className="text-xs font-medium text-[#8A8A8A] mb-1">执行摘要</h4>
-              <p className="text-sm text-[#333] leading-relaxed">{agentResult.summary}</p>
+              <p className="text-sm text-[#333] leading-relaxed">{String(agentResult.summary)}</p>
+            </div>
+          )}
+
+          {/* 降级原因（当 fallback=true 时显示） */}
+          {isFallback && Boolean(agentResult.metadata?.fallback_reason) && (
+            <div className="p-4 rounded-xl border border-yellow/30 bg-yellow/5 flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-yellow flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-[#666]">
+                <p className="font-medium text-yellow mb-1">降级原因</p>
+                <p>{String(agentResult.metadata?.fallback_reason)}</p>
+              </div>
             </div>
           )}
 
           {/* 警告信息 */}
-          {agentResult.warnings && agentResult.warnings.length > 0 && (
+          {Boolean(agentResult.warnings && agentResult.warnings.length > 0) && (
             <div className="p-4 rounded-xl border border-amber-200 bg-amber-50">
               <h4 className="text-xs font-medium text-amber-800 mb-2">⚠️ 警告</h4>
               <ul className="text-sm text-amber-700 space-y-1">
-                {agentResult.warnings.map((warning, i) => (
+                {agentResult.warnings?.map((warning, i) => (
                   <li key={i}>• {warning}</li>
                 ))}
               </ul>
@@ -426,11 +440,11 @@ export default function ImagePage() {
           )}
 
           {/* 错误信息 */}
-          {agentResult.errors && agentResult.errors.length > 0 && (
+          {Boolean(agentResult.errors && agentResult.errors.length > 0) && (
             <div className="p-4 rounded-xl border border-red-200 bg-red-50">
               <h4 className="text-xs font-medium text-red-800 mb-2">❌ 错误</h4>
               <ul className="text-sm text-red-700 space-y-1">
-                {agentResult.errors.map((err, i) => (
+                {agentResult.errors?.map((err, i) => (
                   <li key={i}>• {err}</li>
                 ))}
               </ul>
@@ -438,11 +452,11 @@ export default function ImagePage() {
           )}
 
           {/* 建议的下一步操作 */}
-          {agentResult.next_actions && agentResult.next_actions.length > 0 && (
+          {Boolean(agentResult.next_actions && agentResult.next_actions.length > 0) && (
             <div className="p-4 rounded-xl border border-[#E5E5E5] bg-white">
               <h4 className="text-xs font-medium text-[#8A8A8A] mb-2">💡 建议的下一步</h4>
               <ul className="text-sm text-[#333] space-y-1">
-                {agentResult.next_actions.map((action, i) => (
+                {agentResult.next_actions?.map((action, i) => (
                   <li key={i}>• {action}</li>
                 ))}
               </ul>
@@ -450,7 +464,7 @@ export default function ImagePage() {
           )}
 
           {/* Agent 成功 → 结构化展示 */}
-          {agentResult.ok && (agentResult.structured_output || agentResult.output) && (
+          {agentResult.ok && Boolean(agentResult.structured_output || agentResult.output) && (
             <div className="p-5 rounded-xl border border-[#E5E5E5] bg-white">
               <div className="flex items-center gap-2 mb-4">
                 <Sparkles className="w-4 h-4 text-violet-500" />
@@ -490,8 +504,8 @@ export default function ImagePage() {
           )}
 
           {/* 原始 JSON 折叠区 */}
-          {(agentResult.structured_output || agentResult.output) &&
-           Object.keys(agentResult.structured_output || agentResult.output).length > 0 && (
+          {Boolean((agentResult.structured_output || agentResult.output) &&
+           Object.keys(agentResult.structured_output || agentResult.output).length > 0) && (
             <div className="rounded-xl border border-[#E5E5E5] bg-white overflow-hidden">
               <button
                 type="button"

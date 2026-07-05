@@ -166,9 +166,29 @@ def delete_plugin(plugin_id: str):
 @router.post("/{plugin_id}/test", summary="测试插件")
 def test_plugin(plugin_id: str, task: Dict[str, Any] = None):
     """测试运行指定插件"""
+    # Governance Guard: 从 task payload 提取 goal 并检查
+    from backend.governance.guard import guard_payload, governance_block_response, extract_goal_from_payload
+    from backend.governance.classifier import ClassificationResult
+
+    check_payload = task if task else {}
+    blocked, classification = guard_payload(check_payload)
+    if blocked:
+        return governance_block_response(classification)
+
+    # 插件是任意代码执行入口，不允许无目标执行
+    if not task or not extract_goal_from_payload(task):
+        no_goal_class = ClassificationResult(
+            ok=False,
+            confidence=0.0,
+            reason="插件测试必须提供明确的用户意图（goal/prompt/message/command）",
+            needs_clarification=True,
+            clarification_questions=["请提供 goal 或 prompt 描述你希望插件执行的测试任务"],
+        )
+        return governance_block_response(no_goal_class)
+
     from core.plugin_loader import get_plugin_loader
     loader = get_plugin_loader()
-    result = loader.run(plugin_id, task or {"goal": "测试任务"})
+    result = loader.run(plugin_id, task)
     return result
 
 

@@ -11,19 +11,41 @@ from typing import Any, Dict, List, Optional
 from backend.database.database import SessionDB, StepDB, TaskDB
 from backend.config import get_ai_config, AI_PROVIDER, get_brain_manager
 from backend.services.usage_stats import record_usage
-from agents.ceo_agent.agent import CEOAgent
-from agents.codex_agent.agent import CodexAgent
-from agents.qa_agent.agent import QAAgent
-from agents.cto_agent.agent import CTOAgent
-from agents.system_agent.agent import SystemAgent
-from agents.openclaw_agent.agent import OpenClawAgent
-from agents.image_agent.agent import ImageAgent
-from agents.marketing_agent.agent import MarketingAgent
-from agents.video_agent.agent import VideoAgent
-from agents.data_agent.agent import DataAgent
+from backend.services.agent_loader import load_agent, load_agent_instance
 from backend.ai_registry.registry import get_registry
 from core.skills.skill_manager import get_skill_manager
 from core.memory.memory_store import get_memory_store
+from backend.logger import get_logger
+
+_cmd_logger = get_logger()
+
+
+# ── Agent 懒加载 ──────────────────────────────────────────
+
+_agent_cache: Dict[str, Any] = {}
+
+def _get_agent(name: str, **kwargs):
+    """延迟加载 agent"""
+    cache_key = f"{name}_{kwargs}"
+    if cache_key not in _agent_cache:
+        agent_map = {
+            "ceo": ("agents.ceo_agent.agent", "CEOAgent"),
+            "codex": ("agents.codex_agent.agent", "CodexAgent"),
+            "qa": ("agents.qa_agent.agent", "QAAgent"),
+            "cto": ("agents.cto_agent.agent", "CTOAgent"),
+            "system": ("agents.system_agent.agent", "SystemAgent"),
+            "openclaw": ("agents.openclaw_agent.agent", "OpenClawAgent"),
+            "image": ("agents.image_agent.agent", "ImageAgent"),
+            "marketing": ("agents.marketing_agent.agent", "MarketingAgent"),
+            "video": ("agents.video_agent.agent", "VideoAgent"),
+            "data": ("agents.data_agent.agent", "DataAgent"),
+        }
+        if name in agent_map:
+            entrypoint, class_name = agent_map[name]
+            _agent_cache[cache_key] = load_agent_instance(entrypoint, class_name, **kwargs)
+        else:
+            _agent_cache[cache_key] = None
+    return _agent_cache[cache_key]
 
 
 # ── AI 客户端（新版本使用 Brain Manager）──────────────────────
@@ -157,7 +179,60 @@ UNIFIED_SYSTEM_PROMPT = """你是 AI Company OS 的指挥官。你可以: 拆解
 
 Agent分配规则: codex→代码任务, openclaw→需URL的网页任务, system→命令行/文件操作, cto→代码审查/架构, marketing→文案/SEO, image→图片, video→视频脚本, qa→验收, cc-switch→通用分析/翻译/创作, kimi→长文档/深度阅读, chatgpt→对话/图片
 
-输出格式: 拆解时只输出JSON数组[{step,description,agent,task_type,details:{}]}, 决策时输出{decision,reason}, 摘要时输出中文文本。"""
+⚠️ 依赖声明规则（v1.5.1 新增）:
+- 如果一个步骤需要另一个步骤的输出，必须在 details 中声明 depends_on_step（步骤编号）。
+- 例如: "分析竞品数据" 依赖 "抓取竞品网页" → depends_on_step: 1
+- 无依赖的步骤不用声明。
+- 有依赖的步骤会在前置步骤完成后才执行，并自动注入前置步骤的输出。
+
+输出格式: 拆解时只输出JSON数组[{step,description,agent,task_type,details:{depends_on_step?}}], 决策时输出{decision,reason}, 摘要时输出中文文本。"""
+
+
+def _topological_sort_steps(steps: List[Dict]) -> List[Dict]:
+    """拓扑排序：将有 depends_on_step 声明的步骤排到其依赖之后。
+    
+    例如：步骤 2 的 details.depends_on_step = 1 → 步骤 2 一定在步骤 1 之后执行。
+    无依赖声明的步骤保持原序。
+    如果有循环依赖，降级为原序（不崩溃）。
+    """
+    if not steps:
+        return steps
+    
+    # 分离有依赖和无依赖的步骤
+    independent = []
+    dependent_map: Dict[int, Dict] = {}  # step_number → step
+    
+    for s in steps:
+        details = s.get("details", {})
+        if isinstance(details, dict) and details.get("depends_on_step"):
+            dependent_map[s["step"]] = s
+        else:
+            independent.append(s)
+    
+    if not dependent_map:
+        return steps  # 没有依赖声明，保持原序
+    
+    # 构建结果列表：无依赖步骤在前，有依赖步骤插入到其依赖之后
+    result = list(independent)  # 复制无依赖步骤
+    
+    # 按 depends_on_step 排序有依赖步骤
+    sorted_deps = sorted(dependent_map.items(), key=lambda x: x[0])
+    
+    for step_num, step in sorted_deps:
+        details = step.get("details", {})
+        if not isinstance(details, dict):
+            result.append(step)
+            continue
+        target = details.get("depends_on_step")
+        # 找到结果列表中 depends_on_step 的位置
+        insert_idx = len(result)  # 默认放在末尾
+        for idx, existing in enumerate(result):
+            if existing["step"] == target:
+                insert_idx = idx + 1
+                break
+        result.insert(insert_idx, step)
+    
+    return result
 
 
 class CommanderAgent:
@@ -172,16 +247,18 @@ class CommanderAgent:
         """
         self.progress_callback = progress_callback
 
-        # 实例化所有内置 Agent
+        # v1.5.1: CEO 反问暂存
+        self.pending_clarifying_questions: List[str] = []
+
+        # 实例化所有内置 Agent（使用延迟加载）
         self._agents = {}
-        agent_classes = [
-            CEOAgent, CodexAgent, QAAgent, CTOAgent,
-            OpenClawAgent, SystemAgent, ImageAgent,
-            MarketingAgent, VideoAgent, DataAgent,
-        ]
-        for cls in agent_classes:
-            agent = cls()
-            self._agents[agent.AGENT_ID] = agent
+        agent_names = ["ceo", "codex", "qa", "cto", "openclaw", "system", "image", "marketing", "video", "data"]
+        for name in agent_names:
+            agent = _get_agent(name)
+            if agent is not None:
+                self._agents[agent.AGENT_ID] = agent
+            else:
+                _cmd_logger.warning(f"[Commander] Agent '{name}' unavailable")
 
         # 加载用户插件
         try:
@@ -189,7 +266,7 @@ class CommanderAgent:
             for plugin in discover_plugins():
                 self._agents[plugin.AGENT_ID] = plugin
         except Exception as e:
-            print(f"[Commander] 加载用户插件失败: {e}")
+            _cmd_logger.warning(f"[Commander] 加载用户插件失败: {e}")
 
         # 向后兼容：保留常用引用
         self.ceo = self._agents.get("ceo")
@@ -229,11 +306,20 @@ class CommanderAgent:
             try:
                 ceo_result = future.result(timeout=ceo_timeout)
             except TimeoutError:
-                print(f"[Commander] CEO Agent 拆解超时 ({ceo_timeout}s)，降级到 AI 直拆")
+                _cmd_logger.warning(f"[Commander] CEO Agent 拆解超时 ({ceo_timeout}s)，降级到 AI 直拆")
                 return None
             except Exception as e:
-                print(f"[Commander] CEO Agent 拆解异常: {e}")
+                _cmd_logger.error(f"[Commander] CEO Agent 拆解异常: {e}")
                 return None
+
+        # v1.5.1: 检查 CEO 是否需要反问用户
+        ceo_data = ceo_result.get("data", ceo_result.get("output", {}))
+        clarifying = ceo_data.get("clarifying_questions", [])
+        if clarifying:
+            _cmd_logger.info(f"[Commander] CEO 需要反问用户: {clarifying}")
+            self.pending_clarifying_questions = clarifying
+            return []  # 空列表但不是 None，标记为"有结果但不是步骤"
+
         tasks = ceo_result.get("output", {}).get("created_tasks", [])
         if not tasks:
             return None
@@ -277,7 +363,7 @@ class CommanderAgent:
                 })
             return steps
         except Exception as e:
-            print(f"[Commander] 直接 AI 调用失败: {e}")
+            _cmd_logger.error(f"[Commander] 直接 AI 调用失败: {e}")
             return None
 
     def decompose_goal(self, goal: str, session_id: str) -> List[Dict]:
@@ -300,7 +386,28 @@ class CommanderAgent:
         memory_context = memory.get_context(goal)
 
         # 增强的拆解（带技能+记忆）
+        self.pending_clarifying_questions = []
         steps = self._ceo_decompose(goal, session_id)
+
+        # v1.5.1: CEO 反问 → 直接返回给用户
+        if self.pending_clarifying_questions:
+            questions = self.pending_clarifying_questions
+            self.pending_clarifying_questions = []
+            # 返回一个特殊的"步骤"让 UI 层知道需要反问
+            return [{
+                "step": 0,
+                "description": "目标需要澄清",
+                "agent": "ceo",
+                "task_type": "clarify",
+                "details": {
+                    "clarifying_questions": questions,
+                    "goal": goal,
+                },
+                "ai_answer": f"你的目标「{goal}」不够清晰，我需要确认以下问题后才能拆解：\n\n" +
+                            "\n".join(f"• {q}" for q in questions) +
+                            "\n\n请补充信息后重新提交。",
+            }]
+
         if not steps:
             steps = self._ai_decompose(goal, session_id)
         if not steps:
@@ -308,7 +415,7 @@ class CommanderAgent:
             try:
                 ai_reply = _call_ai_v2(prompt=f"【对话模式】请用中文回答:\n{goal}", temperature=0.7, system=UNIFIED_SYSTEM_PROMPT)
             except Exception as e:
-                print(f"[Commander] 兜底 AI 调用失败: {e}")
+                _cmd_logger.error(f"[Commander] 兜底 AI 调用失败: {e}")
                 ai_reply = f"抱歉，我暂时无法回答这个问题。系统提示：{str(e)[:200]}"
             steps = [{"step": 1, "description": goal, "agent": "cc-switch",
                       "task_type": "chat", "details": {"goal": goal},
@@ -328,6 +435,8 @@ class CommanderAgent:
             return {"status": "error", "message": "Session 不存在"}
 
         all_steps = StepDB.list_by_session(session_id)
+        # v1.5.1: 拓扑排序——有 depends_on_step 的步骤排到其依赖之后
+        all_steps = _topological_sort_steps(all_steps)
         results = []
         retry_counts: Dict[int, int] = {}
 
@@ -426,10 +535,22 @@ class CommanderAgent:
                 elif decision["decision"] == "complete":
                     break
                 elif decision["decision"] == "retry":
-                    retry_counts[step_num] += 1
-                    if retry_counts[step_num] > 2:
-                        break
-                    continue
+                    # ✅ FIX v1.5.1: 不再自动重试（死循环根因）。
+                    # QA 说"不及格"≠系统知道"怎么及格"——没有新信息输入的重试毫无意义。
+                    # 改为标记为"需复查"，跳过当前步骤，让用户看到后再决定。
+                    _cmd_logger.warning(
+                        f"[Commander] 步骤 {step_num} QA 判定需重试，跳过自动重试，标记为需人工复查"
+                    )
+                    result["status"] = "需复查"
+                    result["_auto_retry_blocked"] = True
+                    result["_retry_reason"] = decision.get("reason", "")
+                    StepDB.update(session_id, step_num,
+                        status="needs_review",
+                        result_summary=str(result.get("result", ""))[:200],
+                        decision="retry_blocked",
+                        decision_detail=decision.get("reason", "质量不达标，需人工复查"),
+                    )
+                    break
                 elif decision["decision"] == "ask":
                     # 如果有用户输入（continue_session），跳过ask
                     if getattr(self, '_pending_user_input', None):
@@ -445,8 +566,20 @@ class CommanderAgent:
                             "results": results,
                         }
                 elif decision["decision"] == "adjust":
-                    retry_counts[step_num] += 1
-                    continue
+                    # ✅ FIX v1.5.1: 同 retry，不再自动重试
+                    _cmd_logger.warning(
+                        f"[Commander] 步骤 {step_num} AI 建议调整，跳过自动重试，标记为需人工复查"
+                    )
+                    result["status"] = "需复查"
+                    result["_auto_retry_blocked"] = True
+                    result["_adjust_reason"] = decision.get("reason", "")
+                    StepDB.update(session_id, step_num,
+                        status="needs_review",
+                        result_summary=str(result.get("result", ""))[:200],
+                        decision="adjust_blocked",
+                        decision_detail=decision.get("reason", "AI 建议调整，需人工复查"),
+                    )
+                    break
                 else:
                     break
 
@@ -469,8 +602,8 @@ class CommanderAgent:
             skill_mgr = get_skill_manager()
             skill_mgr.learn_from_result(goal=goal, result={"status": "completed", "results": results},
                                         summary=summary)
-        except Exception:
-            pass  # 学习失败不影响主流程
+        except Exception as _learn_err:
+            _cmd_logger.warning(f"[Commander] 技能学习失败（不影响主流程）: {_learn_err}")
 
         # 进度回调：最终总结
         if self.progress_callback:
@@ -595,6 +728,15 @@ class CommanderAgent:
                     "priority", "project_id", "目标", "目标URL", "任务类型", "命令"):
             if key in details and key not in task:
                 task[key] = details[key]
+
+        # v1.5.1: 依赖注入 — 如果此步骤声明了 depends_on_step，注入前置步骤的输出
+        depends_on = details.get("depends_on_step") if isinstance(details, dict) else None
+        if depends_on and previous_results and depends_on in previous_results:
+            prev_output = previous_results[depends_on]
+            injected_context = task.get("context", "")
+            injected_context += "\n\n[前置步骤输出] " + json.dumps(prev_output, ensure_ascii=False)[:3000]
+            task["context"] = injected_context
+            _cmd_logger.info(f"[Commander] 步骤 {step_num} 注入了步骤 {depends_on} 的输出")
 
         # 保存
         TaskDB.save(task["task_id"], task, session_id, step_num)

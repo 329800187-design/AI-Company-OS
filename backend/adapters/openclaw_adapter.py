@@ -101,36 +101,45 @@ class OpenClawAdapter(BaseAdapter):
 
         goal = task.get("goal", "")
         task_type = task.get("task_type", "web_search")
+        allow_browser = task.get("allow_browser_automation", False)
 
         # 检查是否在 asyncio 环境中
         try:
             asyncio.get_running_loop()
             # 在 asyncio 环境中，使用线程池
-            return self._run_in_thread(task_type, goal)
+            return self._run_in_thread(task_type, goal, allow_browser)
         except RuntimeError:
             # 不在 asyncio 环境中，直接运行
-            return self._run_direct(task_type, goal)
+            return self._run_direct(task_type, goal, allow_browser)
 
-    def _run_in_thread(self, task_type: str, goal: str) -> Dict[str, Any]:
+    def _run_in_thread(self, task_type: str, goal: str, allow_browser: bool = False) -> Dict[str, Any]:
         """在线程池中运行"""
         try:
-            future = _executor.submit(self._run_direct, task_type, goal)
+            future = _executor.submit(self._run_direct, task_type, goal, allow_browser)
             return future.result(timeout=120)
         except concurrent.futures.TimeoutError:
             return self._create_result(ok=False, error="执行超时")
         except Exception as e:
             return self._create_result(ok=False, error=str(e))
 
-    def _run_direct(self, task_type: str, goal: str) -> Dict[str, Any]:
+    def _run_direct(self, task_type: str, goal: str, allow_browser: bool = False) -> Dict[str, Any]:
         """直接运行"""
         try:
             from agents.openclaw_agent.agent import OpenClawAgent
 
-            agent = OpenClawAgent()
+            agent = OpenClawAgent(allow_browser_automation=allow_browser)
             result, duration = self._measure_time(
                 agent.run,
                 {"task_type": task_type, "goal": goal}
             )
+
+            # 检查是否被授权闸门拦截
+            if result.get("status") == "blocked":
+                return self._create_result(
+                    ok=False,
+                    error=result.get("message", "需要用户授权浏览器采集"),
+                    warnings=[result.get("blocked_reason", "")]
+                )
 
             return self._create_result(
                 ok=result.get("ok", result.get("success", False)),

@@ -79,42 +79,68 @@ function isAgentUnavailable(result: AgentRunResult): boolean {
 function DataStructuredOutput({ output }: { output: Record<string, any> }) {
   const sections: { label: string; value: any; isList?: boolean; isKV?: boolean }[] = []
 
-  // 分析类型
-  if (output.type) sections.push({ label: "分析类型", value: output.type === "analysis_framework" ? "数据分析框架" : "文件数据分析" })
-
-  // 分析目标
-  if (output.goal) sections.push({ label: "分析目标", value: output.goal })
-
-  // 关键发现
+  // ── LLM-first 字段 ──────────────────────────────────────────────────
+  // 分析问题
+  if (output.analysis_question) sections.push({ label: "分析问题", value: output.analysis_question })
+  // 数据概况
+  if (output.data_summary) sections.push({ label: "数据概况", value: output.data_summary })
+  // 关键指标（LLM 路径：key_metrics 是 [{name, description, formula}]）
+  if (Array.isArray(output.key_metrics) && output.key_metrics.length > 0) {
+    sections.push({ label: "📈 关键指标", value: output.key_metrics.map((m: any) => `${m.name}: ${m.description}${m.formula ? ` (${m.formula})` : ""}`), isList: true })
+  }
+  // 趋势
+  if (Array.isArray(output.trends) && output.trends.length > 0) {
+    sections.push({ label: "📊 趋势", value: output.trends, isList: true })
+  }
+  // 关键发现（LLM 路径用 findings，file-based 路径用 key_findings）
+  if (Array.isArray(output.findings) && output.findings.length > 0) {
+    sections.push({ label: "🔍 关键发现", value: output.findings, isList: true })
+  }
   if (Array.isArray(output.key_findings) && output.key_findings.length > 0) {
     sections.push({ label: "🔍 关键发现", value: output.key_findings, isList: true })
   }
+  // 风险
+  if (Array.isArray(output.risks) && output.risks.length > 0) {
+    sections.push({ label: "⚠️ 风险", value: output.risks, isList: true })
+  }
+  // 建议（LLM 路径用 recommendations）
+  if (Array.isArray(output.recommendations) && output.recommendations.length > 0) {
+    sections.push({ label: "💡 建议", value: output.recommendations, isList: true })
+  }
+  // 假设
+  if (Array.isArray(output.assumptions) && output.assumptions.length > 0) {
+    sections.push({ label: "假设前提", value: output.assumptions, isList: true })
+  }
+  // 限制
+  if (Array.isArray(output.limitations) && output.limitations.length > 0) {
+    sections.push({ label: "限制说明", value: output.limitations, isList: true })
+  }
+  // 建议图表
+  if (Array.isArray(output.charts_suggested) && output.charts_suggested.length > 0) {
+    sections.push({ label: "📊 建议图表", value: output.charts_suggested.map((c: any) => `${c.type}: ${c.x_axis} vs ${c.y_axis} — ${c.purpose}`), isList: true })
+  }
 
+  // ── File-based 字段（保留兼容） ─────────────────────────────────────
+  // 分析类型
+  if (output.type) sections.push({ label: "分析类型", value: output.type === "analysis_framework" ? "数据分析框架" : "文件数据分析" })
+  // 分析目标
+  if (output.goal) sections.push({ label: "分析目标", value: output.goal })
   // 检测到的列
   if (Array.isArray(output.detected_columns) && output.detected_columns.length > 0) {
     sections.push({ label: "📊 检测到的数据列", value: output.detected_columns, isList: true })
   }
-
   // 指标
   if (output.metrics && typeof output.metrics === "object") {
     sections.push({ label: "📈 分析指标", value: output.metrics, isKV: true })
   }
-
-  // 建议
-  if (Array.isArray(output.recommendations) && output.recommendations.length > 0) {
-    sections.push({ label: "💡 建议", value: output.recommendations, isList: true })
-  }
-
   // 数据预览
   if (Array.isArray(output.preview) && output.preview.length > 0) {
     sections.push({ label: "数据预览（前5行）", value: output.preview })
   }
-
   // 描述统计
   if (output.describe && typeof output.describe === "object" && Object.keys(output.describe).length > 0) {
     sections.push({ label: "描述统计", value: output.describe, isKV: true })
   }
-
   // 列类型
   if (output.dtypes && typeof output.dtypes === "object") {
     sections.push({ label: "列类型", value: output.dtypes, isKV: true })
@@ -273,9 +299,16 @@ export default function DataPage() {
     if (agentResult?.ok && output) {
       const o = output
       const parts: string[] = []
+      // LLM-first 字段
+      if (o.analysis_question) parts.push(`分析问题: ${String(o.analysis_question)}`)
+      if (o.data_summary) parts.push(String(o.data_summary))
+      if (Array.isArray(o.findings)) parts.push("关键发现:\n" + o.findings.join("\n"))
+      if (Array.isArray(o.trends)) parts.push("趋势:\n" + o.trends.join("\n"))
+      if (Array.isArray(o.risks)) parts.push("风险:\n" + o.risks.join("\n"))
+      if (Array.isArray(o.recommendations)) parts.push("建议:\n" + o.recommendations.join("\n"))
+      // File-based 字段
       if (o.summary) parts.push(String(o.summary))
       if (Array.isArray(o.key_findings)) parts.push("关键发现:\n" + o.key_findings.join("\n"))
-      if (Array.isArray(o.recommendations)) parts.push("建议:\n" + o.recommendations.join("\n"))
       if (o.metrics) parts.push("指标:\n" + JSON.stringify(o.metrics, null, 2))
       return parts.join("\n\n")
     }
@@ -424,6 +457,17 @@ export default function DataPage() {
             <div className="p-4 rounded-xl border border-[#E5E5E5] bg-white">
               <h4 className="text-xs font-medium text-[#8A8A8A] mb-1">执行摘要</h4>
               <p className="text-sm text-[#333] leading-relaxed">{agentResult.summary}</p>
+            </div>
+          )}
+
+          {/* 降级原因（当 fallback=true 时显示） */}
+          {agentResult.metadata?.fallback === true && agentResult.metadata?.fallback_reason && (
+            <div className="p-4 rounded-xl border border-yellow/30 bg-yellow/5 flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-yellow flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-[#666]">
+                <p className="font-medium text-yellow mb-1">降级原因</p>
+                <p>{String(agentResult.metadata.fallback_reason)}</p>
+              </div>
             </div>
           )}
 

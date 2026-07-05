@@ -178,7 +178,7 @@ class VideoAgent(BaseAgent):
 
             return self._extract_json(text)
         except Exception as e:
-            print(f"[Video Agent] AI 调用失败: {e}")
+            self.logger.error(f"[Video Agent] AI 调用失败: {e}")
             return None
 
     @staticmethod

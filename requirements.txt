@@ -6,6 +6,7 @@ fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 python-dotenv>=1.0.0
 httpx>=0.27.0
+lark-oapi>=1.4.0
 python-multipart>=0.0.6
 
 # Desktop App
@@ -33,5 +34,5 @@ stripe>=7.0.0
 # SQLite is built-in (Python stdlib)
 # PostgreSQL (可选): psycopg2-binary>=2.9
 
-# Development (optional)
-# pytest>=8.0.0
+# Development
+pytest>=8.0.0

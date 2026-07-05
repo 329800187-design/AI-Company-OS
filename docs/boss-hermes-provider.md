@@ -22,8 +22,12 @@ HERMES_CLI_PATH=hermes
 # 可选：执行超时秒数（默认 180）
 HERMES_EXECUTION_TIMEOUT_SECONDS=180
 
-# 可选：是否启用电商模式（默认 true，会提示 Hermes 使用 /ecommerce 技能）
-HERMES_ECOMMERCE_MODE_ENABLED=true
+# 可选：是否启用电商模式（默认 false，需显式 opt-in）
+HERMES_ECOMMERCE_MODE_ENABLED=false
+
+# 浏览器自动化审批闸门（默认开启）
+BROWSER_AUTOMATION_REQUIRE_APPROVAL=true
+BROWSER_AUTOMATION_APPROVED=false
 ```
 
 ### 2. 前提条件
@@ -34,6 +38,55 @@ HERMES_ECOMMERCE_MODE_ENABLED=true
 ```bash
 hermes --version
 ```
+
+### 3. 浏览器自动化审批
+
+**默认情况下，所有浏览器自动化采集（browser/ecommerce/sourcing/goofish/taobao 工具调用）都需要用户显式授权。**
+
+有两种授权方式：
+
+#### 方式一：API 请求级别授权（推荐）
+
+在创建或执行 mission/module 时传入 `allow_browser_automation: true`：
+
+```bash
+# 创建 mission 时授权
+curl -X POST http://localhost:8000/boss/missions/from-template \
+  -H "Content-Type: application/json" \
+  -d '{
+    "template_id": "ecommerce_product_research",
+    "goal": "调研蓝牙耳机市场",
+    "enabled_modules": ["market"],
+    "auto_run": true,
+    "allow_browser_automation": true
+  }'
+
+# 单独执行模块时授权
+curl -X POST http://localhost:8000/boss/missions/{mission_id}/modules/market/run \
+  -H "Content-Type: application/json" \
+  -d '{"allow_browser_automation": true}'
+```
+
+#### 方式二：全局配置授权
+
+在 `.env` 中设置全局审批：
+
+```env
+BROWSER_AUTOMATION_APPROVED=true
+```
+
+**注意：** 全局授权会允许所有 mission 的浏览器自动化，建议仅在开发/测试环境使用。
+
+### 4. 审批未通过时的行为
+
+如果浏览器自动化未获得授权：
+
+- **状态**: `blocked`
+- **confidence**: `0.0`
+- **structured_output.status**: `"blocked"`
+- **warnings**: 包含 "浏览器自动化采集需要用户确认后才能执行"
+- **不会调用 Hermes CLI**：不会启动浏览器、不会执行 Playwright
+- **不会执行 browser/ecommerce/sourcing 工具调用**
 
 ## Evidence Gate 机制
 
@@ -188,7 +241,9 @@ Prompt 中明确要求 Hermes 不执行这些操作。如果 Hermes 返回了疑
 | `BOSS_EXECUTION_PROVIDER` | `local_heuristic` | 执行 provider 选择 |
 | `HERMES_CLI_PATH` | `hermes` | CLI 路径 |
 | `HERMES_EXECUTION_TIMEOUT_SECONDS` | `180` | 超时秒数 |
-| `HERMES_ECOMMERCE_MODE_ENABLED` | `true` | 是否启用电商模式 |
+| `HERMES_ECOMMERCE_MODE_ENABLED` | `false` | 是否启用电商模式（需显式 opt-in） |
+| `BROWSER_AUTOMATION_REQUIRE_APPROVAL` | `true` | 浏览器自动化是否需要审批 |
+| `BROWSER_AUTOMATION_APPROVED` | `false` | 全局审批标志（默认关闭） |
 
 ## 故障排查
 
@@ -216,6 +271,12 @@ export HERMES_EXECUTION_TIMEOUT_SECONDS=300
 ### 问题：证据门槛未通过
 
 查看 event log 中的 `evidence_gate_failed` 事件，检查 `missing_evidence` 字段，了解缺少哪些证据。
+
+### 问题：浏览器自动化被阻止
+
+查看 event log 中的 `approval_required` 事件。解决方法：
+1. 在 API 请求中传入 `allow_browser_automation: true`
+2. 或在 `.env` 中设置 `BROWSER_AUTOMATION_APPROVED=true`
 
 ## 相关文件
 

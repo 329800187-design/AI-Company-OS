@@ -78,3 +78,21 @@ desktop.ini
 *.bak
 *.backup
 temp/
+
+# Local runtime state
+user_data/
+.profiles/
+execplan/
+
+# Root-level scratch/debug scripts
+/test_*.py
+/check_*.py
+/read_code*.py
+/test_payload.json
+/evidence_gate_market_research.json
+
+# Agent learning/scratch artifacts
+skills/learned_*.md
+/执行
+/计划
+/记录，一站式闭环。

@@ -7,6 +7,9 @@ import os
 import httpx
 from typing import Dict, Any, List
 from .base_adapter import BaseAdapter
+from backend.logger import get_logger
+
+logger = get_logger()
 
 
 class MiMoAdapter(BaseAdapter):
@@ -220,6 +223,13 @@ class MiMoAdapter(BaseAdapter):
         # 判断是否需要联网搜索
         need_web_search = self._need_web_search(task_type, prompt)
 
+        # 降级：如果需要搜索但搜索不可用，退化为普通模式
+        search_degraded = False
+        if need_web_search and not self.web_search_enabled:
+            search_degraded = True
+            need_web_search = False
+            logger.info("MiMo: web_search requested but disabled — degrading to normal mode")
+
         # 调用 MiMo API
         result, duration = self._measure_time(
             self._call_mimo, prompt, task_type, need_web_search
@@ -227,15 +237,13 @@ class MiMoAdapter(BaseAdapter):
 
         if result.get("ok"):
             # 检查 research 类任务是否有 sources
+            warnings = []
             if task_type in {"research", "competitor_analysis", "market_analysis"}:
                 sources = result.get("sources", [])
-                if not sources:
-                    return self._create_result(
-                        ok=False,
-                        error="联网搜索未返回来源",
-                        warnings=["MiMo 未能获取到搜索结果"],
-                        duration_ms=duration
-                    )
+                if not sources and not search_degraded:
+                    warnings = ["联网搜索未返回来源，结果基于模型已有知识"]
+                elif search_degraded:
+                    warnings = ["联网搜索不可用，结果基于模型已有知识"]
 
             return self._create_result(
                 ok=True,
@@ -245,10 +253,12 @@ class MiMoAdapter(BaseAdapter):
                 },
                 stdout=result.get("reply", ""),
                 duration_ms=duration,
+                warnings=warnings,
                 metadata={
                     "model": self.model,
                     "used_web_search": need_web_search and bool(result.get("sources")),
-                    "search_mode": "mimo_web_search" if need_web_search else "none"
+                    "search_mode": "mimo_web_search" if need_web_search else ("degraded" if search_degraded else "none"),
+                    "search_degraded": search_degraded
                 }
             )
         else:
@@ -320,7 +330,8 @@ class MiMoAdapter(BaseAdapter):
                 data = response.json()
 
                 # 提取回复
-                reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                choices = data.get("choices") or [{}]
+                reply = choices[0].get("message", {}).get("content", "")
 
                 # 提取 sources
                 sources = self._extract_sources(data, need_web_search)
@@ -341,10 +352,10 @@ class MiMoAdapter(BaseAdapter):
             return sources
 
         # 尝试从 tool_calls 提取
-        choices = data.get("choices", [])
+        choices = data.get("choices") or []
         if choices:
             message = choices[0].get("message", {})
-            tool_calls = message.get("tool_calls", [])
+            tool_calls = message.get("tool_calls") or []
             for call in tool_calls:
                 func = call.get("function", {})
                 if func.get("name") == "web_search":
@@ -356,7 +367,7 @@ class MiMoAdapter(BaseAdapter):
 
         # 尝试从 annotations 提取
         if not sources:
-            annotations = data.get("annotations", [])
+            annotations = data.get("annotations") or []
             for ann in annotations:
                 if ann.get("type") == "citation":
                     sources.append({
@@ -367,7 +378,7 @@ class MiMoAdapter(BaseAdapter):
 
         # 尝试从 citations 提取
         if not sources:
-            citations = data.get("citations", [])
+            citations = data.get("citations") or []
             for cite in citations:
                 sources.append({
                     "title": cite.get("title", ""),
@@ -377,7 +388,7 @@ class MiMoAdapter(BaseAdapter):
 
         # 尝试从 references 提取
         if not sources:
-            references = data.get("references", [])
+            references = data.get("references") or []
             for ref in references:
                 sources.append({
                     "title": ref.get("title", ""),

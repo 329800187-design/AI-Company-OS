@@ -126,6 +126,13 @@ CEO_SYSTEM_PROMPT = """你是一个技术 CEO，负责将一个用户目标拆�
 7. qa_review 放在最后验收
 8. 按逻辑顺序排列，先执行后验收
 9. 通常 1-3 个任务，不要过度拆解
+10. ⚠️ v1.5.1 新增：如果一个步骤需要另一个步骤的输出才能执行，必须在 details 中加 "depends_on_step": 步骤编号。例如步骤2依赖步骤1：{"step": 2, ..., "details": {"depends_on_step": 1}}。无依赖的步骤不需要加。
+
+⚠️ 重要规则 — 当你无法确定用户的具体需求时：
+如果用户的目标太模糊，无法合理拆解（比如"帮我做市场分析"但没有说分析什么市场），
+不要强行拆解！请返回以下格式的 JSON 对象（不是数组）：
+{"clarifying_questions": ["你需要分析哪个市场？", "分析的重点是什么？竞品/规模/趋势？"]}
+只有当目标足够清晰时，才返回任务数组。
 
 生成 URL 的规则：
 - **不要**用 Wikipedia 精确页面名（页面名很难猜对），用 Google 搜索代替
@@ -167,6 +174,9 @@ class CEOAgent(BaseAgent):
                 self.model = "deepseek-chat"
                 self.api_base = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 
+        # v1.5.1: 存储 CEO 发现目标模糊时的反问
+        self.pending_clarifying_questions = []
+
     @timed("ceo")
     def run(self, task: Dict[str, Any]) -> Dict[str, Any]:
         task_id = task.get("task_id", "ceo_task_001")
@@ -183,6 +193,26 @@ class CEOAgent(BaseAgent):
         # 尝试 AI 拆解
         if self.api_key:
             created_tasks = self._ai_decompose(user_goal)
+
+            # v1.5.1: 检查 CEO 是否需要反问用户
+            if self.pending_clarifying_questions:
+                questions = self.pending_clarifying_questions
+                self.pending_clarifying_questions = []
+                return self.ok(
+                    task_id=task_id,
+                    status="需要澄清",
+                    data={
+                        "clarifying_questions": questions,
+                        "summary": "目标不够清晰，需要你的补充信息才能拆解",
+                        "created_tasks": [],
+                        "task_count": 0,
+                        "score": 0,
+                        "problems": ["用户目标过于模糊，无法拆解"],
+                        "next_suggestion": "请回答以上问题后重新提交目标",
+                    },
+                    meta={"status": "needs_clarification"},
+                )
+
             if created_tasks:
                 return self._chinese_result(
                     task_id=task_id,
@@ -244,6 +274,18 @@ class CEOAgent(BaseAgent):
                 )
                 resp.raise_for_status()
                 content = resp.json()["choices"][0]["message"]["content"]
+
+            # v1.5.1: 先检查 CEO 是否返回了反问而非任务数组
+            content_clean = re.sub(r"```(?:json)?\s*", "", content)
+            content_clean = content_clean.replace("```", "").strip()
+            # 尝试解析为 clarifying_questions 对象
+            try:
+                parsed = json.loads(content_clean)
+                if isinstance(parsed, dict) and "clarifying_questions" in parsed:
+                    self.pending_clarifying_questions = parsed["clarifying_questions"]
+                    return None
+            except json.JSONDecodeError:
+                pass
 
             # 提取 JSON 数组
             tasks = self._extract_json_array(content)

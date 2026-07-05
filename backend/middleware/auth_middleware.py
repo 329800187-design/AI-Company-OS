@@ -8,6 +8,7 @@
 - AUTH_ENABLED=true/false（.env 配置，默认 false 开发模式不启用）
 - AUTH_TOKEN=<your-api-key>（若空则自动生成一个）
 """
+import hmac
 import os
 import uuid
 from pathlib import Path
@@ -119,8 +120,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if not token:
             token = request.headers.get("X-API-Key", "")
 
-        # 验证
-        if not token or token != AUTH_CONFIG["token"]:
+        # 验证（使用恒定时序比较防止时序攻击）
+        if not token or not hmac.compare_digest(token, AUTH_CONFIG["token"]):
             return JSONResponse(
                 status_code=401,
                 content={

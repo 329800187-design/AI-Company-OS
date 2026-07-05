@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 from backend.database.database import SessionDB, StepDB
 from core.agent_swarm import AgentSwarm
+from backend.services.agent_loader import load_agent_instance
 
 
 class SwarmCommander:
@@ -27,21 +28,21 @@ class SwarmCommander:
     def _init_swarm(self):
         """初始化 Swarm 节点"""
         try:
-            from agents.ceo_agent.agent import CEOAgent
-            from agents.codex_agent.agent import CodexAgent
-            from agents.qa_agent.agent import QAAgent
-            from agents.cto_agent.agent import CTOAgent
-            from agents.system_agent.agent import SystemAgent
-
-            agents = [
-                ("ceo", CEOAgent(), ["decompose", "plan"]),
-                ("codex", CodexAgent(timeout=30), ["code", "execute"]),
-                ("qa", QAAgent(), ["review", "verify"]),
-                ("cto", CTOAgent(), ["code_review", "architecture"]),
-                ("system", SystemAgent(timeout=60), ["file_ops", "system"]),
+            # Agent 配置：name -> (entrypoint, class_name, kwargs, capabilities)
+            agent_configs = [
+                ("ceo", "agents.ceo_agent.agent", "CEOAgent", {}, ["decompose", "plan"]),
+                ("codex", "agents.codex_agent.agent", "CodexAgent", {"timeout": 30}, ["code", "execute"]),
+                ("qa", "agents.qa_agent.agent", "QAAgent", {}, ["review", "verify"]),
+                ("cto", "agents.cto_agent.agent", "CTOAgent", {}, ["code_review", "architecture"]),
+                ("system", "agents.system_agent.agent", "SystemAgent", {"timeout": 60}, ["file_ops", "system"]),
             ]
-            for name, agent, caps in agents:
-                self._swarm.register(name, agent.run, caps)
+
+            for name, entrypoint, class_name, kwargs, caps in agent_configs:
+                agent = load_agent_instance(entrypoint, class_name, **kwargs)
+                if agent is not None:
+                    self._swarm.register(name, agent.run, caps)
+                else:
+                    print(f"[SwarmCommander] Agent '{name}' unavailable")
         except Exception as e:
             print(f"[SwarmCommander] 初始化失败: {e}")
 

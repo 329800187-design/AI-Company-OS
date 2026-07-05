@@ -10,10 +10,12 @@
 - 离线可跑（mock subprocess）
 - evidence gate 验证
 - tool_calls 记录
+- 浏览器自动化审批闸门
 """
 import sys
 import os
 import json
+import io
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
@@ -67,6 +69,23 @@ MOCK_LISTING_PACK_RESPONSE = json.dumps({
 })
 
 
+def _mock_popen(stdout_text):
+    """创建 Mock Popen 对象"""
+    class MockProcess:
+        def __init__(self, stdout_text):
+            self.returncode = 0
+            self.stdout = io.StringIO(stdout_text)
+            self.stderr = io.StringIO("")
+
+        def wait(self, timeout=None):
+            return 0
+
+        def kill(self):
+            pass
+
+    return MockProcess(stdout_text)
+
+
 # ── Smoke Test: Boss → Hermes 链路验证 ─────────────────────
 
 class TestHermesProviderSmokeTest:
@@ -76,9 +95,16 @@ class TestHermesProviderSmokeTest:
     def _setup_hermes_provider(self, monkeypatch):
         """设置 BOSS_EXECUTION_PROVIDER=hermes"""
         monkeypatch.setenv("BOSS_EXECUTION_PROVIDER", "hermes")
+        import importlib
+        import backend.config
+        importlib.reload(backend.config)
         # 清除 provider registry 缓存，使其重新创建
         import backend.services.boss_execution_providers as provider_module
         provider_module._registry = None
+        import backend.services.boss_module_executors as executor_module
+        for template_executors in executor_module._EXECUTOR_REGISTRY.values():
+            for executor in template_executors.values():
+                executor._provider = None
 
     @pytest.fixture
     def service(self):
@@ -96,26 +122,23 @@ class TestHermesProviderSmokeTest:
         """验证 market 模块走 Hermes 链路：Hermes → structured_output → event log"""
         import subprocess
 
-        # Mock subprocess.run 返回合法 JSON
-        def mock_run(cmd, **kwargs):
-            class Result:
-                returncode = 0
-                stdout = MOCK_MARKET_RESEARCH_RESPONSE
-                stderr = ""
-            return Result()
+        # Mock subprocess.Popen 返回合法 JSON
+        def mock_popen_cmd(cmd, **kwargs):
+            return _mock_popen(MOCK_MARKET_RESEARCH_RESPONSE)
 
-        monkeypatch.setattr(subprocess, "run", mock_run)
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_cmd)
 
         # 使用 ecommerce_product_research 模板创建 mission
         mission = service.create_mission_from_template(
             "ecommerce_product_research",
             goal="蓝牙耳机市场调研",
             enabled_modules=["market"],
+            allow_browser_automation=True,
         )
         mission_id = mission["mission_id"]
 
         # 执行 market 模块
-        updated = service.run_module(mission_id, "market")
+        updated = service.run_module(mission_id, "market", allow_browser_automation=True)
         assert updated is not None
 
         # 验证模块状态
@@ -157,24 +180,21 @@ class TestHermesProviderSmokeTest:
         """验证 competitor_analysis 模块走 Hermes 链路（通过 market 模块）"""
         import subprocess
 
-        def mock_run(cmd, **kwargs):
-            class Result:
-                returncode = 0
-                stdout = MOCK_COMPETITOR_ANALYSIS_RESPONSE
-                stderr = ""
-            return Result()
+        def mock_popen_cmd(cmd, **kwargs):
+            return _mock_popen(MOCK_COMPETITOR_ANALYSIS_RESPONSE)
 
-        monkeypatch.setattr(subprocess, "run", mock_run)
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_cmd)
 
         # 使用 market 模块来测试竞品分析功能
         mission = service.create_mission_from_template(
             "ecommerce_product_research",
             goal="竞品分析测试",
             enabled_modules=["market"],
+            allow_browser_automation=True,
         )
         mission_id = mission["mission_id"]
 
-        updated = service.run_module(mission_id, "market")
+        updated = service.run_module(mission_id, "market", allow_browser_automation=True)
         market = next(m for m in updated["modules"] if m["module_id"] == "market")
         assert market["status"] == "done"
 
@@ -186,24 +206,21 @@ class TestHermesProviderSmokeTest:
         """验证 marketing（listing pack）模块走 Hermes 链路"""
         import subprocess
 
-        def mock_run(cmd, **kwargs):
-            class Result:
-                returncode = 0
-                stdout = MOCK_LISTING_PACK_RESPONSE
-                stderr = ""
-            return Result()
+        def mock_popen_cmd(cmd, **kwargs):
+            return _mock_popen(MOCK_LISTING_PACK_RESPONSE)
 
-        monkeypatch.setattr(subprocess, "run", mock_run)
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_cmd)
 
         # 使用 marketing 模块测试上架物料包
         mission = service.create_mission_from_template(
             "ecommerce_product_research",
             goal="上架物料包测试",
             enabled_modules=["marketing"],
+            allow_browser_automation=True,
         )
         mission_id = mission["mission_id"]
 
-        updated = service.run_module(mission_id, "marketing")
+        updated = service.run_module(mission_id, "marketing", allow_browser_automation=True)
         marketing = next(m for m in updated["modules"] if m["module_id"] == "marketing")
         assert marketing["status"] == "done"
 
@@ -225,11 +242,12 @@ class TestHermesProviderSmokeTest:
             "ecommerce_product_research",
             goal="失败测试",
             enabled_modules=["market"],
+            allow_browser_automation=True,
         )
         mission_id = mission["mission_id"]
 
         # 执行应该 fallback 到 local_heuristic
-        updated = service.run_module(mission_id, "market")
+        updated = service.run_module(mission_id, "market", allow_browser_automation=True)
         market = next(m for m in updated["modules"] if m["module_id"] == "market")
 
         # 验证 event log
@@ -248,27 +266,26 @@ class TestHermesProviderSmokeTest:
             '{"summary": "执行清单", "warnings": []}',
         ]
 
-        def mock_run(cmd, **kwargs):
+        def mock_popen_cmd(cmd, **kwargs):
             nonlocal call_count
-            class Result:
-                returncode = 0
-                stdout = responses[call_count % len(responses)]
-                stderr = ""
+            result = _mock_popen(responses[call_count % len(responses)])
             call_count += 1
-            return Result()
+            return result
 
-        monkeypatch.setattr(subprocess, "run", mock_run)
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_cmd)
 
         # 使用 ecommerce_product_research 模板
         mission = service.create_mission_from_template(
             "ecommerce_product_research",
             goal="蓝牙耳机选品",
             enabled_modules=["market", "marketing"],
+            allow_browser_automation=True,
         )
         mission_id = mission["mission_id"]
 
-        updated = service.run_mission(mission_id)
-        assert updated["status"] == "done"
+        updated = service.run_mission(mission_id, allow_browser_automation=True)
+        # v2: 全部模块成功 → ready_for_review（不再直接标 done）
+        assert updated["status"] == "ready_for_review"
 
         # 验证所有非 skipped 模块都用 hermes
         for mod in updated["modules"]:
@@ -280,24 +297,21 @@ class TestHermesProviderSmokeTest:
         """验证 structured_output 包含所有标准字段（含新增字段）"""
         import subprocess
 
-        def mock_run(cmd, **kwargs):
-            class Result:
-                returncode = 0
-                stdout = MOCK_MARKET_RESEARCH_RESPONSE
-                stderr = ""
-            return Result()
+        def mock_popen_cmd(cmd, **kwargs):
+            return _mock_popen(MOCK_MARKET_RESEARCH_RESPONSE)
 
-        monkeypatch.setattr(subprocess, "run", mock_run)
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_cmd)
 
         # 使用 ecommerce_product_research 模板
         mission = service.create_mission_from_template(
             "ecommerce_product_research",
             goal="Schema 测试",
             enabled_modules=["market"],
+            allow_browser_automation=True,
         )
         mission_id = mission["mission_id"]
 
-        updated = service.run_module(mission_id, "market")
+        updated = service.run_module(mission_id, "market", allow_browser_automation=True)
         market = next(m for m in updated["modules"] if m["module_id"] == "market")
         so = market["structured_output"]
 
@@ -335,9 +349,16 @@ class TestEvidenceGate:
     def _setup_hermes_provider(self, monkeypatch):
         """设置 BOSS_EXECUTION_PROVIDER=hermes"""
         monkeypatch.setenv("BOSS_EXECUTION_PROVIDER", "hermes")
+        import importlib
+        import backend.config
+        importlib.reload(backend.config)
         # 清除 provider registry 缓存
         import backend.services.boss_execution_providers as provider_module
         provider_module._registry = None
+        import backend.services.boss_module_executors as executor_module
+        for template_executors in executor_module._EXECUTOR_REGISTRY.values():
+            for executor in template_executors.values():
+                executor._provider = None
         # 清除 executor 的 provider 缓存
         import backend.services.boss_module_executors as executor_module
         for template_executors in executor_module._EXECUTOR_REGISTRY.values():
@@ -375,24 +396,21 @@ class TestEvidenceGate:
             "warnings": [],
         })
 
-        def mock_run(cmd, **kwargs):
-            class Result:
-                returncode = 0
-                stdout = sufficient_response
-                stderr = ""
-            return Result()
+        def mock_popen_cmd(cmd, **kwargs):
+            return _mock_popen(sufficient_response)
 
-        monkeypatch.setattr(subprocess, "run", mock_run)
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_cmd)
 
         # 使用 ecommerce_product_research 模板，这样 market executor 才会被使用
         mission = service.create_mission_from_template(
             "ecommerce_product_research",
             goal="evidence gate 测试",
             enabled_modules=["market"],
+            allow_browser_automation=True,
         )
         mission_id = mission["mission_id"]
 
-        updated = service.run_module(mission_id, "market")
+        updated = service.run_module(mission_id, "market", allow_browser_automation=True)
         market = next(m for m in updated["modules"] if m["module_id"] == "market")
 
         # 验证 evidence gate 通过
@@ -420,24 +438,21 @@ class TestEvidenceGate:
             "warnings": [],
         })
 
-        def mock_run(cmd, **kwargs):
-            class Result:
-                returncode = 0
-                stdout = no_evidence_response
-                stderr = ""
-            return Result()
+        def mock_popen_cmd(cmd, **kwargs):
+            return _mock_popen(no_evidence_response)
 
-        monkeypatch.setattr(subprocess, "run", mock_run)
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_cmd)
 
         # 使用 ecommerce_product_research 模板
         mission = service.create_mission_from_template(
             "ecommerce_product_research",
             goal="evidence gate 失败测试",
             enabled_modules=["market"],
+            allow_browser_automation=True,
         )
         mission_id = mission["mission_id"]
 
-        updated = service.run_module(mission_id, "market")
+        updated = service.run_module(mission_id, "market", allow_browser_automation=True)
         market = next(m for m in updated["modules"] if m["module_id"] == "market")
 
         # 验证 evidence gate 失败
@@ -479,24 +494,21 @@ class TestEvidenceGate:
             "warnings": [],
         })
 
-        def mock_run(cmd, **kwargs):
-            class Result:
-                returncode = 0
-                stdout = insufficient_competitors
-                stderr = ""
-            return Result()
+        def mock_popen_cmd(cmd, **kwargs):
+            return _mock_popen(insufficient_competitors)
 
-        monkeypatch.setattr(subprocess, "run", mock_run)
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_cmd)
 
         # 使用 market 模块测试竞品数量不足（market 要求至少 2 个竞品）
         mission = service.create_mission_from_template(
             "ecommerce_product_research",
             goal="竞品不足测试",
             enabled_modules=["market"],
+            allow_browser_automation=True,
         )
         mission_id = mission["mission_id"]
 
-        updated = service.run_module(mission_id, "market")
+        updated = service.run_module(mission_id, "market", allow_browser_automation=True)
         market = next(m for m in updated["modules"] if m["module_id"] == "market")
 
         # 验证 evidence gate 失败
@@ -526,24 +538,21 @@ class TestEvidenceGate:
             "warnings": ["部分数据缺失"],
         })
 
-        def mock_run(cmd, **kwargs):
-            class Result:
-                returncode = 0
-                stdout = partial_response
-                stderr = ""
-            return Result()
+        def mock_popen_cmd(cmd, **kwargs):
+            return _mock_popen(partial_response)
 
-        monkeypatch.setattr(subprocess, "run", mock_run)
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_cmd)
 
         # 使用 ecommerce_product_research 模板
         mission = service.create_mission_from_template(
             "ecommerce_product_research",
             goal="部分结果测试",
             enabled_modules=["market"],
+            allow_browser_automation=True,
         )
         mission_id = mission["mission_id"]
 
-        updated = service.run_module(mission_id, "market")
+        updated = service.run_module(mission_id, "market", allow_browser_automation=True)
         market = next(m for m in updated["modules"] if m["module_id"] == "market")
 
         # 验证 status 为 partial
@@ -557,24 +566,21 @@ class TestEvidenceGate:
         """验证 Hermes 返回非 JSON 时必须有 warning"""
         import subprocess
 
-        def mock_run(cmd, **kwargs):
-            class Result:
-                returncode = 0
-                stdout = "This is not JSON output from Hermes"
-                stderr = ""
-            return Result()
+        def mock_popen_cmd(cmd, **kwargs):
+            return _mock_popen("This is not JSON output from Hermes")
 
-        monkeypatch.setattr(subprocess, "run", mock_run)
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_cmd)
 
         # 使用 ecommerce_product_research 模板
         mission = service.create_mission_from_template(
             "ecommerce_product_research",
             goal="非 JSON 测试",
             enabled_modules=["market"],
+            allow_browser_automation=True,
         )
         mission_id = mission["mission_id"]
 
-        updated = service.run_module(mission_id, "market")
+        updated = service.run_module(mission_id, "market", allow_browser_automation=True)
         market = next(m for m in updated["modules"] if m["module_id"] == "market")
 
         # 验证 fallback 到 local_heuristic
@@ -623,32 +629,30 @@ class TestEvidenceGate:
         call_count = 0
         responses = [market_response, listing_response]
 
-        def mock_run(cmd, **kwargs):
+        def mock_popen_cmd(cmd, **kwargs):
             nonlocal call_count
-            class Result:
-                returncode = 0
-                stdout = responses[call_count % len(responses)]
-                stderr = ""
+            result = _mock_popen(responses[call_count % len(responses)])
             call_count += 1
-            return Result()
+            return result
 
-        monkeypatch.setattr(subprocess, "run", mock_run)
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_cmd)
 
         # 使用 ecommerce_product_research 模板
         mission = service.create_mission_from_template(
             "ecommerce_product_research",
             goal="上架文案依赖测试",
             enabled_modules=["market", "marketing"],
+            allow_browser_automation=True,
         )
         mission_id = mission["mission_id"]
 
         # 先执行 market
-        updated = service.run_module(mission_id, "market")
+        updated = service.run_module(mission_id, "market", allow_browser_automation=True)
         market = next(m for m in updated["modules"] if m["module_id"] == "market")
         assert market["status"] == "done"
 
         # 再执行 marketing（listing pack）
-        updated = service.run_module(mission_id, "marketing")
+        updated = service.run_module(mission_id, "marketing", allow_browser_automation=True)
         marketing = next(m for m in updated["modules"] if m["module_id"] == "marketing")
 
         # 验证上架文案基于前序 evidence
@@ -665,8 +669,15 @@ class TestHermesProviderAPI:
     @pytest.fixture(autouse=True)
     def _setup_hermes_provider(self, monkeypatch):
         monkeypatch.setenv("BOSS_EXECUTION_PROVIDER", "hermes")
+        import importlib
+        import backend.config
+        importlib.reload(backend.config)
         import backend.services.boss_execution_providers as provider_module
         provider_module._registry = None
+        import backend.services.boss_module_executors as executor_module
+        for template_executors in executor_module._EXECUTOR_REGISTRY.values():
+            for executor in template_executors.values():
+                executor._provider = None
 
     @pytest.fixture(autouse=True)
     def _bypass_rate_limit(self):
@@ -684,14 +695,10 @@ class TestHermesProviderAPI:
         """通过 API 创建并执行 mission，验证 Hermes 链路"""
         import subprocess
 
-        def mock_run(cmd, **kwargs):
-            class Result:
-                returncode = 0
-                stdout = MOCK_MARKET_RESEARCH_RESPONSE
-                stderr = ""
-            return Result()
+        def mock_popen_cmd(cmd, **kwargs):
+            return _mock_popen(MOCK_MARKET_RESEARCH_RESPONSE)
 
-        monkeypatch.setattr(subprocess, "run", mock_run)
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_cmd)
 
         # 使用 from-template API 创建 mission
         resp = client.post("/boss/missions/from-template", json={
@@ -699,12 +706,14 @@ class TestHermesProviderAPI:
             "goal": "API 集成测试",
             "enabled_modules": ["market"],
             "auto_run": False,
+            "allow_browser_automation": True,
         })
         assert resp.status_code == 200
         mission_id = resp.json()["mission_id"]
 
         # 执行 market 模块
-        resp = client.post(f"/boss/missions/{mission_id}/modules/market/run")
+        resp = client.post(f"/boss/missions/{mission_id}/modules/market/run",
+                          json={"allow_browser_automation": True})
         assert resp.status_code == 200
 
         # 验证结果
@@ -720,3 +729,302 @@ class TestHermesProviderAPI:
         event_types = [e["type"] for e in events]
         assert "hermes_invoked" in event_types
         assert "hermes_response_parsed" in event_types
+
+
+# ── Hermes Timeout → Fallback 行为测试 ─────────────────────
+
+class TestHermesTimeoutFallback:
+    """验证 Hermes 超时时 fallback 行为的正确性"""
+
+    @pytest.fixture(autouse=True)
+    def _setup_hermes_provider(self, monkeypatch):
+        monkeypatch.setenv("BOSS_EXECUTION_PROVIDER", "hermes")
+        import importlib
+        import backend.config
+        importlib.reload(backend.config)
+        import backend.services.boss_execution_providers as provider_module
+        provider_module._registry = None
+        import backend.services.boss_module_executors as executor_module
+        for template_executors in executor_module._EXECUTOR_REGISTRY.values():
+            for executor in template_executors.values():
+                executor._provider = None
+
+    @pytest.fixture
+    def service(self):
+        from backend.services.boss_command_center import get_boss_command_center
+        return get_boss_command_center()
+
+    def test_timeout_fallback_structured_output_not_empty(self, service, monkeypatch):
+        """验证 Hermes 超时 fallback 后 structured_output 不为空"""
+        import subprocess
+        import shutil
+
+        # Mock Hermes 超时（subprocess.Popen 的 wait 方法抛出 TimeoutExpired）
+        def mock_popen_timeout(cmd, **kwargs):
+            class MockProcess:
+                returncode = 0
+                stdout = None
+                stderr = None
+
+                def wait(self, timeout=None):
+                    raise subprocess.TimeoutExpired(cmd, 300)
+
+                def kill(self):
+                    pass
+
+            return MockProcess()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_timeout)
+        monkeypatch.setattr(shutil, "which", lambda x: "/usr/bin/hermes")
+
+        # 创建 mission
+        mission = service.create_mission_from_template(
+            "ecommerce_product_research",
+            goal="超时 fallback 测试",
+            enabled_modules=["market"],
+            allow_browser_automation=True,
+        )
+        mission_id = mission["mission_id"]
+
+        # 执行 market 模块
+        updated = service.run_module(mission_id, "market", allow_browser_automation=True)
+        market = next(m for m in updated["modules"] if m["module_id"] == "market")
+
+        # structured_output 不能为空
+        so = market["structured_output"]
+        assert so != {}, f"structured_output 为空: {so}"
+        assert isinstance(so, dict)
+
+    def test_timeout_fallback_evidence_gate_passed_false(self, service, monkeypatch):
+        """验证 Hermes 超时 fallback 后 evidence_gate_passed 为 False"""
+        import subprocess
+        import shutil
+
+        def mock_popen_timeout(cmd, **kwargs):
+            class MockProcess:
+                returncode = 0
+                stdout = None
+                stderr = None
+
+                def wait(self, timeout=None):
+                    raise subprocess.TimeoutExpired(cmd, 300)
+
+                def kill(self):
+                    pass
+
+            return MockProcess()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_timeout)
+        monkeypatch.setattr(shutil, "which", lambda x: "/usr/bin/hermes")
+
+        mission = service.create_mission_from_template(
+            "ecommerce_product_research",
+            goal="超时 fallback 测试",
+            enabled_modules=["market"],
+            allow_browser_automation=True,
+        )
+        mission_id = mission["mission_id"]
+
+        updated = service.run_module(mission_id, "market", allow_browser_automation=True)
+        market = next(m for m in updated["modules"] if m["module_id"] == "market")
+
+        so = market["structured_output"]
+        assert so["evidence_gate_passed"] is False
+        assert so["status"] == "partial"
+        assert so["provider"] == "local_heuristic_fallback"
+
+    def test_timeout_fallback_missing_evidence_non_empty(self, service, monkeypatch):
+        """验证 Hermes 超时 fallback 后 missing_evidence 非空"""
+        import subprocess
+        import shutil
+
+        def mock_popen_timeout(cmd, **kwargs):
+            class MockProcess:
+                returncode = 0
+                stdout = None
+                stderr = None
+
+                def wait(self, timeout=None):
+                    raise subprocess.TimeoutExpired(cmd, 300)
+
+                def kill(self):
+                    pass
+
+            return MockProcess()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_timeout)
+        monkeypatch.setattr(shutil, "which", lambda x: "/usr/bin/hermes")
+
+        mission = service.create_mission_from_template(
+            "ecommerce_product_research",
+            goal="超时 fallback 测试",
+            enabled_modules=["market"],
+            allow_browser_automation=True,
+        )
+        mission_id = mission["mission_id"]
+
+        updated = service.run_module(mission_id, "market", allow_browser_automation=True)
+        market = next(m for m in updated["modules"] if m["module_id"] == "market")
+
+        so = market["structured_output"]
+        assert len(so["missing_evidence"]) > 0, f"missing_evidence 为空: {so['missing_evidence']}"
+
+    def test_timeout_fallback_event_log_has_evidence_gate_failed(self, service, monkeypatch):
+        """验证 Hermes 超时 fallback 后 event log 包含 evidence_gate_failed"""
+        import subprocess
+        import shutil
+
+        def mock_popen_timeout(cmd, **kwargs):
+            class MockProcess:
+                returncode = 0
+                stdout = None
+                stderr = None
+
+                def wait(self, timeout=None):
+                    raise subprocess.TimeoutExpired(cmd, 300)
+
+                def kill(self):
+                    pass
+
+            return MockProcess()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_timeout)
+        monkeypatch.setattr(shutil, "which", lambda x: "/usr/bin/hermes")
+
+        mission = service.create_mission_from_template(
+            "ecommerce_product_research",
+            goal="超时 fallback 测试",
+            enabled_modules=["market"],
+            allow_browser_automation=True,
+        )
+        mission_id = mission["mission_id"]
+
+        updated = service.run_module(mission_id, "market", allow_browser_automation=True)
+
+        # 检查事件日志
+        events = service.get_events(mission_id)
+        event_types = [e["type"] for e in events]
+
+        assert "hermes_failed" in event_types, f"hermes_failed 未在事件中: {event_types}"
+        assert "provider_fallback" in event_types, f"provider_fallback 未在事件中: {event_types}"
+        assert "evidence_gate_failed" in event_types, f"evidence_gate_failed 未在事件中: {event_types}"
+        assert "fallback_partial_result" in event_types, f"fallback_partial_result 未在事件中: {event_types}"
+
+        # 检查 evidence_gate_failed payload
+        gate_failed_events = [e for e in events if e["type"] == "evidence_gate_failed"]
+        assert len(gate_failed_events) > 0
+        payload = gate_failed_events[0]["payload"]
+        assert "reason" in payload
+        assert "missing_evidence" in payload
+        assert "provider" in payload
+        assert payload["provider"] == "hermes"
+
+    def test_timeout_fallback_warnings_include_timeout_reason(self, service, monkeypatch):
+        """验证 Hermes 超时 fallback 后 warnings 包含超时原因"""
+        import subprocess
+        import shutil
+
+        def mock_popen_timeout(cmd, **kwargs):
+            class MockProcess:
+                returncode = 0
+                stdout = None
+                stderr = None
+
+                def wait(self, timeout=None):
+                    raise subprocess.TimeoutExpired(cmd, 300)
+
+                def kill(self):
+                    pass
+
+            return MockProcess()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_timeout)
+        monkeypatch.setattr(shutil, "which", lambda x: "/usr/bin/hermes")
+
+        mission = service.create_mission_from_template(
+            "ecommerce_product_research",
+            goal="超时 fallback 测试",
+            enabled_modules=["market"],
+            allow_browser_automation=True,
+        )
+        mission_id = mission["mission_id"]
+
+        updated = service.run_module(mission_id, "market", allow_browser_automation=True)
+        market = next(m for m in updated["modules"] if m["module_id"] == "market")
+
+        # warnings 应包含 fallback 相关信息
+        assert len(market["warnings"]) > 0, f"warnings 为空: {market['warnings']}"
+
+    def test_timeout_fallback_confidence_is_03(self, service, monkeypatch):
+        """验证 Hermes 超时 fallback 后 confidence 固定为 0.3"""
+        import subprocess
+        import shutil
+
+        def mock_popen_timeout(cmd, **kwargs):
+            class MockProcess:
+                returncode = 0
+                stdout = None
+                stderr = None
+
+                def wait(self, timeout=None):
+                    raise subprocess.TimeoutExpired(cmd, 300)
+
+                def kill(self):
+                    pass
+
+            return MockProcess()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_timeout)
+        monkeypatch.setattr(shutil, "which", lambda x: "/usr/bin/hermes")
+
+        mission = service.create_mission_from_template(
+            "ecommerce_product_research",
+            goal="超时 fallback 测试",
+            enabled_modules=["market"],
+            allow_browser_automation=True,
+        )
+        mission_id = mission["mission_id"]
+
+        updated = service.run_module(mission_id, "market", allow_browser_automation=True)
+        market = next(m for m in updated["modules"] if m["module_id"] == "market")
+
+        assert market["confidence"] == 0.3, f"confidence 不是 0.3: {market['confidence']}"
+
+    def test_timeout_fallback_evidence_empty(self, service, monkeypatch):
+        """验证 Hermes 超时 fallback 后 evidence 列表为空（不伪造）"""
+        import subprocess
+        import shutil
+
+        def mock_popen_timeout(cmd, **kwargs):
+            class MockProcess:
+                returncode = 0
+                stdout = None
+                stderr = None
+
+                def wait(self, timeout=None):
+                    raise subprocess.TimeoutExpired(cmd, 300)
+
+                def kill(self):
+                    pass
+
+            return MockProcess()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_timeout)
+        monkeypatch.setattr(shutil, "which", lambda x: "/usr/bin/hermes")
+
+        mission = service.create_mission_from_template(
+            "ecommerce_product_research",
+            goal="超时 fallback 测试",
+            enabled_modules=["market"],
+            allow_browser_automation=True,
+        )
+        mission_id = mission["mission_id"]
+
+        updated = service.run_module(mission_id, "market", allow_browser_automation=True)
+        market = next(m for m in updated["modules"] if m["module_id"] == "market")
+
+        so = market["structured_output"]
+        assert so["evidence"] == [], f"evidence 不为空（可能在伪造）: {so['evidence']}"
+        assert so["evidence_files"] == []
+        assert so["screenshots"] == []
+        assert so["tool_calls"] == []

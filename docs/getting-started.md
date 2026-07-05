@@ -72,4 +72,40 @@ Key endpoints:
 - `POST /agents/{name}/run` — direct agent call
 - `POST /workflows/dag/run` — DAG workflow
 - `GET /system/metrics` — monitoring data
+
+## 9. Local Verification (Smoke Check)
+
+After starting the server, run the smoke check to verify core endpoints:
+
+```bash
+# Run smoke check (requires server at 127.0.0.1:8000)
+python scripts/backend_smoke_check.py
+
+# Custom host/port
+python scripts/backend_smoke_check.py --host 127.0.0.1 --port 8000
+```
+
+This checks: `/health`, `/memory/recent`, `/memory/search`, `/boss/missions`, `/boss/templates`, mission detail/export, and response structures. No AI API key needed.
+
+## 10. Running Tests
+
+```bash
+# Boss command center (67 tests)
+python -m pytest tests/test_boss_command_center.py -q
+
+# Memory + Boss basics (17 tests, no external API deps)
+python -m pytest tests/test_memory_and_boss_basics.py -q
+
+# Browser automation approval (19 tests)
+python -m pytest tests/test_browser_automation_approval.py -q
+```
+
+## 11. Frontend Build
+
+```bash
+cd frontend-new
+npm install
+npx vite build          # production build
+npx vite                # dev server
+```
 - `GET /search?q=...` — full-text search

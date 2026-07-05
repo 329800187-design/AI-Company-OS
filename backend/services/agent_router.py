@@ -83,24 +83,85 @@ class AgentRouter:
         return best
 
     def _get_candidates(self, plan: TaskPlan) -> List[AgentCapability]:
-        """获取候选 Agent"""
+        """获取候选 Agent - 严格检查 health 和可执行性"""
         candidates = []
+
+        # research 类任务放宽能力检查：supports_browser / supports_web_search 也算
+        is_research = plan.task_type in {"research", "competitor_analysis", "market_analysis"}
 
         for agent in self._registry.get_available_agents():
             # 检查是否满足必需能力
-            if not all(cap in agent.capabilities for cap in plan.required_capabilities):
+            has_required = all(cap in agent.capabilities for cap in plan.required_capabilities)
+            if not has_required and is_research:
+                # research 任务：有浏览器/联网能力也算合格
+                if not (agent.supports_browser or agent.supports_web_search):
+                    continue
+            elif not has_required:
                 continue
 
             # 检查是否支持该任务类型
             if plan.task_type not in agent.task_types and "chat" not in agent.task_types:
                 continue
 
+            # 严格检查 health
+            if agent.health and agent.health.get("error"):
+                logger.debug(f"AgentRouter: Skipping {agent.id} due to health error: {agent.health.get('error')}")
+                continue
+
+            # 检查 reliability_score
+            if agent.reliability_score < 0.3:
+                logger.debug(f"AgentRouter: Skipping {agent.id} due to low reliability: {agent.reliability_score}")
+                continue
+
+            # 检查是否有可执行的 adapter
+            if not self._has_executor(agent):
+                logger.debug(f"AgentRouter: Skipping {agent.id} - no executor available")
+                continue
+
             candidates.append(agent)
 
         return candidates
 
+    def _has_executor(self, agent: AgentCapability) -> bool:
+        """检查 Agent 是否有可执行的 adapter"""
+        # 有 executable 路径的本地 Agent
+        if agent.kind == "local" and agent.executable:
+            return True
+
+        # 有 endpoint 的 HTTP/API Agent
+        if agent.kind in {"http", "api"} and agent.endpoint:
+            return True
+
+        # 有 executable 的 CLI Agent
+        if agent.kind == "cli" and agent.executable:
+            return True
+
+        # MCP Agent
+        if agent.kind == "mcp":
+            return True
+
+        # 映射到已知 adapter 的 Agent
+        known_adapters = {
+            "claude_code", "comfyui", "ollama", "openclaw",
+            "data_tools", "api_models", "mimo"
+        }
+        if agent.id in known_adapters:
+            return True
+
+        return False
+
     def _select_best(self, candidates: List[AgentCapability], plan: TaskPlan) -> AgentCapability:
         """选择最佳 Agent"""
+
+        # research 类任务：优先选有浏览器/联网能力的 Agent
+        if plan.task_type in {"research", "competitor_analysis", "market_analysis"}:
+            browser_capable = [
+                a for a in candidates
+                if a.supports_browser or a.supports_web_search
+            ]
+            if browser_capable:
+                logger.info(f"AgentRouter: Research task — filtered to {len(browser_capable)} browser-capable agents")
+                candidates = browser_capable
 
         # 计算每个候选的分数
         scored = []

@@ -68,6 +68,12 @@ def route_goal(request: AIRunRequest):
 @router.post("/run", summary="调用 AI 资源执行任务",
            description="向指定或自动路由的 AI 服务发送任务并获取结果")
 def run_ai(request: AIRunRequest):
+    # Governance Guard: 从 goal/prompt 提取意图并检查
+    from backend.governance.guard import guard_payload, governance_block_response
+    blocked, classification = guard_payload(request.model_dump())
+    if blocked:
+        return governance_block_response(classification)
+
     registry = get_registry()
     registry.scan_all()
 
