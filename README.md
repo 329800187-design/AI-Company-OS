@@ -4,6 +4,91 @@
 
 > 你告诉它"要做什么"，它自动拆解、分配、执行、验收，最后给你总结报告。
 
+## 项目初心
+
+这个项目最初的想法不是做一个普通聊天机器人，也不是堆一堆 Agent 名字，而是做一个“一人公司操作系统”：
+
+> 用户只需要说清楚目标，系统像一家公司一样理解任务、分配部门、产出结果、检查质量、保存交付物。
+
+更具体一点，它想解决的是：
+
+- 一个人也能拥有“市场部、设计部、数据部、研究部、网站部、技术部、老板办公室”。
+- 不把所有事情都塞进一个聊天框，而是让不同业务入口承担不同工作。
+- Agent 不只是回答文字，而要形成可保存、可预览、可下载的交付物。
+- 系统需要有秩序：普通业务 Agent 直接生产，高风险执行交给 Governance 风控。
+- Boss 工作台只是高层入口，不是整个系统本身。
+
+当前类比是“大汉式 AI Company OS”：
+
+| 模块 | 类比 | 当前职责 |
+|------|------|----------|
+| Marketing Agent | 市场文案部 | 产出文案、品牌策略、活动方案 |
+| Image Agent | 美术总监部 | 产出图片提示词和视觉 brief |
+| Data Agent | 数据分析部 | 产出数据分析报告框架/简报 |
+| Research Agent | 情报研究部 | 产出结构化研究简报 |
+| Website Agent | 网站策划部 | 产出落地页文案和页面方案 |
+| MiniDelivery | 后勤归档 | 保存、预览、下载交付物 |
+| Governance | 风控/审计 | 拦截危险或不受控任务 |
+| Boss 工作台 | 董事长办公室 | 高层入口，不接管所有业务 |
+
+## 当前进度快照
+
+最后保存时间：2026-07-05
+
+当前项目已经推进到：
+
+> 前端展示验收 + 业务 Agent 链路打通阶段
+
+已经完成：
+
+- `MiniDelivery v1` 已冻结：保存、列表、详情、预览、下载、归档。
+- `Marketing / Image / Data / Research / Website` 五个业务 Agent 已完成 `LLM-first + template fallback`。
+- 前端五个业务页开始按 `structured_output` 做结构化展示。
+- `source / fallback / fallback_reason / warnings` 已进入前端可见范围。
+- `backend/app.py` 已注册 `minidelivery_router`，保存到交付中心不再 404。
+- `/agents/{agent_id}/execute` 对普通业务 Agent 跳过 Governance Guard，避免业务产出被误拦截。
+- Marketing 页已从“小红书/抖音平台限制”扩展为文案类型选择：
+  - 通用文案
+  - 小红书
+  - 抖音
+  - SEO 长文
+  - 邮件营销
+  - 品牌策略
+  - 活动方案
+
+最近验证：
+
+```bash
+python -c "import backend.app; print('ok')"
+cd frontend-new && npm run build
+```
+
+已验证 `POST /agents/marketing/execute` 的 `brand_strategy` 请求可以返回 `ok=true`，不再被 `blocked_by_governance` 拦截。
+
+更详细的进度记录见：
+
+- `docs/project_progress_snapshot_2026-07-05.md`
+- `docs/project_progress_snapshot_2026-07-04.md`
+- `docs/VISION.md`
+
+## 下一步计划
+
+当前不要继续扩新框架，优先做端到端验收：
+
+1. 逐页测试 `Marketing / Image / Data / Research / Website`。
+2. 每页确认能生成、能展示结构化字段、能显示 fallback/source/warnings。
+3. 每页点击“保存到交付中心”。
+4. 打开 Delivery 页面检查预览和下载内容是否与页面展示一致。
+5. 如果保存后的 Markdown 丢字段，只修 `backend/routers/minidelivery_router.py` 的字段映射，不扩 MiniDelivery 功能。
+
+当前边界：
+
+- 不做真实图片生成。
+- 不把爬虫/OpenClaw 接进 Research。
+- 不让 Governance 接管普通业务 Agent 的生产链路。
+- 不改 Boss / Collaboration / sandbox，除非明确进入高风险执行阶段。
+- 不把 template fallback 伪装成真实 LLM 产出。
+
 ## ✨ 核心特性
 
 - 🤖 **10个AI智能体** — CEO/Codex/OpenClaw/QA/System/CTO/Image/Marketing/Video/Data
