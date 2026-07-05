@@ -71,6 +71,7 @@ desktop.ini
 
 # Playwright
 .playwright/
+test-results/
 frontend-new/test-results/
 
 # Temporary

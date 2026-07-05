@@ -1019,7 +1019,11 @@ class ApiClient {
   }
 
   async getMiniDeliveryArtifact(taskId: string) {
-    return this.request<string>(`/minidelivery/tasks/${taskId}/artifact`)
+    const response = await fetch(`${API_BASE}/minidelivery/tasks/${taskId}/artifact`)
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+    return response.text()
   }
 
   // ── MiniDelivery 下载 URL（Phase 2B）───────────────────────────────────

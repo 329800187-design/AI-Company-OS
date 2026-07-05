@@ -30,12 +30,35 @@ const AGENT_COLORS: Record<string, string> = {
 }
 
 export default function DeliveryPage() {
-  // 从 URL 读取 taskId，有则显示详情
+  // 从 URL 读取 taskId
   const getTaskIdFromUrl = () => {
     const params = new URLSearchParams(window.location.search)
     return params.get("taskId")
   }
   const [detailTaskId, setDetailTaskId] = useState<string | null>(getTaskIdFromUrl)
+
+  // 列表状态（hooks 必须在条件 return 之前声明）
+  const [tasks, setTasks] = useState<DeliveryTask[]>([])
+  const [warnings, setWarnings] = useState<string[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [total, setTotal] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+
+  // 筛选
+  const [filterAgent, setFilterAgent] = useState("")
+  const [filterType, setFilterType] = useState("")
+  const [searchQuery, setSearchQuery] = useState("")
+  const [debouncedQuery, setDebouncedQuery] = useState("")
+
+  // 预览
+  const [previewId, setPreviewId] = useState<string | null>(null)
+  const [previewContent, setPreviewContent] = useState("")
+  const [previewLoading, setPreviewLoading] = useState(false)
+
+  // 复制
+  const [copiedId, setCopiedId] = useState<string | null>(null)
 
   const navigateToDetail = (taskId: string) => {
     const url = new URL(window.location.href)
@@ -60,33 +83,6 @@ export default function DeliveryPage() {
     window.addEventListener("popstate", handler)
     return () => window.removeEventListener("popstate", handler)
   }, [])
-
-  // 如果有 taskId，显示详情页
-  if (detailTaskId) {
-    return <DeliveryDetail taskId={detailTaskId} onBack={navigateBack} />
-  }
-
-  const [tasks, setTasks] = useState<DeliveryTask[]>([])
-  const [warnings, setWarnings] = useState<string[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [total, setTotal] = useState(0)
-  const [hasMore, setHasMore] = useState(false)
-  const [loadingMore, setLoadingMore] = useState(false)
-
-  // 筛选
-  const [filterAgent, setFilterAgent] = useState("")
-  const [filterType, setFilterType] = useState("")
-  const [searchQuery, setSearchQuery] = useState("")
-  const [debouncedQuery, setDebouncedQuery] = useState("")
-
-  // 预览
-  const [previewId, setPreviewId] = useState<string | null>(null)
-  const [previewContent, setPreviewContent] = useState("")
-  const [previewLoading, setPreviewLoading] = useState(false)
-
-  // 复制
-  const [copiedId, setCopiedId] = useState<string | null>(null)
 
   const fetchTasks = useCallback(async (reset = true) => {
     if (reset) {
@@ -156,7 +152,6 @@ export default function DeliveryPage() {
   }
 
   const handleDownload = (taskId: string) => {
-    // 直接打开下载 URL，不加载进内存
     const downloadUrl = api.getMiniDeliveryDownloadUrl(taskId)
     window.open(downloadUrl, "_blank")
   }
@@ -172,9 +167,14 @@ export default function DeliveryPage() {
     }
   }
 
-  // 收集所有出现的 agent_id 和 artifact_type 用于筛选选项
+  // 收集筛选选项
   const agentIds = [...new Set(tasks.map(t => t.agent_id).filter(Boolean))]
   const artifactTypes = [...new Set(tasks.map(t => t.artifact_type).filter(Boolean))]
+
+  // 如果有 taskId，显示详情页
+  if (detailTaskId) {
+    return <DeliveryDetail taskId={detailTaskId} onBack={navigateBack} />
+  }
 
   return (
     <div className="max-w-5xl mx-auto p-6 space-y-6">

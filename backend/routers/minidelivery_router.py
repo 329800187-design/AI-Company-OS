@@ -936,13 +936,15 @@ def list_tasks(
         # 关键词搜索（大小写不敏感，匹配 result.json 元数据字段）
         if q:
             q_lower = q.lower()
-            searchable = " ".join([
-                entry.get("goal", ""),
-                entry.get("task_id", ""),
-                entry.get("agent_id", ""),
-                entry.get("artifact_type", ""),
-                entry.get("source_page", ""),
-            ]).lower()
+            searchable = " ".join(
+                str(v or "") for v in [
+                    entry.get("goal"),
+                    entry.get("task_id"),
+                    entry.get("agent_id"),
+                    entry.get("artifact_type"),
+                    entry.get("source_page"),
+                ]
+            ).lower()
             if q_lower not in searchable:
                 continue
 
