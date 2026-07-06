@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ClipboardList,
   Download,
+  EyeOff,
   FileText,
   Globe2,
   History,
@@ -398,6 +399,31 @@ export default function BossPage() {
     artifact_type?: string
   }>>([])
 
+  // 隐藏任务 ID 管理（localStorage）
+  const HIDDEN_KEY = "boss_lite_hidden_task_ids"
+  const getHiddenIds = (): string[] => {
+    try {
+      const raw = localStorage.getItem(HIDDEN_KEY)
+      return raw ? JSON.parse(raw) : []
+    } catch {
+      return []
+    }
+  }
+  const [hiddenTaskIds, setHiddenTaskIds] = useState<string[]>(getHiddenIds)
+
+  const hideTask = (taskId: string) => {
+    const next = [...hiddenTaskIds, taskId]
+    setHiddenTaskIds(next)
+    try { localStorage.setItem(HIDDEN_KEY, JSON.stringify(next)) } catch { /* ignore */ }
+    setLiteHistory((prev) => prev.filter((t) => t.task_id !== taskId))
+  }
+
+  const restoreAllHidden = () => {
+    setHiddenTaskIds([])
+    try { localStorage.removeItem(HIDDEN_KEY) } catch { /* ignore */ }
+    loadLiteHistory()
+  }
+
   // 时间本地化：ISO → 中文本地时间
   const formatLocalTime = (iso: string): string => {
     if (!iso) return "时间未知"
@@ -455,7 +481,8 @@ export default function BossPage() {
     setLiteHistoryLoading(true)
     try {
       const data = await api.listMiniDeliveryTasks({ agent_id: "boss", limit: 5 })
-      setLiteHistory(data.tasks || [])
+      const hidden = getHiddenIds()
+      setLiteHistory((data.tasks || []).filter((t: { task_id: string }) => !hidden.includes(t.task_id)))
     } catch (error) {
       console.error("Load lite history failed:", error)
       setLiteHistory([])
@@ -2005,6 +2032,18 @@ export default function BossPage() {
             <div className="flex items-center gap-2">
               <History className="h-4 w-4 text-[#8A8A8A]" />
               <h3 className="text-sm font-medium text-[#0B0B0B]">最近 Boss 作战记录</h3>
+              {hiddenTaskIds.length > 0 && (
+                <span className="text-xs text-[#B5B5B5]">
+                  已隐藏 {hiddenTaskIds.length} 条
+                  <button
+                    type="button"
+                    onClick={restoreAllHidden}
+                    className="ml-1.5 underline text-[#8A8A8A] hover:text-[#0B0B0B]"
+                  >
+                    恢复全部
+                  </button>
+                </span>
+              )}
             </div>
             <Button
               variant="ghost"
@@ -2097,6 +2136,15 @@ export default function BossPage() {
                     >
                       <FileText className="h-3.5 w-3.5" />
                       查看交付物
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => hideTask(task.task_id)}
+                      className="gap-1 text-[#B5B5B5] hover:text-[#8A8A8A]"
+                    >
+                      <EyeOff className="h-3.5 w-3.5" />
+                      隐藏
                     </Button>
                   </div>
                 </div>
