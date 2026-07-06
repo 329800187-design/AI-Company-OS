@@ -398,6 +398,9 @@ export default function BossPage() {
   // Boss Lite 历史搜索
   const [liteHistoryQuery, setLiteHistoryQuery] = useState("")
 
+  // Boss Lite 历史排序
+  const [liteHistorySort, setLiteHistorySort] = useState<"newest" | "oldest" | "task_id">("newest")
+
   // Boss Lite 历史记录
   const [liteHistory, setLiteHistory] = useState<Array<{
     task_id: string
@@ -459,14 +462,33 @@ export default function BossPage() {
     return "暂无摘要"
   }
 
-  // 本地搜索过滤
-  const filteredLiteHistory = (() => {
+  // 本地搜索过滤 + 排序（不修改原数组）
+  const visibleLiteHistory = (() => {
     const q = liteHistoryQuery.trim().toLowerCase()
-    if (!q) return liteHistory
-    return liteHistory.filter((t) => {
-      const fields = [t.task_id, t.goal, t.artifact_type, t.summary].filter(Boolean) as string[]
-      return fields.some((f) => f.toLowerCase().includes(q))
-    })
+    const filtered = q
+      ? liteHistory.filter((t) => {
+          const fields = [t.task_id, t.goal, t.artifact_type, t.summary].filter(Boolean) as string[]
+          return fields.some((f) => f.toLowerCase().includes(q))
+        })
+      : liteHistory
+
+    const sorted = [...filtered]
+    if (liteHistorySort === "newest" || liteHistorySort === "oldest") {
+      sorted.sort((a, b) => {
+        const da = a.created_at ? new Date(a.created_at).getTime() : NaN
+        const db = b.created_at ? new Date(b.created_at).getTime() : NaN
+        const aInvalid = isNaN(da)
+        const bInvalid = isNaN(db)
+        if (aInvalid && bInvalid) return 0
+        if (aInvalid) return 1
+        if (bInvalid) return -1
+        return liteHistorySort === "newest" ? db - da : da - db
+      })
+    } else if (liteHistorySort === "task_id") {
+      sorted.sort((a, b) => (a.task_id || "").localeCompare(b.task_id || ""))
+    }
+
+    return sorted
   })()
 
   const copyHistoryGoal = async (taskId: string, goalText: string) => {
@@ -2062,7 +2084,7 @@ export default function BossPage() {
               <h3 className="text-sm font-medium text-[#0B0B0B]">最近 Boss 作战记录</h3>
               {liteHistory.length > 0 && (
                 <span className="text-xs text-[#B5B5B5]">
-                  已显示 {filteredLiteHistory.length} / {liteHistory.length} 条
+                  已显示 {visibleLiteHistory.length} / {liteHistory.length} 条
                 </span>
               )}
               {hiddenTaskIds.length > 0 && (
@@ -2093,10 +2115,10 @@ export default function BossPage() {
               刷新
             </Button>
           </div>
-          {/* 搜索框 */}
+          {/* 搜索框 + 排序 */}
           {liteHistory.length > 0 && (
-            <div className="mb-4">
-              <div className="relative">
+            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#B5B5B5]" />
                 <input
                   type="text"
@@ -2106,6 +2128,15 @@ export default function BossPage() {
                   className="w-full rounded-lg border border-[#E5E5E5] bg-[#F9F9F7] pl-9 pr-3 py-2 text-sm text-[#0B0B0B] placeholder:text-[#B5B5B5] focus:outline-none focus:border-[#B5B5B5] transition-colors"
                 />
               </div>
+              <select
+                value={liteHistorySort}
+                onChange={(e) => setLiteHistorySort(e.target.value as "newest" | "oldest" | "task_id")}
+                className="rounded-lg border border-[#E5E5E5] bg-[#F9F9F7] px-3 py-2 text-sm text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5] transition-colors cursor-pointer shrink-0"
+              >
+                <option value="newest">最新优先</option>
+                <option value="oldest">最旧优先</option>
+                <option value="task_id">Task ID</option>
+              </select>
             </div>
           )}
           {liteHistoryLoading ? (
@@ -2119,12 +2150,12 @@ export default function BossPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {filteredLiteHistory.length === 0 ? (
+              {visibleLiteHistory.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-[#D8D8D2] bg-[#FAFAF8] p-5 text-sm text-[#6B6B6B]">
                   没有找到匹配的作战记录
                 </div>
               ) : (
-                filteredLiteHistory.map((task) => (
+                visibleLiteHistory.map((task) => (
                   <div
                     key={task.task_id}
                     className="flex items-start justify-between gap-4 rounded-xl border border-[#E5E5E5] p-4 transition-all hover:border-[#B5B5B5] hover:bg-[#F9F9F7]"
@@ -2227,7 +2258,7 @@ export default function BossPage() {
               {!liteHistoryHasMore && liteHistory.length > 0 && !liteHistoryQuery.trim() && (
                 <p className="text-center text-xs text-[#B5B5B5] pt-1">已显示全部</p>
               )}
-              {liteHistoryQuery.trim() && !liteHistoryHasMore && filteredLiteHistory.length > 0 && (
+              {liteHistoryQuery.trim() && !liteHistoryHasMore && visibleLiteHistory.length > 0 && (
                 <p className="text-center text-xs text-[#B5B5B5] pt-1">
                   清空搜索查看更多
                 </p>
