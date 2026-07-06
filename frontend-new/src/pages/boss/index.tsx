@@ -183,7 +183,6 @@ export default function BossPage() {
     delivery_task_id?: string
   } | null>(null)
   const [liteActiveAgent, setLiteActiveAgent] = useState<string>("")
-  const [liteSaved, setLiteSaved] = useState(false)
 
   const modules = currentMission?.modules || []
   const activeResult = modules.find((m) => m.module_id === activeModule) || null
@@ -243,7 +242,6 @@ export default function BossPage() {
 
     setIsRunning(true)
     setLiteResult(null)
-    setLiteSaved(false)
 
     try {
       const result = await api.bossLiteExecute(trimmed)
@@ -260,18 +258,10 @@ export default function BossPage() {
     }
   }
 
-  // Boss Lite: save to delivery (already auto-saved, just confirm)
-  const confirmLiteSave = () => {
-    if (liteResult?.delivery_task_id) {
-      setLiteSaved(true)
-    }
-  }
-
   // Boss Lite: reset to start new
   const resetLite = () => {
     setLiteResult(null)
     setLiteActiveAgent("")
-    setLiteSaved(false)
     setGoal("")
   }
 
@@ -764,7 +754,7 @@ export default function BossPage() {
                 className="w-full lg:w-auto"
               >
                 {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
-                一键执行
+                {isRunning ? "执行中，约需1分钟..." : "一键执行"}
               </Button>
             ) : (
               /* Command Center: two-phase flow */
@@ -920,11 +910,11 @@ export default function BossPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={confirmLiteSave}
-                    className="gap-1"
+                    disabled
+                    className="gap-1 opacity-70"
                   >
                     <CheckCircle2 className="h-3.5 w-3.5" />
-                    {liteSaved ? "已保存" : "保存到交付中心"}
+                    已保存到交付中心
                   </Button>
                 )}
               </div>

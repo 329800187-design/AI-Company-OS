@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
@@ -13,20 +13,26 @@ const backendRoutes = [
   '/integrations',
 ]
 
-export default defineConfig({
-  plugins: [react(), tailwindcss()],
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+  const backendTarget = env.VITE_BACKEND_TARGET || env.VITE_API_TARGET || 'http://localhost:8000'
+  const wsTarget = backendTarget.replace(/^http/, 'ws')
+
+  return {
+    plugins: [react(), tailwindcss()],
+    resolve: {
+      alias: {
+        '@': path.resolve(__dirname, './src'),
+      },
     },
-  },
-  server: {
-    proxy: {
-      ...Object.fromEntries(
-        backendRoutes.map(route => [route, 'http://localhost:8000'])
-      ),
-      '/api': 'http://localhost:8000',
-      '/ws': { target: 'ws://localhost:8000', ws: true },
+    server: {
+      proxy: {
+        ...Object.fromEntries(
+          backendRoutes.map(route => [route, backendTarget])
+        ),
+        '/api': backendTarget,
+        '/ws': { target: wsTarget, ws: true },
+      },
     },
-  },
+  }
 })
