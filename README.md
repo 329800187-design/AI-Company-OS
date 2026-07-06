@@ -4,9 +4,9 @@
 
 ## 最新状态（2026-07-06）
 
-当前项目已经完成：
+当前项目已完成第一阶段"业务部门 MVP 闭环"收口：
 
-> 五个业务页 + MiniDelivery 交付中心端到端闭环验收
+> 五个业务页 + MiniDelivery 交付中心端到端闭环验收完成，综合完成度约 95%
 
 已验收闭环：
 
@@ -19,21 +19,16 @@
 最近验证：
 
 ```bash
-python -c "import backend.app; print('ok')"
-cd frontend-new && npm run build
+python -c "import backend.app; print('ok')"  # ✅ 通过
+cd frontend-new && npm run build              # ✅ 通过
 ```
 
 详细进度见：
 
-- `docs/project_progress_snapshot_2026-07-06.md`
-- `docs/project_progress_snapshot_2026-07-05.md`
-- `docs/VISION.md`
-
-下一步建议：
-
-1. 做阶段冻结和用户使用说明。
-2. 检查首页/导航，让用户更容易进入五个业务页和 Delivery。
-3. 暂不扩真实图片生成、真实数据源、OpenClaw 联网调研。
+- `docs/phase1_acceptance_checklist.md` — 第一阶段验收清单
+- `docs/business_pages_user_guide.md` — 业务页面使用说明
+- `docs/project_progress_snapshot_2026-07-06.md` — 详细进度快照
+- `docs/VISION.md` — 项目愿景
 
 > 你告诉它"要做什么"，它自动拆解、分配、执行、验收，最后给你总结报告。
 
@@ -179,6 +174,26 @@ docker compose up -d
 docker compose logs -f
 ```
 
+### 本地开发注意事项
+
+```bash
+# 后端（端口 8000）
+python -m uvicorn backend.app:app --reload --port 8000
+
+# 前端开发模式（端口 5173）
+cd frontend-new
+npm install
+npm run dev
+```
+
+- 后端运行在 `localhost:8000`，前端 Vite dev server 运行在 `localhost:5173`。
+- Vite 已配置代理 `/minidelivery` 到后端，开发模式下保存和读取交付物可正常工作。
+- 如遇到 API 返回异常或列表为空，先重启后端和 Vite dev server。
+- 前端构建（`npm run build`）如遇内存不足，使用：`NODE_OPTIONS="--max-old-space-size=4096" npm run build`。
+- 业务页统一使用 `/agents/{agent_id}/execute` 端点。旧端点 `/agents/{agent_id}/run` 仍存在但不推荐使用。
+
+详细使用说明见：`docs/business_pages_user_guide.md`
+
 ## 📖 使用指南
 
 ### 访问界面
@@ -186,6 +201,7 @@ docker compose logs -f
 | 界面 | 地址 | 说明 |
 |------|------|------|
 | 新版UI（推荐） | http://localhost:8000/app | React科技感界面 |
+| 前端开发模式 | http://localhost:5173 | Vite dev server（热更新） |
 | 旧版UI | http://localhost:8000/ui | 经典界面 |
 | API文档 | http://localhost:8000/docs | Swagger文档 |
 | 健康检查 | http://localhost:8000/health | 服务状态 |
@@ -270,7 +286,8 @@ AI Company OS
 | `/commander/chat/send` | POST | AI对话（支持上下文） |
 | `/commander/run` | POST | 同步执行任务 |
 | `/commander/run-async` | POST | 异步执行任务 |
-| `/agents/{agent}/run` | POST | 调用指定Agent |
+| `/agents/{agent}/execute` | POST | 调用指定Agent（推荐） |
+| `/agents/{agent}/run` | POST | 调用指定Agent（旧版，不推荐） |
 | `/data/upload` | POST | 上传数据文件 |
 | `/config/save` | POST | 保存配置 |
 
