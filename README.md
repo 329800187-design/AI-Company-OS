@@ -190,10 +190,37 @@ npm run dev
 ```
 
 - 后端运行在 `localhost:8000`，前端 Vite dev server 运行在 `localhost:5173`。
-- Vite 已配置代理 `/minidelivery` 到后端，开发模式下保存和读取交付物可正常工作。
+- Vite 代理默认指向 `http://localhost:8000`（见 `frontend-new/vite.config.ts`）。
+- 如需临时指向其他后端，启动前端时指定环境变量：
+  ```bash
+  # macOS/Linux/Git Bash：指向 8001 端口的后端（临时调试用）
+  VITE_BACKEND_TARGET=http://localhost:8001 npm run dev
+  ```
+  ```powershell
+  # Windows PowerShell
+  $env:VITE_BACKEND_TARGET="http://localhost:8001"; npm run dev
+  ```
+  ```cmd
+  :: Windows cmd
+  set VITE_BACKEND_TARGET=http://localhost:8001&& npm run dev
+  ```
 - 如遇到 API 返回异常或列表为空，先重启后端和 Vite dev server。
 - 前端构建（`npm run build`）如遇内存不足，使用：`NODE_OPTIONS="--max-old-space-size=4096" npm run build`。
 - 业务页统一使用 `/agents/{agent_id}/execute` 端点。旧端点 `/agents/{agent_id}/run` 仍存在但不推荐使用。
+
+**验证代理是否指向正确后端：**
+
+```bash
+# 应看到 total_duration_ms / handoff_enabled / execution_mode 字段
+curl "http://localhost:5173/minidelivery/tasks?agent_id=boss&limit=1"
+```
+
+如果看不到复盘字段，说明 5173 代理到了旧后端。解决方法：
+1. 确认后端在 8000 端口启动（不是 8001）
+2. 重启 Vite dev server（`npm run dev`）
+3. 或临时把前端代理指向 `8001` 后重新启动 Vite：
+   - macOS/Linux/Git Bash：`VITE_BACKEND_TARGET=http://localhost:8001 npm run dev`
+   - Windows PowerShell：`$env:VITE_BACKEND_TARGET="http://localhost:8001"; npm run dev`
 
 详细使用说明见：`docs/business_pages_user_guide.md`
 

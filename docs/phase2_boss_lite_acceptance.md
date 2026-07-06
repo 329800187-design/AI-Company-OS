@@ -449,4 +449,13 @@ python -c "import backend.app; print('ok')"
 
 # 前端构建验证
 cd frontend-new && npm run build
+
+# 验证代理是否指向正确后端（应看到 total_duration_ms / handoff_enabled / execution_mode）
+curl "http://localhost:5173/minidelivery/tasks?agent_id=boss&limit=1"
 ```
+
+> 如果 5173 看不到复盘字段，确认后端在 8000 端口启动，重启 Vite dev server。
+> 临时调试可指定后端代理：
+> - macOS/Linux/Git Bash：`VITE_BACKEND_TARGET=http://localhost:8001 npm run dev`
+> - Windows PowerShell：`$env:VITE_BACKEND_TARGET="http://localhost:8001"; npm run dev`
+> - Windows cmd：`set VITE_BACKEND_TARGET=http://localhost:8001&& npm run dev`
