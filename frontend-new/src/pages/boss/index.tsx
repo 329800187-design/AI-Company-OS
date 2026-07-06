@@ -893,6 +893,7 @@ export default function BossPage() {
 
       {/* Goal Input Card */}
       <motion.div
+        id="boss-goal-input"
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, delay: 0.1 }}
@@ -2048,15 +2049,36 @@ export default function BossPage() {
                       {getSummaryFallback(task)}
                     </p>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => viewDelivery(task.task_id)}
-                    className="shrink-0 gap-1"
-                  >
-                    <FileText className="h-3.5 w-3.5" />
-                    查看交付物
-                  </Button>
+                  <div className="shrink-0 flex items-center gap-2">
+                    {task.goal?.trim() && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setGoal(task.goal || "")
+                          setLiteResult(null)
+                          setLiteActiveAgent("")
+                          setLiteProgressPhase(0)
+                          setTimeout(() => {
+                            document.getElementById("boss-goal-input")?.scrollIntoView({ behavior: "smooth", block: "center" })
+                          }, 100)
+                        }}
+                        className="gap-1"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        复用目标
+                      </Button>
+                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => viewDelivery(task.task_id)}
+                      className="gap-1"
+                    >
+                      <FileText className="h-3.5 w-3.5" />
+                      查看交付物
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
