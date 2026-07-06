@@ -394,7 +394,35 @@ export default function BossPage() {
     goal: string
     created_at: string
     summary?: string
+    artifact_type?: string
   }>>([])
+
+  // 时间本地化：ISO → 中文本地时间
+  const formatLocalTime = (iso: string): string => {
+    if (!iso) return "时间未知"
+    try {
+      const d = new Date(iso)
+      if (isNaN(d.getTime())) return "时间未知"
+      const y = d.getFullYear()
+      const m = d.getMonth() + 1
+      const day = d.getDate()
+      const h = d.getHours().toString().padStart(2, "0")
+      const min = d.getMinutes().toString().padStart(2, "0")
+      return `${y}/${m}/${day} ${h}:${min}`
+    } catch {
+      return "时间未知"
+    }
+  }
+
+  // 摘要兜底：summary → goal 前 60 字 → "暂无摘要"
+  const getSummaryFallback = (task: { summary?: string; goal?: string }): string => {
+    if (task.summary?.trim()) return task.summary.trim()
+    if (task.goal?.trim()) {
+      const t = task.goal.trim()
+      return t.length > 60 ? t.slice(0, 60) + "…" : t
+    }
+    return "暂无摘要"
+  }
   const [liteHistoryLoading, setLiteHistoryLoading] = useState(false)
 
   const modules = currentMission?.modules || []
@@ -2000,22 +2028,25 @@ export default function BossPage() {
                   className="flex items-start justify-between gap-4 rounded-xl border border-[#E5E5E5] p-4 transition-all hover:border-[#B5B5B5] hover:bg-[#F9F9F7]"
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 mb-1">
+                    <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                       <span className="text-xs font-mono text-[#8A8A8A] bg-[#F4F3EF] px-2 py-0.5 rounded">
-                        {task.task_id}
+                        {task.task_id || "—"}
                       </span>
+                      {task.artifact_type && (
+                        <span className="text-[10px] font-medium text-[#6B6B6B] bg-[#EEF0E8] px-1.5 py-0.5 rounded">
+                          {task.artifact_type}
+                        </span>
+                      )}
                       <span className="text-xs text-[#B5B5B5]">
-                        {task.created_at}
+                        {formatLocalTime(task.created_at)}
                       </span>
                     </div>
                     <p className="text-sm font-medium text-[#0B0B0B] truncate">
-                      {task.goal || "未命名作战任务"}
+                      {task.goal?.trim() || "未命名作战任务"}
                     </p>
-                    {task.summary && (
-                      <p className="mt-1 text-xs text-[#8A8A8A] line-clamp-2">
-                        {task.summary}
-                      </p>
-                    )}
+                    <p className="mt-1 text-xs text-[#8A8A8A] line-clamp-2">
+                      {getSummaryFallback(task)}
+                    </p>
                   </div>
                   <Button
                     variant="outline"
