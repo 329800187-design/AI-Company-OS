@@ -439,6 +439,45 @@ class ApiClient {
     })
   }
 
+  // Boss Lite API
+  async bossLiteExecute(goal: string, agents?: string[], saveToDelivery = true) {
+    return this.request<{
+      ok: boolean
+      task_id: string
+      goal: string
+      plan: Array<{
+        step: number
+        agent_id: string
+        task_type: string
+        title: string
+        prompt: string
+        purpose: string
+        status: string
+      }>
+      results: Array<{
+        agent_id: string
+        title: string
+        ok: boolean
+        summary: string
+        structured_output: Record<string, unknown>
+        warnings: string[]
+        errors: string[]
+        error?: string
+      }>
+      summary: {
+        text: string
+        succeeded: number
+        failed: number
+        total: number
+      }
+      structured_output: Record<string, unknown>
+      delivery_task_id?: string
+    }>("/boss/lite/execute", {
+      method: "POST",
+      body: { goal, agents, save_to_delivery: saveToDelivery },
+    })
+  }
+
   async getMissionEvents(missionId: string) {
     return this.request<{
       mission_id: string

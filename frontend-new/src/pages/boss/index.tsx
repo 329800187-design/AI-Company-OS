@@ -19,6 +19,10 @@ import {
   SkipForward,
   Sparkles,
   Target,
+  Zap,
+  BarChart3,
+  Palette,
+  BookOpen,
 } from "lucide-react"
 import { api } from "@/api/client"
 import { Badge } from "@/components/ui/badge"
@@ -115,9 +119,21 @@ const examples = [
   "帮我调研 AI 陪伴产品的市场机会，并给出第一版运营动作",
   "给我的知识付费课程做一套小红书推广方案和落地页草稿",
   "分析 5 个同类 SaaS 竞品，找出我们可以切入的差异化卖点",
+  "我要为一个手工银饰品牌做一次新品上线",
 ]
 
+// Boss Lite agent icons
+const agentIcons: Record<string, React.ElementType> = {
+  research: BookOpen,
+  marketing: Megaphone,
+  image: Palette,
+  data: BarChart3,
+  website: Globe2,
+}
+
 export default function BossPage() {
+  // Mode: "command-center" or "boss-lite"
+  const [mode, setMode] = useState<"command-center" | "boss-lite">("boss-lite")
   const [goal, setGoal] = useState("")
   const [activeModule, setActiveModule] = useState("strategy")
   const [isRunning, setIsRunning] = useState(false)
@@ -132,6 +148,42 @@ export default function BossPage() {
   const [selectedTemplate, setSelectedTemplate] = useState<MissionTemplate | null>(null)
   const [allowBrowserAutomation, setAllowBrowserAutomation] = useState(false)
   const [exportToast, setExportToast] = useState<"json" | "markdown" | null>(null)
+
+  // Boss Lite state
+  const [liteResult, setLiteResult] = useState<{
+    ok: boolean
+    task_id: string
+    goal: string
+    plan: Array<{
+      step: number
+      agent_id: string
+      task_type: string
+      title: string
+      prompt: string
+      purpose: string
+      status: string
+    }>
+    results: Array<{
+      agent_id: string
+      title: string
+      ok: boolean
+      summary: string
+      structured_output: Record<string, unknown>
+      warnings: string[]
+      errors: string[]
+      error?: string
+    }>
+    summary: {
+      text: string
+      succeeded: number
+      failed: number
+      total: number
+    }
+    structured_output: Record<string, unknown>
+    delivery_task_id?: string
+  } | null>(null)
+  const [liteActiveAgent, setLiteActiveAgent] = useState<string>("")
+  const [liteSaved, setLiteSaved] = useState(false)
 
   const modules = currentMission?.modules || []
   const activeResult = modules.find((m) => m.module_id === activeModule) || null
@@ -182,6 +234,45 @@ export default function BossPage() {
     } catch (error) {
       console.error("Load templates failed:", error)
     }
+  }
+
+  // Boss Lite: execute all agents
+  const executeBossLite = async () => {
+    const trimmed = goal.trim()
+    if (!trimmed || isRunning) return
+
+    setIsRunning(true)
+    setLiteResult(null)
+    setLiteSaved(false)
+
+    try {
+      const result = await api.bossLiteExecute(trimmed)
+      setLiteResult(result)
+      if (result.results.length > 0) {
+        setLiteActiveAgent(result.results[0].agent_id)
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "执行失败"
+      console.error("Boss Lite execute failed:", error)
+      alert(`Boss Lite 执行失败: ${errorMsg}`)
+    } finally {
+      setIsRunning(false)
+    }
+  }
+
+  // Boss Lite: save to delivery (already auto-saved, just confirm)
+  const confirmLiteSave = () => {
+    if (liteResult?.delivery_task_id) {
+      setLiteSaved(true)
+    }
+  }
+
+  // Boss Lite: reset to start new
+  const resetLite = () => {
+    setLiteResult(null)
+    setLiteActiveAgent("")
+    setLiteSaved(false)
+    setGoal("")
   }
 
   // 加载事件日志
@@ -408,21 +499,65 @@ export default function BossPage() {
               老板运营指挥台
             </h1>
             <p className="text-sm text-[#8A8A8A] mt-2">
-              输入一个业务目标，生成市场、营销、页面和执行清单。
+              输入一个业务目标，AI 自动拆解为多部门协同执行方案。
             </p>
+            {/* Mode Toggle */}
+            <div className="flex items-center gap-2 mt-4">
+              <button
+                type="button"
+                onClick={() => setMode("boss-lite")}
+                className={cn(
+                  "px-4 py-2 rounded-lg text-sm font-medium transition-all",
+                  mode === "boss-lite"
+                    ? "bg-[#0B0B0B] text-white"
+                    : "bg-[#F4F3EF] text-[#8A8A8A] hover:text-[#0B0B0B]"
+                )}
+              >
+                <Zap className="inline-block h-3.5 w-3.5 mr-1.5" />
+                Boss Lite
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("command-center")}
+                className={cn(
+                  "px-4 py-2 rounded-lg text-sm font-medium transition-all",
+                  mode === "command-center"
+                    ? "bg-[#0B0B0B] text-white"
+                    : "bg-[#F4F3EF] text-[#8A8A8A] hover:text-[#0B0B0B]"
+                )}
+              >
+                <Target className="inline-block h-3.5 w-3.5 mr-1.5" />
+                指挥台
+              </button>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
-            {modules.length > 0 && (
+            {mode === "command-center" && modules.length > 0 && (
               <Badge variant={failedCount > 0 ? "warning" : completedCount === modules.length - skippedCount ? "success" : "secondary"}>
                 {completedCount}/{modules.length - skippedCount} 完成
               </Badge>
             )}
-            {currentMission && (
+            {mode === "command-center" && currentMission && (
               <Button variant="outline" size="sm" onClick={() => handleExport("markdown")} className="gap-1">
                 <Download className="h-3.5 w-3.5" />
                 导出
               </Button>
+            )}
+
+            {/* Boss Lite header actions */}
+            {mode === "boss-lite" && liteResult && (
+              <>
+                {liteResult.delivery_task_id && (
+                  <Badge variant="outline">
+                    交付物: {liteResult.delivery_task_id}
+                  </Badge>
+                )}
+                <Button variant="outline" size="sm" onClick={resetLite} className="gap-1">
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  新任务
+                </Button>
+              </>
             )}
 
             {/* Metrics 小面板 */}
@@ -465,8 +600,8 @@ export default function BossPage() {
         </div>
       </motion.div>
 
-      {/* 历史面板 */}
-      {showHistory && (
+      {/* 历史面板 — only in command-center mode */}
+      {mode === "command-center" && showHistory && (
         <div className="p-4 rounded-2xl border border-[#E5E5E5] bg-white">
           <h3 className="mb-3 font-medium text-sm text-[#8A8A8A] tracking-wider uppercase">最近的 Mission</h3>
           {recentMissions.length === 0 ? (
@@ -523,8 +658,8 @@ export default function BossPage() {
               ))}
             </div>
 
-            {/* 模块选择 + 模板入口 */}
-            {!currentMission && (
+            {/* 模块选择 + 模板入口 — only in command-center mode */}
+            {mode === "command-center" && !currentMission && (
               <div className="space-y-3 pt-2">
                 <div className="flex flex-wrap items-center gap-3">
                   <span className="text-xs font-medium text-muted-foreground">执行模块：</span>
@@ -591,77 +726,94 @@ export default function BossPage() {
             )}
           </div>
 
-          {/* 浏览器自动化授权 */}
-          <div className="flex items-center gap-3 rounded-xl border border-[#E5E5E5] bg-[#F4F3EF] px-4 py-2.5">
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={allowBrowserAutomation}
-                onChange={(e) => setAllowBrowserAutomation(e.target.checked)}
-                className="h-4 w-4 rounded border-[#D4D4D4] accent-[#0B0B0B]"
-              />
-              {allowBrowserAutomation ? (
-                <Shield className="h-4 w-4 text-[#4A8A5A]" />
-              ) : (
-                <ShieldOff className="h-4 w-4 text-[#B5B5B5]" />
+          {/* 浏览器自动化授权 — only in command-center mode */}
+          {mode === "command-center" && (
+            <div className="flex items-center gap-3 rounded-xl border border-[#E5E5E5] bg-[#F4F3EF] px-4 py-2.5">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={allowBrowserAutomation}
+                  onChange={(e) => setAllowBrowserAutomation(e.target.checked)}
+                  className="h-4 w-4 rounded border-[#D4D4D4] accent-[#0B0B0B]"
+                />
+                {allowBrowserAutomation ? (
+                  <Shield className="h-4 w-4 text-[#4A8A5A]" />
+                ) : (
+                  <ShieldOff className="h-4 w-4 text-[#B5B5B5]" />
+                )}
+                <span className="text-sm font-medium text-[#0B0B0B]">
+                  允许本次打开浏览器采集数据
+                </span>
+              </label>
+              {allowBrowserAutomation && (
+                <span className="text-xs text-[#8A8A8A]">
+                  （仅本次任务生效，不会永久保存）
+                </span>
               )}
-              <span className="text-sm font-medium text-[#0B0B0B]">
-                允许本次打开浏览器采集数据
-              </span>
-            </label>
-            {allowBrowserAutomation && (
-              <span className="text-xs text-[#8A8A8A]">
-                （仅本次任务生效，不会永久保存）
-              </span>
-            )}
-          </div>
+            </div>
+          )}
 
           <div className="flex items-end gap-3">
-            {!currentMission || currentMission.status === "pending_review" || currentMission.status === "pending" ? (
-              <>
-                {/* 阶段1: 生成计划 */}
-                <Button
-                  onClick={createPlan}
-                  disabled={!goal.trim() || isRunning || enabledModules.length === 0}
-                  variant="default"
-                  size="lg"
-                  className="w-full lg:w-auto"
-                >
-                  {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
-                  生成计划
-                </Button>
-                {/* 阶段2: 确认执行（仅在计划已创建时显示） */}
-                {currentMission && (
-                  <Button
-                    onClick={confirmRun}
-                    disabled={isRunning}
-                    variant="default"
-                    size="lg"
-                    className="w-full lg:w-auto bg-green hover:bg-green/90"
-                  >
-                    {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                    确认执行
-                  </Button>
-                )}
-              </>
-            ) : (
+            {mode === "boss-lite" ? (
+              /* Boss Lite: single execute button */
               <Button
-                onClick={confirmRun}
-                disabled={isRunning}
-                variant="outline"
+                onClick={executeBossLite}
+                disabled={!goal.trim() || isRunning}
+                variant="default"
                 size="lg"
                 className="w-full lg:w-auto"
               >
-                {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
-                重新执行
+                {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+                一键执行
               </Button>
+            ) : (
+              /* Command Center: two-phase flow */
+              !currentMission || currentMission.status === "pending_review" || currentMission.status === "pending" ? (
+                <>
+                  {/* 阶段1: 生成计划 */}
+                  <Button
+                    onClick={createPlan}
+                    disabled={!goal.trim() || isRunning || enabledModules.length === 0}
+                    variant="default"
+                    size="lg"
+                    className="w-full lg:w-auto"
+                  >
+                    {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+                    生成计划
+                  </Button>
+                  {/* 阶段2: 确认执行（仅在计划已创建时显示） */}
+                  {currentMission && (
+                    <Button
+                      onClick={confirmRun}
+                      disabled={isRunning}
+                      variant="default"
+                      size="lg"
+                      className="w-full lg:w-auto bg-green hover:bg-green/90"
+                    >
+                      {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                      确认执行
+                    </Button>
+                  )}
+                </>
+              ) : (
+                <Button
+                  onClick={confirmRun}
+                  disabled={isRunning}
+                  variant="outline"
+                  size="lg"
+                  className="w-full lg:w-auto"
+                >
+                  {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                  重新执行
+                </Button>
+              )
             )}
           </div>
         </div>
       </motion.div>
 
-      {/* Mission 状态横幅 + 审核按钮 */}
-      {currentMission && (
+      {/* Mission 状态横幅 + 审核按钮 — only in command-center mode */}
+      {mode === "command-center" && currentMission && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -731,8 +883,198 @@ export default function BossPage() {
         </motion.div>
       )}
 
-      {/* 模块导航 + 结果 */}
-      {modules.length > 0 && (
+      {/* Boss Lite Results */}
+      {mode === "boss-lite" && liteResult && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="space-y-4"
+        >
+          {/* Summary Banner */}
+          <div className={cn(
+            "p-4 rounded-2xl border",
+            liteResult.ok ? "border-green/30 bg-green/5" : "border-red/30 bg-red/5"
+          )}>
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                {liteResult.ok ? (
+                  <CheckCircle2 className="h-5 w-5 text-green" />
+                ) : (
+                  <AlertCircle className="h-5 w-5 text-red-500" />
+                )}
+                <div>
+                  <span className="font-medium text-sm">{liteResult.summary.text}</span>
+                  {liteResult.delivery_task_id && (
+                    <span className="ml-3 text-xs text-muted-foreground">
+                      交付物 ID: {liteResult.delivery_task_id}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant="success">{liteResult.summary.succeeded} 成功</Badge>
+                {liteResult.summary.failed > 0 && (
+                  <Badge variant="destructive">{liteResult.summary.failed} 失败</Badge>
+                )}
+                {liteResult.delivery_task_id && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={confirmLiteSave}
+                    className="gap-1"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    {liteSaved ? "已保存" : "保存到交付中心"}
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Agent Navigation + Results */}
+          <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
+            <div className="space-y-3">
+              {liteResult.results.map((r) => {
+                const isActive = liteActiveAgent === r.agent_id
+
+                return (
+                  <button
+                    key={r.agent_id}
+                    type="button"
+                    onClick={() => setLiteActiveAgent(r.agent_id)}
+                    className={cn(
+                      "w-full rounded-xl border p-4 text-left transition-all",
+                      isActive
+                        ? "border-primary/50 bg-primary/10"
+                        : "border-border bg-card/70 hover:border-primary/30 hover:bg-accent/50"
+                    )}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background/70">
+                        {r.ok ? (
+                          <CheckCircle2 className="h-4 w-4 text-green" />
+                        ) : (
+                          <AlertCircle className="h-4 w-4 text-yellow" />
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium">{r.title}</span>
+                          <Badge variant={r.ok ? "success" : "destructive"}>
+                            {r.ok ? "成功" : "失败"}
+                          </Badge>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground line-clamp-2">
+                          {r.summary || ""}
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Active Agent Result Detail */}
+            {liteResult.results.map((r) => {
+              if (r.agent_id !== liteActiveAgent) return null
+              const Icon = agentIcons[r.agent_id] || FileText
+
+              return (
+                <motion.div
+                  key={r.agent_id}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <div className="min-h-[520px] p-6 rounded-2xl border border-[#E5E5E5] bg-white">
+                    <div className="mb-5 flex flex-col gap-3 border-b border-border pb-4 md:flex-row md:items-start md:justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                          <Icon className="h-5 w-5 text-primary" />
+                        </div>
+                        <div>
+                          <h2 className="text-xl font-semibold">{r.title}</h2>
+                          <p className="text-sm text-muted-foreground">{r.agent_id}</p>
+                        </div>
+                      </div>
+                      <Badge variant={r.ok ? "success" : "destructive"}>
+                        {r.ok ? "成功" : "失败"}
+                      </Badge>
+                    </div>
+
+                    {/* Summary */}
+                    {r.summary && (
+                      <div className="rounded-lg border border-border bg-background/60 p-4 mb-4">
+                        <h4 className="mb-2 text-sm font-medium">摘要</h4>
+                        <p className="text-sm text-muted-foreground">{r.summary}</p>
+                      </div>
+                    )}
+
+                    {/* Structured Output */}
+                    {r.structured_output && Object.keys(r.structured_output).length > 0 && (() => {
+                      const so = r.structured_output
+                      const provider = so.provider as string | undefined
+                      const soSummary = so.summary as string | undefined
+                      return (
+                        <div className="space-y-3">
+                          {/* Provider info */}
+                          {provider && (
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <span>Provider:</span>
+                              <Badge variant="outline">{provider}</Badge>
+                            </div>
+                          )}
+
+                          {/* Summary */}
+                          {soSummary && (
+                            <div className="rounded-lg border border-border bg-background/60 p-4">
+                              <h4 className="mb-2 text-sm font-medium">详细摘要</h4>
+                              <p className="text-sm text-muted-foreground">{soSummary}</p>
+                            </div>
+                          )}
+
+                          {/* Generic structured data */}
+                          <div className="rounded-lg border border-border bg-background/60 p-4">
+                            <h4 className="mb-2 text-sm font-medium">结构化产出</h4>
+                            <pre className="whitespace-pre-wrap break-words font-sans text-xs text-muted-foreground max-h-[400px] overflow-y-auto">
+                              {JSON.stringify(so, null, 2)}
+                            </pre>
+                          </div>
+                        </div>
+                      )
+                    })()}
+
+                    {/* Warnings */}
+                    {r.warnings.length > 0 && (
+                      <div className="mt-4 rounded-lg border border-yellow/20 bg-yellow/10 p-3">
+                        {r.warnings.map((w, i) => (
+                          <div key={i} className="flex items-start gap-2 text-sm text-yellow">
+                            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                            <span>{w}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Errors */}
+                    {r.error && (
+                      <div className="mt-4 rounded-lg border border-red/20 bg-red/5 p-3">
+                        <div className="flex items-start gap-2 text-sm text-red-500">
+                          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                          <span>{r.error}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              )
+            })}
+          </div>
+        </motion.div>
+      )}
+
+      {/* 模块导航 + 结果 — only in command-center mode */}
+      {mode === "command-center" && modules.length > 0 && (
         <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
           <div className="space-y-3">
             {modules.map((module) => {
@@ -1165,8 +1507,8 @@ export default function BossPage() {
         </div>
       )}
 
-      {/* 运行日志面板 */}
-      {currentMission && events.length > 0 && (
+      {/* 运行日志面板 — only in command-center mode */}
+      {mode === "command-center" && currentMission && events.length > 0 && (
         <div className="p-4 rounded-2xl border border-[#E5E5E5] bg-white">
           <button
             type="button"
@@ -1215,8 +1557,8 @@ export default function BossPage() {
         </div>
       )}
 
-      {/* 空状态（无 mission 时） */}
-      {!currentMission && !showHistory && (
+      {/* 空状态（无 mission 时） — only in command-center mode */}
+      {mode === "command-center" && !currentMission && !showHistory && (
         <div className="p-6 rounded-2xl border border-dashed border-[#E5E5E5] bg-white">
           <div className="flex min-h-[300px] flex-col items-center justify-center text-center">
             <Briefcase className="mb-3 h-12 w-12 text-[#D4D4D4]" />
@@ -1224,6 +1566,30 @@ export default function BossPage() {
             <p className="mt-2 max-w-md text-sm text-[#8A8A8A]">
               系统会先拆成 5 个模块（战略、市场、营销、落地页、执行清单）。您确认后逐一执行，并保存结果供人工审核。
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* Boss Lite 空状态 */}
+      {mode === "boss-lite" && !liteResult && !isRunning && (
+        <div className="p-6 rounded-2xl border border-dashed border-[#E5E5E5] bg-white">
+          <div className="flex min-h-[300px] flex-col items-center justify-center text-center">
+            <Zap className="mb-3 h-12 w-12 text-[#D4D4D4]" />
+            <h3 className="text-lg font-medium text-[#0B0B0B]">Boss Lite：一句话启动多 Agent 协同</h3>
+            <p className="mt-2 max-w-md text-sm text-[#8A8A8A]">
+              输入业务目标，系统自动拆解为市场调研、营销方案、视觉方案、数据分析、落地页方案 5 个任务，由对应 Agent 依次执行，结果自动保存到交付中心。
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2 justify-center">
+              {["research", "marketing", "image", "data", "website"].map((id) => {
+                const Icon = agentIcons[id] || FileText
+                return (
+                  <div key={id} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[#E5E5E5] text-xs text-[#8A8A8A]">
+                    <Icon className="h-3.5 w-3.5" />
+                    {id === "research" ? "市场调研" : id === "marketing" ? "营销方案" : id === "image" ? "视觉方案" : id === "data" ? "数据分析" : "落地页"}
+                  </div>
+                )
+              })}
+            </div>
           </div>
         </div>
       )}

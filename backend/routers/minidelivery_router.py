@@ -785,6 +785,65 @@ def _render_generic(result: Dict, goal: str, title: Optional[str] = None) -> str
     return "\n".join(lines)
 
 
+def _render_boss(result: Dict, goal: str, title: Optional[str] = None) -> str:
+    """渲染 boss agent 的 Markdown 交付物（Boss Lite 汇总报告）"""
+    so = result.get("structured_output") or result.get("output") or {}
+    lines = [f"# {title or 'Boss Lite 作战报告'}", "", f"> **业务目标：** {goal}", "", "---", ""]
+
+    # 执行计划
+    plan = so.get("plan", [])
+    if plan:
+        lines += ["## 执行计划", ""]
+        for task in plan:
+            status_icon = "✅" if task.get("status") == "done" else "❌" if task.get("status") == "failed" else "⏳"
+            lines.append(f"{status_icon} **{task.get('title', '')}** ({task.get('agent_id', '')}) — {task.get('purpose', '')}")
+        lines.append("")
+
+    # 各部门结果
+    results_summary = so.get("results_summary", [])
+    if results_summary:
+        lines += ["---", "", "## 各部门执行结果", ""]
+        for r in results_summary:
+            status_icon = "✅" if r.get("ok") else "❌"
+            lines.append(f"### {status_icon} {r.get('title', '')} ({r.get('agent_id', '')})")
+            lines.append("")
+            if r.get("summary"):
+                lines.append(f"> {r['summary']}")
+                lines.append("")
+
+    # 总结
+    succeeded = so.get("succeeded", 0)
+    failed = so.get("failed", 0)
+    total = so.get("total", 0)
+    lines += [
+        "---",
+        "",
+        "## 总结",
+        "",
+        f"- 成功: {succeeded}/{total}",
+        f"- 失败: {failed}/{total}",
+        "",
+        "---",
+        "",
+        "## 最终建议",
+        "",
+        "根据以上各部门的分析，建议按以下优先级推进：",
+        "",
+        "1. 先确认市场调研的核心发现，验证目标用户需求",
+        "2. 基于营销方案准备第一批内容素材",
+        "3. 使用视觉方案制作配图和封面",
+        "4. 参考落地页方案搭建转化页面",
+        "5. 按数据分析框架建立效果追踪体系",
+        "",
+        "---",
+        "",
+        f"*由 AI Company OS Boss Lite 生成 · {so.get('generated_at', '')}*",
+    ]
+
+    _append_meta(lines, result)
+    return "\n".join(lines)
+
+
 def _append_meta(lines: list, result: Dict) -> None:
     """追加 warnings/errors/metadata 到 Markdown 末尾"""
     warnings = result.get("warnings", [])
@@ -815,6 +874,7 @@ _RENDERER_MAP = {
     "data": _render_data,
     "research": _render_research,
     "website": _render_website,
+    "boss": _render_boss,
 }
 
 
