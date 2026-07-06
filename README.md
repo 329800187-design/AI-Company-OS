@@ -2,19 +2,32 @@
 
 **版本 1.5.0**
 
-## 最新状态（2026-07-06）
+## 最新状态（2026-07-07）
 
-当前项目已完成第一阶段"业务部门 MVP 闭环"收口：
+### 第一阶段：业务部门 MVP 闭环 ✅ 已完成
 
-> 五个业务页 + MiniDelivery 交付中心端到端闭环验收完成，综合完成度约 95%
+五个业务页 + MiniDelivery 交付中心端到端闭环验收完成。
 
-已验收闭环：
+### 第二阶段：Boss Lite ✅ 已基本完成
 
-- `Marketing`：7 种模式均通过浏览器验收，包括通用文案、小红书、抖音、SEO 长文、邮件营销、品牌策略、活动方案。
-- `Image / Data / Research / Website`：均通过生成、结构化展示、保存到交付中心、Delivery 搜索/预览/详情/下载。
-- `MiniDelivery`：列表、搜索、详情、artifact 预览、下载均可用。
-- `Delivery` 页面：可按 `task_id` 搜索交付物，预览和详情页正常。
-- 开发模式：Vite 已代理 `/minidelivery`，前端保存和读取交付物可走本地后端。
+> 一句话目标 → 5 个 Agent 并行执行 → 可读作战报告 → 自动保存交付中心
+
+当前推荐入口：**http://localhost:5173/app?page=boss**
+
+当前分支：`codex/current-progress-20260705`
+
+Boss Lite 已完成能力：
+
+- 一句话目标输入，支持 8 个常用作战模板一键填入
+- 自动拆解为 5 个业务 Agent：research / marketing / image / data / website
+- 5 个 Agent 并行执行（ThreadPoolExecutor，max_workers=5）
+- 可读的 Boss 作战报告（Markdown 格式，含各部门结论和 Boss 建议）
+- 自动保存到 MiniDelivery（artifact.md + raw_agent_result.json + result.json）
+- Delivery 搜索/预览/详情/下载全部可用
+- 进度 UI（4 阶段动画）
+- 总耗时 + 单 Agent 耗时统计
+
+已验证 task_id 示例：`boss_b8241c004c4d`、`boss_0fbb4623b07b`、`boss_d93dae73ab76`
 
 最近验证：
 
@@ -25,6 +38,7 @@ cd frontend-new && npm run build              # ✅ 通过
 
 详细进度见：
 
+- `docs/phase2_boss_lite_acceptance.md` — 第二阶段 Boss Lite 验收清单
 - `docs/phase1_acceptance_checklist.md` — 第一阶段验收清单
 - `docs/business_pages_user_guide.md` — 业务页面使用说明
 - `docs/project_progress_snapshot_2026-07-06.md` — 详细进度快照
@@ -50,6 +64,7 @@ cd frontend-new && npm run build              # ✅ 通过
 
 | 模块 | 类比 | 当前职责 |
 |------|------|----------|
+| Boss Lite | 一句话指挥台 | 一句话目标 → 5 Agent 并行 → 作战报告 → 自动保存 |
 | Marketing Agent | 市场文案部 | 产出文案、品牌策略、活动方案 |
 | Image Agent | 美术总监部 | 产出图片提示词和视觉 brief |
 | Data Agent | 数据分析部 | 产出数据分析报告框架/简报 |
@@ -57,69 +72,53 @@ cd frontend-new && npm run build              # ✅ 通过
 | Website Agent | 网站策划部 | 产出落地页文案和页面方案 |
 | MiniDelivery | 后勤归档 | 保存、预览、下载交付物 |
 | Governance | 风控/审计 | 拦截危险或不受控任务 |
-| Boss 工作台 | 董事长办公室 | 高层入口，不接管所有业务 |
+| Boss 指挥台 | 董事长办公室 | 两阶段流程，支持模块选择和浏览器授权 |
 
 ## 当前进度快照
 
-最后保存时间：2026-07-05
+最后保存时间：2026-07-07
 
-当前项目已经推进到：
+当前项目已推进到：
 
-> 前端展示验收 + 业务 Agent 链路打通阶段
+> 第二阶段 Boss Lite 已基本完成
 
 已经完成：
 
-- `MiniDelivery v1` 已冻结：保存、列表、详情、预览、下载、归档。
-- `Marketing / Image / Data / Research / Website` 五个业务 Agent 已完成 `LLM-first + template fallback`。
-- 前端五个业务页开始按 `structured_output` 做结构化展示。
-- `source / fallback / fallback_reason / warnings` 已进入前端可见范围。
-- `backend/app.py` 已注册 `minidelivery_router`，保存到交付中心不再 404。
-- `/agents/{agent_id}/execute` 对普通业务 Agent 跳过 Governance Guard，避免业务产出被误拦截。
-- Marketing 页已从“小红书/抖音平台限制”扩展为文案类型选择：
-  - 通用文案
-  - 小红书
-  - 抖音
-  - SEO 长文
-  - 邮件营销
-  - 品牌策略
-  - 活动方案
+- **第一阶段（业务 Agent MVP）** ✅ 已完成
+  - `MiniDelivery v1` 已冻结：保存、列表、详情、预览、下载、归档。
+  - `Marketing / Image / Data / Research / Website` 五个业务 Agent 已完成 `LLM-first + template fallback`。
+  - 前端五个业务页按 `structured_output` 做结构化展示。
+  - `/agents/{agent_id}/execute` 统一端点，普通业务 Agent 跳过 Governance Guard。
 
-最近验证：
-
-```bash
-python -c "import backend.app; print('ok')"
-cd frontend-new && npm run build
-```
-
-已验证 `POST /agents/marketing/execute` 的 `brand_strategy` 请求可以返回 `ok=true`，不再被 `blocked_by_governance` 拦截。
-
-更详细的进度记录见：
-
-- `docs/project_progress_snapshot_2026-07-05.md`
-- `docs/project_progress_snapshot_2026-07-04.md`
-- `docs/VISION.md`
+- **第二阶段（Boss Lite）** ✅ 已基本完成
+  - Boss 页面默认 Boss Lite 模式，一句话目标 → 5 Agent 并行执行。
+  - 8 个常用作战模板（新品上线、品牌冷启动、小红书种草、抖音增长、SEO 增长、落地页转化、竞品调研、数据复盘）。
+  - 并行执行 + 进度 UI + 总耗时/单 Agent 耗时统计。
+  - 可读 Markdown 作战报告，自动保存到 MiniDelivery。
+  - Delivery 搜索/预览/详情/下载已验证。
 
 ## 下一步计划
 
-当前不要继续扩新框架，优先做端到端验收：
+第一阶段和第二阶段 Boss Lite 已基本完成。下一步可选方向：
 
-1. 逐页测试 `Marketing / Image / Data / Research / Website`。
-2. 每页确认能生成、能展示结构化字段、能显示 fallback/source/warnings。
-3. 每页点击“保存到交付中心”。
-4. 打开 Delivery 页面检查预览和下载内容是否与页面展示一致。
-5. 如果保存后的 Markdown 丢字段，只修 `backend/routers/minidelivery_router.py` 的字段映射，不扩 MiniDelivery 功能。
+1. **Collaboration / Agent Handoff** — Agent 之间传递上下文，一个 Agent 的输出作为另一个的输入
+2. **真实数据源接入** — Data Agent 接入真实数据库/API
+3. **OpenClaw 联网调研** — Research Agent 接入实时搜索
+4. **真实图片生成** — Image Agent 接入图片生成 API
+5. **作战报告 PDF 导出** — 一键导出 PDF 格式的作战报告
+6. **Boss Lite 历史回顾** — 查看和对比历史 Mission
 
 当前边界：
 
-- 不做真实图片生成。
+- 不做真实图片生成（Image Agent 产出提示词框架）。
 - 不把爬虫/OpenClaw 接进 Research。
 - 不让 Governance 接管普通业务 Agent 的生产链路。
-- 不改 Boss / Collaboration / sandbox，除非明确进入高风险执行阶段。
 - 不把 template fallback 伪装成真实 LLM 产出。
 
 ## ✨ 核心特性
 
 - 🤖 **10个AI智能体** — CEO/Codex/OpenClaw/QA/System/CTO/Image/Marketing/Video/Data
+- ⚡ **Boss Lite 一句话执行** — 一句话目标 → 5 Agent 并行 → 作战报告
 - 🧠 **智能任务编排** — 自动拆解复杂目标，多Agent协作执行
 - 🎨 **科技感UI** — React + TypeScript + Tailwind CSS 4
 - 🔌 **多Provider支持** — DeepSeek/OpenAI/Claude 一键切换
@@ -200,7 +199,8 @@ npm run dev
 
 | 界面 | 地址 | 说明 |
 |------|------|------|
-| 新版UI（推荐） | http://localhost:8000/app | React科技感界面 |
+| Boss Lite（推荐） | http://localhost:5173/app?page=boss | 一句话目标 → 多 Agent 协同 |
+| 新版UI | http://localhost:8000/app | React科技感界面 |
 | 前端开发模式 | http://localhost:5173 | Vite dev server（热更新） |
 | 旧版UI | http://localhost:8000/ui | 经典界面 |
 | API文档 | http://localhost:8000/docs | Swagger文档 |
