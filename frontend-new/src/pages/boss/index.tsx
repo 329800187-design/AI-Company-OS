@@ -390,6 +390,11 @@ export default function BossPage() {
   const [liteProgressPhase, setLiteProgressPhase] = useState(0)
   const [copiedHistoryGoalId, setCopiedHistoryGoalId] = useState<string | null>(null)
 
+  // Boss Lite 历史记录 — 分页加载
+  const LITE_HISTORY_STEP = 5
+  const [liteHistoryLimit, setLiteHistoryLimit] = useState(LITE_HISTORY_STEP)
+  const [liteHistoryHasMore, setLiteHistoryHasMore] = useState(false)
+
   // Boss Lite 历史记录
   const [liteHistory, setLiteHistory] = useState<Array<{
     task_id: string
@@ -477,18 +482,28 @@ export default function BossPage() {
   }
 
   // 加载 Boss Lite 历史记录
-  const loadLiteHistory = async () => {
+  const loadLiteHistory = async (limitOverride?: number) => {
+    const effectiveLimit = limitOverride ?? liteHistoryLimit
     setLiteHistoryLoading(true)
     try {
-      const data = await api.listMiniDeliveryTasks({ agent_id: "boss", limit: 5 })
+      const data = await api.listMiniDeliveryTasks({ agent_id: "boss", limit: effectiveLimit })
       const hidden = getHiddenIds()
       setLiteHistory((data.tasks || []).filter((t: { task_id: string }) => !hidden.includes(t.task_id)))
+      setLiteHistoryHasMore(data.has_more ?? false)
     } catch (error) {
       console.error("Load lite history failed:", error)
       setLiteHistory([])
+      setLiteHistoryHasMore(false)
     } finally {
       setLiteHistoryLoading(false)
     }
+  }
+
+  // 加载更多历史记录
+  const loadMoreLiteHistory = async () => {
+    const nextLimit = liteHistoryLimit + LITE_HISTORY_STEP
+    setLiteHistoryLimit(nextLimit)
+    await loadLiteHistory(nextLimit)
   }
 
   useEffect(() => {
@@ -2048,7 +2063,7 @@ export default function BossPage() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={loadLiteHistory}
+              onClick={() => loadLiteHistory()}
               disabled={liteHistoryLoading}
               className="gap-1 text-[#8A8A8A] hover:text-[#0B0B0B]"
             >
@@ -2149,6 +2164,30 @@ export default function BossPage() {
                   </div>
                 </div>
               ))}
+              {/* 加载更多按钮 */}
+              {liteHistoryHasMore && (
+                <div className="pt-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={loadMoreLiteHistory}
+                    disabled={liteHistoryLoading}
+                    className="w-full gap-1.5 text-[#6B6B6B] hover:text-[#0B0B0B] border-dashed"
+                  >
+                    {liteHistoryLoading ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        加载中...
+                      </>
+                    ) : (
+                      "加载更多"
+                    )}
+                  </Button>
+                </div>
+              )}
+              {!liteHistoryHasMore && liteHistory.length > 0 && (
+                <p className="text-center text-xs text-[#B5B5B5] pt-1">已显示全部</p>
+              )}
             </div>
           )}
         </motion.div>
