@@ -985,6 +985,20 @@ def list_tasks(
             from datetime import datetime, timezone
             entry["created_at"] = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
 
+        # Boss Lite 复盘字段（可选，读取 raw_agent_result.json，失败不影响列表）
+        if entry["agent_id"] == "boss":
+            raw_p = task_dir / "raw_agent_result.json"
+            try:
+                if raw_p.exists():
+                    with open(raw_p, "r", encoding="utf-8") as rf:
+                        raw = json.load(rf)
+                    for _key in ("succeeded", "failed", "total", "total_duration_ms", "handoff_enabled", "execution_mode"):
+                        _val = raw.get(_key)
+                        if _val is not None:
+                            entry[_key] = _val
+            except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+                pass  # 读取失败不影响列表返回
+
         # 精确筛选
         if agent_id and entry["agent_id"] != agent_id:
             continue

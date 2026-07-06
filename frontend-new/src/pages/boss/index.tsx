@@ -410,6 +410,13 @@ export default function BossPage() {
     artifact_type?: string
     agent_id?: string
     source_page?: string
+    // Boss Lite 复盘字段（可选）
+    succeeded?: number
+    failed?: number
+    total?: number
+    total_duration_ms?: number
+    handoff_enabled?: boolean
+    execution_mode?: string
   }>>([])
 
   // 隐藏任务 ID 管理（localStorage）
@@ -469,7 +476,7 @@ export default function BossPage() {
     const q = liteHistoryQuery.trim().toLowerCase()
     const filtered = q
       ? liteHistory.filter((t) => {
-          const fields = [t.task_id, t.goal, t.artifact_type, t.summary, t.source_page, t.agent_id].filter(Boolean) as string[]
+          const fields = [t.task_id, t.goal, t.artifact_type, t.summary, t.source_page, t.agent_id, t.execution_mode].filter(Boolean) as string[]
           return fields.some((f) => f.toLowerCase().includes(q))
         })
       : liteHistory
@@ -839,10 +846,33 @@ export default function BossPage() {
     artifact_type?: string
     source_page?: string
     agent_id?: string
+    succeeded?: number
+    failed?: number
+    total?: number
+    total_duration_ms?: number
+    handoff_enabled?: boolean
+    execution_mode?: string
   }): Array<{ label: string; variant: "outline" | "secondary" | "success" | "warning" | "info" }> => {
     const badges: Array<{ label: string; variant: "outline" | "secondary" | "success" | "warning" | "info" }> = []
     if (task.artifact_type) {
       badges.push({ label: task.artifact_type, variant: "outline" })
+    }
+    // Boss Lite 复盘 badge
+    if (task.succeeded != null && task.total != null && task.total > 0) {
+      badges.push({ label: `${task.succeeded}/${task.total} Agent 成功`, variant: task.failed && task.failed > 0 ? "warning" : "success" })
+    }
+    if (task.failed != null && task.failed > 0) {
+      badges.push({ label: `失败 ${task.failed}`, variant: "warning" })
+    }
+    if (task.total_duration_ms != null && task.total_duration_ms > 0) {
+      const sec = task.total_duration_ms / 1000
+      badges.push({ label: `耗时 ${sec < 1 ? `${task.total_duration_ms}ms` : `${sec.toFixed(1)}s`}`, variant: "outline" })
+    }
+    if (task.handoff_enabled) {
+      badges.push({ label: "Handoff", variant: "info" })
+    }
+    if (task.execution_mode) {
+      badges.push({ label: task.execution_mode, variant: "secondary" })
     }
     if (task.source_page) {
       badges.push({ label: `来源: ${task.source_page}`, variant: "secondary" })
