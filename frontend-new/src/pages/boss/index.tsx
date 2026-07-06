@@ -346,6 +346,8 @@ export default function BossPage() {
     ok: boolean
     task_id: string
     goal: string
+    handoff_enabled?: boolean
+    execution_mode?: string
     plan: Array<{
       step: number
       agent_id: string
@@ -365,6 +367,8 @@ export default function BossPage() {
       errors: string[]
       error?: string
       duration_ms?: number
+      used_handoff?: boolean
+      handoff_sources?: string[]
     }>
     summary: {
       text: string
@@ -375,6 +379,9 @@ export default function BossPage() {
     }
     structured_output: Record<string, unknown> & {
       total_duration_ms?: number
+      handoff_enabled?: boolean
+      handoff_sources?: string[]
+      handoff_targets?: string[]
     }
     delivery_task_id?: string
   } | null>(null)
@@ -1193,6 +1200,25 @@ export default function BossPage() {
                     耗时 {(liteResult.summary.total_duration_ms / 1000).toFixed(1)}s
                   </Badge>
                 )}
+                {/* Handoff 状态 Badge */}
+                {(() => {
+                  const hoEnabled = liteResult.handoff_enabled ?? liteResult.structured_output?.handoff_enabled
+                  if (!hoEnabled) return null
+                  const sources = liteResult.structured_output?.handoff_sources
+                  const targets = liteResult.structured_output?.handoff_targets
+                  if (sources?.length && targets?.length) {
+                    return (
+                      <Badge variant="outline" className="gap-1 border-primary/30 bg-primary/5 text-primary">
+                        {sources.join(" / ")} → {targets.join(" / ")}
+                      </Badge>
+                    )
+                  }
+                  return (
+                    <Badge variant="outline" className="gap-1 border-primary/30 bg-primary/5 text-primary">
+                      部门协作已启用
+                    </Badge>
+                  )
+                })()}
                 {liteResult.delivery_task_id && (
                   <Button
                     variant="outline"
@@ -1244,6 +1270,19 @@ export default function BossPage() {
                         <p className="mt-1 text-xs text-muted-foreground line-clamp-2">
                           {extractAgentSummary(r.agent_id, r.summary, r.structured_output)}
                         </p>
+                        {/* Handoff 标记 */}
+                        {r.used_handoff && (
+                          <div className="mt-1.5 flex items-center gap-1.5">
+                            <Badge variant="outline" className="text-[10px] border-primary/30 bg-primary/5 text-primary">
+                              已参考上游洞察
+                            </Badge>
+                            {r.handoff_sources && r.handoff_sources.length > 0 && (
+                              <span className="text-[10px] text-[#8A8A8A]">
+                                来源：{r.handoff_sources.join(" / ")}
+                              </span>
+                            )}
+                          </div>
+                        )}
                         {r.duration_ms != null && r.duration_ms > 0 && (
                           <p className="mt-1 text-xs text-[#8A8A8A]">
                             耗时 {(r.duration_ms / 1000).toFixed(1)}s
@@ -1298,6 +1337,18 @@ export default function BossPage() {
                         {extractAgentSummary(r.agent_id, r.summary, r.structured_output)}
                       </p>
                     </div>
+
+                    {/* Handoff 信息 — 仅在 used_handoff 时显示 */}
+                    {r.used_handoff && r.handoff_sources && r.handoff_sources.length > 0 && (
+                      <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 mb-4">
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="h-4 w-4 text-primary" />
+                          <span className="text-sm text-primary">
+                            本部门输出已参考上游洞察：<strong>{r.handoff_sources.join(" / ")}</strong>
+                          </span>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Key Fields — structured readable block */}
                     {r.structured_output && (() => {
