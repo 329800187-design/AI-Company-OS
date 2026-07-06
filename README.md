@@ -2,6 +2,39 @@
 
 **版本 1.5.0**
 
+## 最新状态（2026-07-06）
+
+当前项目已经完成：
+
+> 五个业务页 + MiniDelivery 交付中心端到端闭环验收
+
+已验收闭环：
+
+- `Marketing`：7 种模式均通过浏览器验收，包括通用文案、小红书、抖音、SEO 长文、邮件营销、品牌策略、活动方案。
+- `Image / Data / Research / Website`：均通过生成、结构化展示、保存到交付中心、Delivery 搜索/预览/详情/下载。
+- `MiniDelivery`：列表、搜索、详情、artifact 预览、下载均可用。
+- `Delivery` 页面：可按 `task_id` 搜索交付物，预览和详情页正常。
+- 开发模式：Vite 已代理 `/minidelivery`，前端保存和读取交付物可走本地后端。
+
+最近验证：
+
+```bash
+python -c "import backend.app; print('ok')"
+cd frontend-new && npm run build
+```
+
+详细进度见：
+
+- `docs/project_progress_snapshot_2026-07-06.md`
+- `docs/project_progress_snapshot_2026-07-05.md`
+- `docs/VISION.md`
+
+下一步建议：
+
+1. 做阶段冻结和用户使用说明。
+2. 检查首页/导航，让用户更容易进入五个业务页和 Delivery。
+3. 暂不扩真实图片生成、真实数据源、OpenClaw 联网调研。
+
 > 你告诉它"要做什么"，它自动拆解、分配、执行、验收，最后给你总结报告。
 
 ## 项目初心
