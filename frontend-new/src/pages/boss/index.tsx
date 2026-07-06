@@ -387,6 +387,7 @@ export default function BossPage() {
   } | null>(null)
   const [liteActiveAgent, setLiteActiveAgent] = useState<string>("")
   const [liteProgressPhase, setLiteProgressPhase] = useState(0)
+  const [copiedHistoryGoalId, setCopiedHistoryGoalId] = useState<string | null>(null)
 
   // Boss Lite 历史记录
   const [liteHistory, setLiteHistory] = useState<Array<{
@@ -422,6 +423,14 @@ export default function BossPage() {
       return t.length > 60 ? t.slice(0, 60) + "…" : t
     }
     return "暂无摘要"
+  }
+
+  const copyHistoryGoal = async (taskId: string, goalText: string) => {
+    const text = goalText.trim()
+    if (!text) return
+    await navigator.clipboard.writeText(text)
+    setCopiedHistoryGoalId(taskId)
+    setTimeout(() => setCopiedHistoryGoalId(null), 1600)
   }
   const [liteHistoryLoading, setLiteHistoryLoading] = useState(false)
 
@@ -2051,23 +2060,34 @@ export default function BossPage() {
                   </div>
                   <div className="shrink-0 flex items-center gap-2">
                     {task.goal?.trim() && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setGoal(task.goal || "")
-                          setLiteResult(null)
-                          setLiteActiveAgent("")
-                          setLiteProgressPhase(0)
-                          setTimeout(() => {
-                            document.getElementById("boss-goal-input")?.scrollIntoView({ behavior: "smooth", block: "center" })
-                          }, 100)
-                        }}
-                        className="gap-1"
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                        复用目标
-                      </Button>
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => copyHistoryGoal(task.task_id, task.goal)}
+                          className="gap-1"
+                        >
+                          <ClipboardList className="h-3.5 w-3.5" />
+                          {copiedHistoryGoalId === task.task_id ? "已复制" : "复制目标"}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setGoal(task.goal || "")
+                            setLiteResult(null)
+                            setLiteActiveAgent("")
+                            setLiteProgressPhase(0)
+                            setTimeout(() => {
+                              document.getElementById("boss-goal-input")?.scrollIntoView({ behavior: "smooth", block: "center" })
+                            }, 100)
+                          }}
+                          className="gap-1"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                          复用目标
+                        </Button>
+                      </>
                     )}
                     <Button
                       variant="outline"
