@@ -295,6 +295,152 @@ class BossLiteRequest(BaseModel):
     save_to_delivery: bool = Field(default=True, description="是否自动保存到交付中心")
 
 
+# ── Boss Lite Handoff v1 ────────────────────────────────────
+
+# Wave 分类：research/data 是上游，marketing/image/website 是下游
+_WAVE1_AGENTS = {"research", "data"}
+_WAVE2_AGENTS = {"marketing", "image", "website"}
+
+HANDOFF_SOURCES = {
+    "marketing": ["research", "data"],
+    "image": ["research", "data"],
+    "website": ["research", "data"],
+}
+
+_HANDOFF_LABELS = {
+    "research": "Research",
+    "data": "Data",
+    "marketing": "Marketing",
+    "image": "Image",
+    "website": "Website",
+}
+
+_HANDOFF_CN_LABELS = {
+    "research": "市场调研",
+    "data": "数据分析",
+    "marketing": "营销",
+    "image": "视觉",
+    "website": "落地页",
+}
+
+
+def _classify_waves(selected_agents: list) -> tuple:
+    """把选中的 agents 分成两波。返回 (wave1, wave2) 各自的 agent_id 列表，保持原始顺序。"""
+    wave1 = [a for a in selected_agents if a in _WAVE1_AGENTS]
+    wave2 = [a for a in selected_agents if a in _WAVE2_AGENTS]
+    return wave1, wave2
+
+
+def _extract_handoff_context(results_map: dict) -> dict:
+    """从 wave1 结果中提取 handoff_context。
+
+    Args:
+        results_map: {agent_id: result_dict} — 只包含 wave1 的结果
+
+    Returns:
+        handoff_context dict，字段可能为空列表/空字符串
+    """
+    ctx = {
+        "research_summary": "",
+        "research_key_findings": [],
+        "research_opportunities": [],
+        "research_risks": [],
+        "data_key_metrics": [],
+        "data_findings": [],
+        "data_recommendations": [],
+    }
+
+    # research
+    research = results_map.get("research")
+    if research and research.get("ok"):
+        so = research.get("structured_output") or {}
+        ctx["research_summary"] = (
+            research.get("summary", "")
+            or so.get("summary", "")
+            or so.get("market_summary", "")
+        )
+        ctx["research_key_findings"] = so.get("key_findings") or so.get("findings", [])
+        ctx["research_opportunities"] = so.get("opportunities", [])
+        ctx["research_risks"] = so.get("risks", [])
+
+    # data
+    data = results_map.get("data")
+    if data and data.get("ok"):
+        so = data.get("structured_output") or {}
+        ctx["data_key_metrics"] = so.get("key_metrics", [])
+        ctx["data_findings"] = so.get("findings", [])
+        ctx["data_recommendations"] = so.get("recommendations", [])
+
+    return ctx
+
+
+def _build_handoff_prompt(agent_id: str, handoff_ctx: dict) -> str:
+    """为 wave2 agent 构建 handoff 附言。"""
+    parts = []
+
+    sources = HANDOFF_SOURCES.get(agent_id, [])
+    has_research = "research" in sources and handoff_ctx.get("research_summary")
+    has_data = "data" in sources and handoff_ctx.get("data_key_metrics")
+
+    if not has_research and not has_data:
+        return ""
+
+    parts.append("\n\n---\n## 上游部门洞察（请参考并保持一致）\n")
+
+    if has_research:
+        parts.append("### 市场调研结论")
+        if handoff_ctx["research_summary"]:
+            parts.append(f"- 摘要：{handoff_ctx['research_summary'][:300]}")
+        for item in handoff_ctx["research_key_findings"][:3]:
+            parts.append(f"- 关键发现：{_format_boss_value(item)}")
+        for item in handoff_ctx["research_opportunities"][:2]:
+            parts.append(f"- 机会：{_format_boss_value(item)}")
+        for item in handoff_ctx["research_risks"][:2]:
+            parts.append(f"- 风险：{_format_boss_value(item)}")
+        parts.append("")
+
+    if has_data:
+        parts.append("### 数据分析结论")
+        for item in handoff_ctx["data_key_metrics"][:3]:
+            parts.append(f"- 核心指标：{_format_boss_value(item)}")
+        for item in handoff_ctx["data_findings"][:3]:
+            parts.append(f"- 数据发现：{_format_boss_value(item)}")
+        for item in handoff_ctx["data_recommendations"][:2]:
+            parts.append(f"- 行动建议：{_format_boss_value(item)}")
+        parts.append("")
+
+    parts.append("请确保你的输出与以上上游调研和数据分析结论保持一致。")
+    return "\n".join(parts)
+
+
+def _actual_handoff_sources(handoff_ctx: dict) -> List[str]:
+    """返回本次实际可传递的上游来源，而不是理论来源。"""
+    sources: List[str] = []
+    if any([
+        handoff_ctx.get("research_summary"),
+        handoff_ctx.get("research_key_findings"),
+        handoff_ctx.get("research_opportunities"),
+        handoff_ctx.get("research_risks"),
+    ]):
+        sources.append("research")
+    if any([
+        handoff_ctx.get("data_key_metrics"),
+        handoff_ctx.get("data_findings"),
+        handoff_ctx.get("data_recommendations"),
+    ]):
+        sources.append("data")
+    return sources
+
+
+def _format_handoff_flow(sources: List[str], targets: List[str], labels: dict) -> str:
+    """格式化 handoff 来源和目标。"""
+    source_text = "/".join(labels.get(source, source) for source in sources)
+    target_text = "/".join(labels.get(target, target) for target in targets)
+    if not source_text or not target_text:
+        return ""
+    return f"{source_text} → {target_text}"
+
+
 def _execute_boss_lite_agent(index: int, agent_id: str, agent_task) -> dict:
     """Execute a single Boss Lite agent and return result with index for ordering.
 
@@ -332,17 +478,15 @@ def _execute_boss_lite_agent(index: int, agent_id: str, agent_task) -> dict:
 @router.post("/lite/execute", summary="Boss Lite — 一句话目标 → 多 Agent 协同执行")
 def boss_lite_execute(request: BossLiteRequest):
     """
-    Boss Lite 最小闭环:
+    Boss Lite Handoff v1:
     1. 接收一句话业务目标
-    2. 拆解为 3-5 个业务任务，映射到 marketing/image/data/research/website
-    3. 并行执行每个 agent（ThreadPoolExecutor，最多 5 worker）
-    4. 收集 structured_output
-    5. 生成 Boss 汇总报告
-    6. 保存到 MiniDelivery（可选）
+    2. 拆解为 Agent 任务
+    3. 第一波并行执行 research + data
+    4. 提取 handoff_context
+    5. 第二波并行执行 marketing + image + website（带上游洞察）
+    6. 生成 Boss 汇总报告
+    7. 保存到 MiniDelivery（可选）
     """
-    # Note: Boss Lite is a meta-capability that orchestrates other agents.
-    # Each agent has its own governance check, so we skip the top-level guard here.
-
     is_valid, error_msg = input_validator.validate_message(request.goal)
     if not is_valid:
         raise HTTPException(status_code=400, detail=error_msg)
@@ -359,7 +503,7 @@ def boss_lite_execute(request: BossLiteRequest):
 
     agent_defs = [a for a in BOSS_LITE_AGENTS if a["agent_id"] in selected_agents]
 
-    # 构建执行计划
+    # 构建执行计划（保持标准顺序）
     plan = []
     for i, agent_def in enumerate(agent_defs, 1):
         plan.append({
@@ -372,83 +516,190 @@ def boss_lite_execute(request: BossLiteRequest):
             "status": "pending",
         })
 
-    # 并行执行每个 agent（ThreadPoolExecutor）
+    # ── 两波并行 Handoff ──
     from backend.schemas.agent_protocol import AgentTask
 
-    # 预构建所有 AgentTask（线程安全：每个 future 拿自己的 task 对象）
-    agent_tasks = []
-    for i, task in enumerate(plan):
-        agent_task = AgentTask(
-            task_id=f"boss_lite_{uuid.uuid4().hex[:8]}",
-            goal=request.goal,
-            task_type=task["task_type"],
-            context={"source": "boss_lite", "prompt": task["prompt"]},
-            input={"prompt": task["prompt"]},
-        )
-        agent_tasks.append((i, task["agent_id"], agent_task))
-
-    # 并行提交，按 index 保序收集
-    raw_results: List[Optional[Dict[str, Any]]] = [None] * len(agent_tasks)
-    max_workers = min(len(agent_tasks), 5)
+    wave1_ids, wave2_ids = _classify_waves(selected_agents)
+    handoff_enabled = False
+    actual_handoff_sources: List[str] = []
+    handoff_ctx = {}
+    results_map: Dict[str, Dict[str, Any]] = {}  # agent_id → result_dict
+    agent_durations: Dict[str, float] = {}  # agent_id → duration_ms
     total_start = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_index = {
-            executor.submit(_execute_boss_lite_agent, idx, aid, at): idx
-            for idx, aid, at in agent_tasks
-        }
-        for future in as_completed(future_to_index):
-            idx = future_to_index[future]
-            try:
-                raw_results[idx] = future.result()
-            except Exception as e:
-                # 理论上 helper 已兜底，这里双重保险
-                raw_results[idx] = {
-                    "index": idx,
-                    "agent_id": agent_tasks[idx][1],
-                    "result": None,
-                    "error": str(e),
+
+    # ── Wave 1: research + data 并行 ──
+    if wave1_ids:
+        wave1_tasks = []
+        for i, task in enumerate(plan):
+            if task["agent_id"] in wave1_ids:
+                agent_task = AgentTask(
+                    task_id=f"boss_lite_{uuid.uuid4().hex[:8]}",
+                    goal=request.goal,
+                    task_type=task["task_type"],
+                    context={"source": "boss_lite", "prompt": task["prompt"]},
+                    input={"prompt": task["prompt"]},
+                )
+                wave1_tasks.append((i, task["agent_id"], agent_task))
+
+        wave1_raw: List[Optional[Dict[str, Any]]] = [None] * len(wave1_tasks)
+        max_workers = min(len(wave1_tasks), 5)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_idx = {
+                executor.submit(_execute_boss_lite_agent, idx, aid, at): j
+                for j, (idx, aid, at) in enumerate(wave1_tasks)
+            }
+            for future in as_completed(future_to_idx):
+                j = future_to_idx[future]
+                try:
+                    wave1_raw[j] = future.result()
+                except Exception as e:
+                    idx, aid, _ = wave1_tasks[j]
+                    wave1_raw[j] = {
+                        "index": idx,
+                        "agent_id": aid,
+                        "result": None,
+                        "error": str(e),
+                    }
+
+        # 收集 wave1 结果到 results_map
+        for raw in wave1_raw:
+            if raw is None:
+                continue
+            aid = raw["agent_id"]
+            agent_durations[aid] = raw.get("duration_ms", 0)
+            if raw["error"] or raw["result"] is None:
+                results_map[aid] = {"ok": False, "error": raw["error"], "structured_output": {}}
+            else:
+                rd = raw["result"]
+                results_map[aid] = {
+                    "ok": rd.get("ok", False),
+                    "summary": rd.get("summary", ""),
+                    "structured_output": rd.get("structured_output") or rd.get("output") or {},
+                    "warnings": rd.get("warnings", []),
+                    "errors": rd.get("errors", []),
+                    "error": rd.get("error"),
                 }
 
-    # 按 plan 顺序写回 task status 和 results
+        # 提取 handoff_context
+        handoff_ctx = _extract_handoff_context(results_map)
+        actual_handoff_sources = _actual_handoff_sources(handoff_ctx)
+        handoff_enabled = bool(actual_handoff_sources and wave2_ids)
+
+    # ── Wave 2: marketing + image + website 并行（带 handoff） ──
+    if wave2_ids:
+        wave2_tasks = []
+        for i, task in enumerate(plan):
+            if task["agent_id"] in wave2_ids:
+                # 构建带 handoff 的 prompt
+                base_prompt = task["prompt"]
+                handoff_prompt = _build_handoff_prompt(task["agent_id"], handoff_ctx)
+                full_prompt = base_prompt + handoff_prompt if handoff_prompt else base_prompt
+
+                agent_task = AgentTask(
+                    task_id=f"boss_lite_{uuid.uuid4().hex[:8]}",
+                    goal=request.goal,
+                    task_type=task["task_type"],
+                    context={
+                        "source": "boss_lite",
+                        "prompt": full_prompt,
+                        "handoff_context": handoff_ctx if handoff_enabled else {},
+                    },
+                    input={"prompt": full_prompt},
+                )
+                wave2_tasks.append((i, task["agent_id"], agent_task))
+
+        wave2_raw: List[Optional[Dict[str, Any]]] = [None] * len(wave2_tasks)
+        max_workers = min(len(wave2_tasks), 5)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_idx = {
+                executor.submit(_execute_boss_lite_agent, idx, aid, at): j
+                for j, (idx, aid, at) in enumerate(wave2_tasks)
+            }
+            for future in as_completed(future_to_idx):
+                j = future_to_idx[future]
+                try:
+                    wave2_raw[j] = future.result()
+                except Exception as e:
+                    idx, aid, _ = wave2_tasks[j]
+                    wave2_raw[j] = {
+                        "index": idx,
+                        "agent_id": aid,
+                        "result": None,
+                        "error": str(e),
+                    }
+
+        # 收集 wave2 结果到 results_map
+        for raw in wave2_raw:
+            if raw is None:
+                continue
+            aid = raw["agent_id"]
+            agent_durations[aid] = raw.get("duration_ms", 0)
+            if raw["error"] or raw["result"] is None:
+                results_map[aid] = {"ok": False, "error": raw["error"], "structured_output": {}}
+            else:
+                rd = raw["result"]
+                results_map[aid] = {
+                    "ok": rd.get("ok", False),
+                    "summary": rd.get("summary", ""),
+                    "structured_output": rd.get("structured_output") or rd.get("output") or {},
+                    "warnings": rd.get("warnings", []),
+                    "errors": rd.get("errors", []),
+                    "error": rd.get("error"),
+                }
+
+    # ── 按 plan 顺序组装最终 results ──
     total_duration_ms = round((time.perf_counter() - total_start) * 1000, 1)
     results: List[Dict[str, Any]] = []
-    for i, task in enumerate(plan):
-        raw = raw_results[i]
-        if raw is None:
-            raw = {
-                "index": i,
-                "agent_id": task["agent_id"],
-                "result": None,
-                "error": "Agent execution did not return a result",
-                "duration_ms": 0,
-            }
-        agent_duration_ms = raw.get("duration_ms", 0)
-        if raw["error"] or raw["result"] is None:
+    for task in plan:
+        aid = task["agent_id"]
+        rd = results_map.get(aid)
+        dur = agent_durations.get(aid, 0)
+
+        if rd is None:
             task["status"] = "failed"
             results.append({
-                "agent_id": task["agent_id"],
+                "agent_id": aid,
                 "title": task["title"],
                 "ok": False,
                 "summary": "",
                 "structured_output": {},
                 "warnings": [],
-                "errors": [raw["error"]] if raw["error"] else ["Unknown error"],
-                "error": raw["error"] or "Unknown error",
-                "duration_ms": agent_duration_ms,
+                "errors": ["Agent execution did not return a result"],
+                "error": "Agent execution did not return a result",
+                "duration_ms": dur,
+                "used_handoff": False,
+                "handoff_sources": [],
+            })
+        elif rd.get("error") or not rd.get("ok"):
+            task["status"] = "failed"
+            results.append({
+                "agent_id": aid,
+                "title": task["title"],
+                "ok": False,
+                "summary": "",
+                "structured_output": rd.get("structured_output", {}),
+                "warnings": rd.get("warnings", []),
+                "errors": [rd["error"]] if rd.get("error") else rd.get("errors", ["Unknown error"]),
+                "error": rd.get("error") or "Unknown error",
+                "duration_ms": dur,
+                "used_handoff": False,
+                "handoff_sources": [],
             })
         else:
-            result_dict = raw["result"]
-            task["status"] = "done" if result_dict.get("ok") else "failed"
+            task["status"] = "done"
+            used_ho = aid in wave2_ids and handoff_enabled
             results.append({
-                "agent_id": task["agent_id"],
+                "agent_id": aid,
                 "title": task["title"],
-                "ok": result_dict.get("ok", False),
-                "summary": result_dict.get("summary", ""),
-                "structured_output": result_dict.get("structured_output") or result_dict.get("output") or {},
-                "warnings": result_dict.get("warnings", []),
-                "errors": result_dict.get("errors", []),
-                "error": result_dict.get("error"),
-                "duration_ms": agent_duration_ms,
+                "ok": True,
+                "summary": rd.get("summary", ""),
+                "structured_output": rd.get("structured_output", {}),
+                "warnings": rd.get("warnings", []),
+                "errors": rd.get("errors", []),
+                "error": None,
+                "duration_ms": dur,
+                "used_handoff": used_ho,
+                "handoff_sources": actual_handoff_sources if used_ho else [],
             })
 
     # 生成汇总
@@ -457,6 +708,9 @@ def boss_lite_execute(request: BossLiteRequest):
     summary_text = f"Boss Lite 执行完成：{succeeded}/{len(results)} 个 Agent 成功"
     if failed > 0:
         summary_text += f"，{failed} 个失败"
+    if handoff_enabled:
+        flow_text = _format_handoff_flow(actual_handoff_sources, wave2_ids, _HANDOFF_LABELS)
+        summary_text += f"（已启用部门协作：{flow_text}）"
 
     # 构建 Boss 汇总 structured_output
     boss_structured_output = {
@@ -469,6 +723,8 @@ def boss_lite_execute(request: BossLiteRequest):
                 "ok": r["ok"],
                 "summary": r["summary"],
                 "duration_ms": r["duration_ms"],
+                "used_handoff": r["used_handoff"],
+                "handoff_sources": r.get("handoff_sources", []),
             }
             for r in results
         ],
@@ -476,6 +732,11 @@ def boss_lite_execute(request: BossLiteRequest):
         "failed": failed,
         "total": len(results),
         "total_duration_ms": total_duration_ms,
+        "handoff_context": handoff_ctx,
+        "handoff_sources": actual_handoff_sources,
+        "handoff_targets": wave2_ids if handoff_enabled else [],
+        "handoff_enabled": handoff_enabled,
+        "execution_mode": "two_wave_handoff" if handoff_enabled else "parallel",
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -542,6 +803,8 @@ def boss_lite_execute(request: BossLiteRequest):
         },
         "structured_output": boss_structured_output,
         "delivery_task_id": delivery_task_id,
+        "handoff_enabled": handoff_enabled,
+        "execution_mode": boss_structured_output["execution_mode"],
     }
 
 
@@ -607,7 +870,38 @@ def _render_boss_lite_md(goal: str, plan: list, results: list, boss_so: dict) ->
             lines.append("")
 
     # Boss 最终建议 — 基于实际结果动态生成
-    lines += ["---", "", "## 三、Boss 最终建议", ""]
+    lines += ["---", "", "## 三、上游洞察传递", ""]
+
+    handoff_ctx = boss_so.get("handoff_context", {})
+    handoff_enabled = boss_so.get("handoff_enabled", False)
+    handoff_targets = boss_so.get("handoff_targets", [])
+    target_text = " / ".join(_HANDOFF_CN_LABELS.get(target, target) for target in handoff_targets) or "下游部门"
+    if handoff_enabled and handoff_ctx:
+        has_research = bool(handoff_ctx.get("research_summary"))
+        has_data = bool(handoff_ctx.get("data_key_metrics"))
+        if has_research:
+            lines.append(f"- **市场调研 → {target_text}**")
+            if handoff_ctx["research_summary"]:
+                lines.append(f"  - 摘要：{handoff_ctx['research_summary'][:200]}")
+            for item in handoff_ctx.get("research_key_findings", [])[:3]:
+                lines.append(f"  - 关键发现：{_format_boss_value(item)}")
+            for item in handoff_ctx.get("research_opportunities", [])[:2]:
+                lines.append(f"  - 机会：{_format_boss_value(item)}")
+            lines.append("")
+        if has_data:
+            lines.append(f"- **数据分析 → {target_text}**")
+            for item in handoff_ctx.get("data_key_metrics", [])[:3]:
+                lines.append(f"  - 核心指标：{_format_boss_value(item)}")
+            for item in handoff_ctx.get("data_findings", [])[:3]:
+                lines.append(f"  - 数据发现：{_format_boss_value(item)}")
+            for item in handoff_ctx.get("data_recommendations", [])[:2]:
+                lines.append(f"  - 行动建议：{_format_boss_value(item)}")
+            lines.append("")
+    else:
+        lines.append("本次未启用上游洞察传递。")
+        lines.append("")
+
+    lines += ["---", "", "## 四、Boss 最终建议", ""]
 
     succeeded_agents = [r["agent_id"] for r in results if r["ok"]]
     failed_agents = [r["agent_id"] for r in results if not r["ok"]]

@@ -21,6 +21,7 @@ Boss Lite 已完成能力：
 - 一句话目标输入，支持 8 个常用作战模板一键填入
 - 自动拆解为 5 个业务 Agent：research / marketing / image / data / website
 - 5 个 Agent 并行执行（ThreadPoolExecutor，max_workers=5）
+- Agent Handoff v1：research / data 上游洞察传递给 marketing / image / website
 - 可读的 Boss 作战报告（Markdown 格式，含各部门结论和 Boss 建议）
 - 自动保存到 MiniDelivery（artifact.md + raw_agent_result.json + result.json）
 - Delivery 搜索/预览/详情/下载全部可用
@@ -92,6 +93,7 @@ cd frontend-new && npm run build              # ✅ 通过
 
 - **第二阶段（Boss Lite）** ✅ 已基本完成
   - Boss 页面默认 Boss Lite 模式，一句话目标 → 5 Agent 并行执行。
+  - Agent Handoff v1：先执行 research / data，再把上游洞察传递给下游 Agent。
   - 8 个常用作战模板（新品上线、品牌冷启动、小红书种草、抖音增长、SEO 增长、落地页转化、竞品调研、数据复盘）。
   - 并行执行 + 进度 UI + 总耗时/单 Agent 耗时统计。
   - 可读 Markdown 作战报告，自动保存到 MiniDelivery。
@@ -101,7 +103,7 @@ cd frontend-new && npm run build              # ✅ 通过
 
 第一阶段和第二阶段 Boss Lite 已基本完成。下一步可选方向：
 
-1. **Collaboration / Agent Handoff** — Agent 之间传递上下文，一个 Agent 的输出作为另一个的输入
+1. **Collaboration / Agent Handoff 扩展** — 把 Boss Lite 的 handoff 扩展成更通用的 Agent 协作链
 2. **真实数据源接入** — Data Agent 接入真实数据库/API
 3. **OpenClaw 联网调研** — Research Agent 接入实时搜索
 4. **真实图片生成** — Image Agent 接入图片生成 API

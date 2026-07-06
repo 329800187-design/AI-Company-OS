@@ -29,6 +29,7 @@
 | 8 | 总耗时显示 | 汇总 banner 显示总耗时（秒） | ✅ |
 | 9 | 单 Agent 耗时 | 每个 Agent 卡片显示独立耗时 | ✅ |
 | 10 | 8 个常用作战模板 | 一键填入目标，可继续编辑 | ✅ |
+| 11 | Agent Handoff v1 | research / data 上游洞察传递给 marketing / image / website | ✅ |
 
 ---
 
@@ -123,7 +124,9 @@ POST /boss/lite/execute
   → input_validator.validate_message()
   → rate_limiter.check("boss_lite")
   → 构建 5 个 AgentTask（research / marketing / image / data / website）
-  → ThreadPoolExecutor 并行执行（max_workers=5）
+  → Wave 1 并行执行 research / data
+  → 提取 handoff_context
+  → Wave 2 并行执行 marketing / image / website（附加上游洞察）
   → 每个 Agent 调用 execute_agent(agent_id, task)
   → 收集 structured_output
   → 渲染 Markdown 作战报告
@@ -287,6 +290,7 @@ boss_{uuid_hex_12}
 | 13 | 详情页 | 点击详情 | 显示完整交付物信息 | ✅ |
 | 14 | 下载 | 点击下载 | HTTP 200，文件内容正确 | ✅ |
 | 15 | 构建通过 | `npm run build` | 无报错，exit 0 | ✅ |
+| 16 | Handoff 字段 | 调用 `/boss/lite/execute` | `handoff_enabled=true`，下游 Agent `used_handoff=true` | ✅ |
 
 ---
 
@@ -337,6 +341,7 @@ boss_{uuid_hex_12}
 | 保存 | 各页面自行保存 | 自动批量保存 |
 | 模板 | 无 | 8 个常用作战模板 |
 | 耗时统计 | 无 | 总耗时 + 单 Agent 耗时 |
+| 上游洞察传递 | 无 | research/data → marketing/image/website |
 
 第一阶段的 5 个业务页面仍然独立可用，Boss Lite 是更高层的编排入口。
 
@@ -348,7 +353,7 @@ boss_{uuid_hex_12}
 
 | 方向 | 说明 | 优先级 |
 |------|------|--------|
-| Collaboration / Agent Handoff | Agent 之间传递上下文，一个 Agent 的输出作为另一个的输入 | 高 |
+| Collaboration / Agent Handoff 扩展 | 把 Boss Lite handoff 扩展成通用 Agent 协作链 | 高 |
 | 真实数据源接入 | Data Agent 接入真实数据库/API | 中 |
 | OpenClaw 联网调研 | Research Agent 接入实时搜索 | 中 |
 | 真实图片生成 | Image Agent 接入图片生成 API | 中 |
