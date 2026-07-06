@@ -395,6 +395,9 @@ export default function BossPage() {
   const [liteHistoryLimit, setLiteHistoryLimit] = useState(LITE_HISTORY_STEP)
   const [liteHistoryHasMore, setLiteHistoryHasMore] = useState(false)
 
+  // Boss Lite 历史搜索
+  const [liteHistoryQuery, setLiteHistoryQuery] = useState("")
+
   // Boss Lite 历史记录
   const [liteHistory, setLiteHistory] = useState<Array<{
     task_id: string
@@ -455,6 +458,16 @@ export default function BossPage() {
     }
     return "暂无摘要"
   }
+
+  // 本地搜索过滤
+  const filteredLiteHistory = (() => {
+    const q = liteHistoryQuery.trim().toLowerCase()
+    if (!q) return liteHistory
+    return liteHistory.filter((t) => {
+      const fields = [t.task_id, t.goal, t.artifact_type, t.summary].filter(Boolean) as string[]
+      return fields.some((f) => f.toLowerCase().includes(q))
+    })
+  })()
 
   const copyHistoryGoal = async (taskId: string, goalText: string) => {
     const text = goalText.trim()
@@ -2047,6 +2060,11 @@ export default function BossPage() {
             <div className="flex items-center gap-2">
               <History className="h-4 w-4 text-[#8A8A8A]" />
               <h3 className="text-sm font-medium text-[#0B0B0B]">最近 Boss 作战记录</h3>
+              {liteHistory.length > 0 && (
+                <span className="text-xs text-[#B5B5B5]">
+                  已显示 {filteredLiteHistory.length} / {liteHistory.length} 条
+                </span>
+              )}
               {hiddenTaskIds.length > 0 && (
                 <span className="text-xs text-[#B5B5B5]">
                   已隐藏 {hiddenTaskIds.length} 条
@@ -2075,6 +2093,21 @@ export default function BossPage() {
               刷新
             </Button>
           </div>
+          {/* 搜索框 */}
+          {liteHistory.length > 0 && (
+            <div className="mb-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#B5B5B5]" />
+                <input
+                  type="text"
+                  value={liteHistoryQuery}
+                  onChange={(e) => setLiteHistoryQuery(e.target.value)}
+                  placeholder="搜索 task_id / 目标 / 类型"
+                  className="w-full rounded-lg border border-[#E5E5E5] bg-[#F9F9F7] pl-9 pr-3 py-2 text-sm text-[#0B0B0B] placeholder:text-[#B5B5B5] focus:outline-none focus:border-[#B5B5B5] transition-colors"
+                />
+              </div>
+            </div>
+          )}
           {liteHistoryLoading ? (
             <div className="flex items-center gap-2 rounded-xl border border-[#E5E5E5] bg-[#FAFAF8] p-4 text-sm text-[#6B6B6B]">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -2086,84 +2119,90 @@ export default function BossPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {liteHistory.map((task) => (
-                <div
-                  key={task.task_id}
-                  className="flex items-start justify-between gap-4 rounded-xl border border-[#E5E5E5] p-4 transition-all hover:border-[#B5B5B5] hover:bg-[#F9F9F7]"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                      <span className="text-xs font-mono text-[#8A8A8A] bg-[#F4F3EF] px-2 py-0.5 rounded">
-                        {task.task_id || "—"}
-                      </span>
-                      {task.artifact_type && (
-                        <span className="text-[10px] font-medium text-[#6B6B6B] bg-[#EEF0E8] px-1.5 py-0.5 rounded">
-                          {task.artifact_type}
-                        </span>
-                      )}
-                      <span className="text-xs text-[#B5B5B5]">
-                        {formatLocalTime(task.created_at)}
-                      </span>
-                    </div>
-                    <p className="text-sm font-medium text-[#0B0B0B] truncate">
-                      {task.goal?.trim() || "未命名作战任务"}
-                    </p>
-                    <p className="mt-1 text-xs text-[#8A8A8A] line-clamp-2">
-                      {getSummaryFallback(task)}
-                    </p>
-                  </div>
-                  <div className="shrink-0 flex items-center gap-2">
-                    {task.goal?.trim() && (
-                      <>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => copyHistoryGoal(task.task_id, task.goal)}
-                          className="gap-1"
-                        >
-                          <ClipboardList className="h-3.5 w-3.5" />
-                          {copiedHistoryGoalId === task.task_id ? "已复制" : "复制目标"}
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setGoal(task.goal || "")
-                            setLiteResult(null)
-                            setLiteActiveAgent("")
-                            setLiteProgressPhase(0)
-                            setTimeout(() => {
-                              document.getElementById("boss-goal-input")?.scrollIntoView({ behavior: "smooth", block: "center" })
-                            }, 100)
-                          }}
-                          className="gap-1"
-                        >
-                          <RotateCcw className="h-3.5 w-3.5" />
-                          复用目标
-                        </Button>
-                      </>
-                    )}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => viewDelivery(task.task_id)}
-                      className="gap-1"
-                    >
-                      <FileText className="h-3.5 w-3.5" />
-                      查看交付物
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => hideTask(task.task_id)}
-                      className="gap-1 text-[#B5B5B5] hover:text-[#8A8A8A]"
-                    >
-                      <EyeOff className="h-3.5 w-3.5" />
-                      隐藏
-                    </Button>
-                  </div>
+              {filteredLiteHistory.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-[#D8D8D2] bg-[#FAFAF8] p-5 text-sm text-[#6B6B6B]">
+                  没有找到匹配的作战记录
                 </div>
-              ))}
+              ) : (
+                filteredLiteHistory.map((task) => (
+                  <div
+                    key={task.task_id}
+                    className="flex items-start justify-between gap-4 rounded-xl border border-[#E5E5E5] p-4 transition-all hover:border-[#B5B5B5] hover:bg-[#F9F9F7]"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                        <span className="text-xs font-mono text-[#8A8A8A] bg-[#F4F3EF] px-2 py-0.5 rounded">
+                          {task.task_id || "—"}
+                        </span>
+                        {task.artifact_type && (
+                          <span className="text-[10px] font-medium text-[#6B6B6B] bg-[#EEF0E8] px-1.5 py-0.5 rounded">
+                            {task.artifact_type}
+                          </span>
+                        )}
+                        <span className="text-xs text-[#B5B5B5]">
+                          {formatLocalTime(task.created_at)}
+                        </span>
+                      </div>
+                      <p className="text-sm font-medium text-[#0B0B0B] truncate">
+                        {task.goal?.trim() || "未命名作战任务"}
+                      </p>
+                      <p className="mt-1 text-xs text-[#8A8A8A] line-clamp-2">
+                        {getSummaryFallback(task)}
+                      </p>
+                    </div>
+                    <div className="shrink-0 flex items-center gap-2">
+                      {task.goal?.trim() && (
+                        <>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => copyHistoryGoal(task.task_id, task.goal)}
+                            className="gap-1"
+                          >
+                            <ClipboardList className="h-3.5 w-3.5" />
+                            {copiedHistoryGoalId === task.task_id ? "已复制" : "复制目标"}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setGoal(task.goal || "")
+                              setLiteResult(null)
+                              setLiteActiveAgent("")
+                              setLiteProgressPhase(0)
+                              setTimeout(() => {
+                                document.getElementById("boss-goal-input")?.scrollIntoView({ behavior: "smooth", block: "center" })
+                              }, 100)
+                            }}
+                            className="gap-1"
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            复用目标
+                          </Button>
+                        </>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => viewDelivery(task.task_id)}
+                        className="gap-1"
+                      >
+                        <FileText className="h-3.5 w-3.5" />
+                        查看交付物
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => hideTask(task.task_id)}
+                        className="gap-1 text-[#B5B5B5] hover:text-[#8A8A8A]"
+                      >
+                        <EyeOff className="h-3.5 w-3.5" />
+                        隐藏
+                      </Button>
+                    </div>
+                  </div>
+                ))
+              )}
               {/* 加载更多按钮 */}
               {liteHistoryHasMore && (
                 <div className="pt-1">
@@ -2185,8 +2224,13 @@ export default function BossPage() {
                   </Button>
                 </div>
               )}
-              {!liteHistoryHasMore && liteHistory.length > 0 && (
+              {!liteHistoryHasMore && liteHistory.length > 0 && !liteHistoryQuery.trim() && (
                 <p className="text-center text-xs text-[#B5B5B5] pt-1">已显示全部</p>
+              )}
+              {liteHistoryQuery.trim() && !liteHistoryHasMore && filteredLiteHistory.length > 0 && (
+                <p className="text-center text-xs text-[#B5B5B5] pt-1">
+                  清空搜索查看更多
+                </p>
               )}
             </div>
           )}
