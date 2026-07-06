@@ -2,6 +2,7 @@
 import uuid
 import json
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
@@ -293,13 +294,43 @@ class BossLiteRequest(BaseModel):
     save_to_delivery: bool = Field(default=True, description="是否自动保存到交付中心")
 
 
+def _execute_boss_lite_agent(index: int, agent_id: str, agent_task) -> dict:
+    """Execute a single Boss Lite agent and return result with index for ordering.
+
+    Returns:
+        {
+            "index": int,
+            "agent_id": str,
+            "result": dict | None,
+            "error": str | None,
+        }
+    """
+    try:
+        from backend.services.agent_executor import execute_agent
+        result = execute_agent(agent_id, agent_task)
+        result_dict = result.model_dump(by_alias=False)
+        return {
+            "index": index,
+            "agent_id": agent_id,
+            "result": result_dict,
+            "error": None,
+        }
+    except Exception as e:
+        return {
+            "index": index,
+            "agent_id": agent_id,
+            "result": None,
+            "error": str(e),
+        }
+
+
 @router.post("/lite/execute", summary="Boss Lite — 一句话目标 → 多 Agent 协同执行")
 def boss_lite_execute(request: BossLiteRequest):
     """
     Boss Lite 最小闭环:
     1. 接收一句话业务目标
     2. 拆解为 3-5 个业务任务，映射到 marketing/image/data/research/website
-    3. 顺序执行每个 agent（通过 /agents/{agent_id}/execute）
+    3. 并行执行每个 agent（ThreadPoolExecutor，最多 5 worker）
     4. 收集 structured_output
     5. 生成 Boss 汇总报告
     6. 保存到 MiniDelivery（可选）
@@ -336,22 +367,67 @@ def boss_lite_execute(request: BossLiteRequest):
             "status": "pending",
         })
 
-    # 顺序执行每个 agent
-    from backend.services.agent_executor import execute_agent
+    # 并行执行每个 agent（ThreadPoolExecutor）
     from backend.schemas.agent_protocol import AgentTask
 
+    # 预构建所有 AgentTask（线程安全：每个 future 拿自己的 task 对象）
+    agent_tasks = []
+    for i, task in enumerate(plan):
+        agent_task = AgentTask(
+            task_id=f"boss_lite_{uuid.uuid4().hex[:8]}",
+            goal=request.goal,
+            task_type=task["task_type"],
+            context={"source": "boss_lite", "prompt": task["prompt"]},
+            input={"prompt": task["prompt"]},
+        )
+        agent_tasks.append((i, task["agent_id"], agent_task))
+
+    # 并行提交，按 index 保序收集
+    raw_results: List[Optional[Dict[str, Any]]] = [None] * len(agent_tasks)
+    max_workers = min(len(agent_tasks), 5)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_index = {
+            executor.submit(_execute_boss_lite_agent, idx, aid, at): idx
+            for idx, aid, at in agent_tasks
+        }
+        for future in as_completed(future_to_index):
+            idx = future_to_index[future]
+            try:
+                raw_results[idx] = future.result()
+            except Exception as e:
+                # 理论上 helper 已兜底，这里双重保险
+                raw_results[idx] = {
+                    "index": idx,
+                    "agent_id": agent_tasks[idx][1],
+                    "result": None,
+                    "error": str(e),
+                }
+
+    # 按 plan 顺序写回 task status 和 results
     results: List[Dict[str, Any]] = []
-    for task in plan:
-        try:
-            agent_task = AgentTask(
-                task_id=f"boss_lite_{uuid.uuid4().hex[:8]}",
-                goal=request.goal,
-                task_type=task["task_type"],
-                context={"source": "boss_lite", "prompt": task["prompt"]},
-                input={"prompt": task["prompt"]},
-            )
-            result = execute_agent(task["agent_id"], agent_task)
-            result_dict = result.model_dump(by_alias=False)
+    for i, task in enumerate(plan):
+        raw = raw_results[i]
+        if raw is None:
+            raw = {
+                "index": i,
+                "agent_id": task["agent_id"],
+                "result": None,
+                "error": "Agent execution did not return a result",
+            }
+        if raw["error"] or raw["result"] is None:
+            task["status"] = "failed"
+            results.append({
+                "agent_id": task["agent_id"],
+                "title": task["title"],
+                "ok": False,
+                "summary": "",
+                "structured_output": {},
+                "warnings": [],
+                "errors": [raw["error"]] if raw["error"] else ["Unknown error"],
+                "error": raw["error"] or "Unknown error",
+            })
+        else:
+            result_dict = raw["result"]
             task["status"] = "done" if result_dict.get("ok") else "failed"
             results.append({
                 "agent_id": task["agent_id"],
@@ -362,18 +438,6 @@ def boss_lite_execute(request: BossLiteRequest):
                 "warnings": result_dict.get("warnings", []),
                 "errors": result_dict.get("errors", []),
                 "error": result_dict.get("error"),
-            })
-        except Exception as e:
-            task["status"] = "failed"
-            results.append({
-                "agent_id": task["agent_id"],
-                "title": task["title"],
-                "ok": False,
-                "summary": "",
-                "structured_output": {},
-                "warnings": [],
-                "errors": [str(e)],
-                "error": str(e),
             })
 
     # 生成汇总
