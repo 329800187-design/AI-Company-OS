@@ -115,6 +115,58 @@ const moduleDescriptions: Record<string, string> = {
   actions: "拆成今天、本周、本月能执行的行动项。",
 }
 
+// Boss Lite 常用作战模板
+const liteTemplates = [
+  {
+    id: "new-product",
+    label: "新品上线",
+    icon: Sparkles,
+    goal: "我要为一个新产品做一次完整的新品上线策划，目标是产出市场定位分析、首批种草文案、视觉方向建议、核心数据指标和落地页框架。",
+  },
+  {
+    id: "cold-start",
+    label: "品牌冷启动",
+    icon: Target,
+    goal: "我要为一个新品牌做冷启动方案，目标是完成目标用户画像、竞品差异分析、初始获客渠道策略、第一批内容方向和品牌视觉调性建议。",
+  },
+  {
+    id: "xiaohongshu",
+    label: "小红书种草",
+    icon: BookOpen,
+    goal: "我要在小红书做一次种草投放，目标是产出 5 条种草笔记文案、封面视觉方向、关键词布局策略、达人合作建议和数据跟踪指标。",
+  },
+  {
+    id: "douyin",
+    label: "抖音短视频增长",
+    icon: BarChart3,
+    goal: "我要用抖音短视频做增长，目标是产出 5 条短视频脚本、选题方向、投流策略、账号人设建议和核心转化指标。",
+  },
+  {
+    id: "seo",
+    label: "SEO 内容增长",
+    icon: Globe2,
+    goal: "我要通过 SEO 内容做长期流量增长，目标是产出关键词矩阵、10 篇内容选题、页面结构建议、内链策略和排名跟踪指标。",
+  },
+  {
+    id: "landing-page",
+    label: "落地页转化",
+    icon: Megaphone,
+    goal: "我要优化一个产品的落地页转化率，目标是产出首屏文案、卖点排序、信任证明方案、CTA 策略和 A/B 测试建议。",
+  },
+  {
+    id: "competitor",
+    label: "竞品调研",
+    icon: Search,
+    goal: "我要做一次深度竞品调研，目标是分析 5 个核心竞品的定位、定价、卖点、渠道策略，找出差异化机会和可借鉴打法。",
+  },
+  {
+    id: "data-review",
+    label: "数据复盘",
+    icon: ClipboardList,
+    goal: "我要对上一阶段的运营数据做复盘，目标是产出关键指标分析、增长归因、问题诊断、下一阶段优化建议和具体行动计划。",
+  },
+]
+
 const examples = [
   "帮我调研 AI 陪伴产品的市场机会，并给出第一版运营动作",
   "给我的知识付费课程做一套小红书推广方案和落地页草稿",
@@ -803,6 +855,34 @@ export default function BossPage() {
                 </button>
               ))}
             </div>
+
+            {/* Boss Lite 常用作战模板 */}
+            {mode === "boss-lite" && !liteResult && !isRunning && (
+              <div className="pt-1">
+                <p className="text-xs text-[#B5B5B5] mb-2.5">
+                  选择模板会自动填入目标，你也可以继续编辑。
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {liteTemplates.map((tpl) => {
+                    const Icon = tpl.icon
+                    return (
+                      <button
+                        key={tpl.id}
+                        type="button"
+                        onClick={() => {
+                          setGoal(tpl.goal)
+                          setLiteResult(null)
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-[#E5E5E5] bg-[#F9F9F7] px-3.5 py-1.5 text-xs font-medium text-[#5A5A5A] transition-all hover:border-[#0B0B0B] hover:text-[#0B0B0B] hover:bg-white"
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                        {tpl.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* 模块选择 + 模板入口 — only in command-center mode */}
             {mode === "command-center" && !currentMission && (
