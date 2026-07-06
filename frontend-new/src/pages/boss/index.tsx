@@ -408,6 +408,8 @@ export default function BossPage() {
     created_at: string
     summary?: string
     artifact_type?: string
+    agent_id?: string
+    source_page?: string
   }>>([])
 
   // 隐藏任务 ID 管理（localStorage）
@@ -467,7 +469,7 @@ export default function BossPage() {
     const q = liteHistoryQuery.trim().toLowerCase()
     const filtered = q
       ? liteHistory.filter((t) => {
-          const fields = [t.task_id, t.goal, t.artifact_type, t.summary].filter(Boolean) as string[]
+          const fields = [t.task_id, t.goal, t.artifact_type, t.summary, t.source_page, t.agent_id].filter(Boolean) as string[]
           return fields.some((f) => f.toLowerCase().includes(q))
         })
       : liteHistory
@@ -830,6 +832,22 @@ export default function BossPage() {
     if (!ms || ms <= 0) return null
     if (ms < 1000) return `${ms}ms`
     return `${(ms / 1000).toFixed(1)}s`
+  }
+
+  /** 从历史 task 中提取复盘 badge 列表（只用 API 实际返回的字段） */
+  const getTaskOutcomeBadges = (task: {
+    artifact_type?: string
+    source_page?: string
+    agent_id?: string
+  }): Array<{ label: string; variant: "outline" | "secondary" | "success" | "warning" | "info" }> => {
+    const badges: Array<{ label: string; variant: "outline" | "secondary" | "success" | "warning" | "info" }> = []
+    if (task.artifact_type) {
+      badges.push({ label: task.artifact_type, variant: "outline" })
+    }
+    if (task.source_page) {
+      badges.push({ label: `来源: ${task.source_page}`, variant: "secondary" })
+    }
+    return badges
   }
 
   return (
@@ -2124,7 +2142,7 @@ export default function BossPage() {
                   type="text"
                   value={liteHistoryQuery}
                   onChange={(e) => setLiteHistoryQuery(e.target.value)}
-                  placeholder="搜索 task_id / 目标 / 类型"
+                  placeholder="搜索 task_id / 目标 / 类型 / 来源"
                   className="w-full rounded-lg border border-[#E5E5E5] bg-[#F9F9F7] pl-9 pr-3 py-2 text-sm text-[#0B0B0B] placeholder:text-[#B5B5B5] focus:outline-none focus:border-[#B5B5B5] transition-colors"
                 />
               </div>
@@ -2165,11 +2183,21 @@ export default function BossPage() {
                         <span className="text-xs font-mono text-[#8A8A8A] bg-[#F4F3EF] px-2 py-0.5 rounded">
                           {task.task_id || "—"}
                         </span>
-                        {task.artifact_type && (
-                          <span className="text-[10px] font-medium text-[#6B6B6B] bg-[#EEF0E8] px-1.5 py-0.5 rounded">
-                            {task.artifact_type}
+                        {getTaskOutcomeBadges(task).map((badge, i) => (
+                          <span
+                            key={i}
+                            className={cn(
+                              "text-[10px] font-medium px-1.5 py-0.5 rounded",
+                              badge.variant === "outline" && "text-[#6B6B6B] bg-[#EEF0E8]",
+                              badge.variant === "secondary" && "text-[#8A8A8A] bg-[#F4F3EF]",
+                              badge.variant === "info" && "text-blue-600 bg-blue-50",
+                              badge.variant === "success" && "text-green bg-green/10",
+                              badge.variant === "warning" && "text-yellow-600 bg-yellow-50"
+                            )}
+                          >
+                            {badge.label}
                           </span>
-                        )}
+                        ))}
                         <span className="text-xs text-[#B5B5B5]">
                           {formatLocalTime(task.created_at)}
                         </span>
