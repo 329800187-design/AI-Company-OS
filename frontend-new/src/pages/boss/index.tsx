@@ -131,6 +131,146 @@ const agentIcons: Record<string, React.ElementType> = {
   website: Globe2,
 }
 
+function valueToText(value: unknown): string {
+  if (value == null) return ""
+  if (typeof value === "string") return value
+  if (typeof value === "number" || typeof value === "boolean") return String(value)
+  if (Array.isArray(value)) return value.map(valueToText).filter(Boolean).join("；")
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>
+    const name = record.name || record.title || record.metric || record.label
+    const description = record.description || record.summary || record.value
+    const formula = record.formula
+    const parts = [name, description].filter(Boolean).map(String)
+    if (formula) parts.push(`公式：${String(formula)}`)
+    if (parts.length) return parts.join(" — ")
+    return Object.entries(record).slice(0, 4).map(([key, val]) => `${key}: ${valueToText(val)}`).join("；")
+  }
+  return String(value)
+}
+
+function listToText(value: unknown, limit = 3): string {
+  if (Array.isArray(value)) return value.slice(0, limit).map(valueToText).filter(Boolean).join("；")
+  return valueToText(value)
+}
+
+/** 从 structured_output 中提取可读摘要，控制在 80-120 字 */
+function extractAgentSummary(agentId: string, summary: string, so: Record<string, unknown>): string {
+  // 优先用 summary
+  if (summary && summary.length > 10) return summary.length > 120 ? summary.slice(0, 117) + "..." : summary
+
+  // 按 agent 类型提取关键字段
+  switch (agentId) {
+    case "research": {
+      const parts: string[] = []
+      const ms = so.market_summary as string
+      if (ms) parts.push(ms)
+      const kf = so.key_findings as unknown[]
+      if (kf?.length) parts.push(`发现: ${valueToText(kf[0])}`)
+      const op = so.opportunities as unknown[]
+      if (op?.length) parts.push(`机会: ${valueToText(op[0])}`)
+      const rk = so.risks as unknown[]
+      if (rk?.length) parts.push(`风险: ${valueToText(rk[0])}`)
+      return parts.map(valueToText).join("；").slice(0, 120) || "市场调研完成"
+    }
+    case "marketing": {
+      const parts: string[] = []
+      const hl = so.headline as string
+      if (hl) parts.push(hl)
+      const sub = so.subheadline as string
+      if (sub) parts.push(sub)
+      const cta = so.cta as string
+      if (cta) parts.push(`CTA: ${cta}`)
+      const kw = so.keywords as unknown[]
+      if (kw?.length) parts.push(`关键词: ${kw.slice(0, 3).map(valueToText).join("/")}`)
+      return parts.map(valueToText).join("；").slice(0, 120) || "营销方案完成"
+    }
+    case "image": {
+      const parts: string[] = []
+      const ip = so.image_prompt as string
+      if (ip) parts.push(`提示词: ${ip}`)
+      const st = so.style as string
+      if (st) parts.push(`风格: ${st}`)
+      const cp = so.color_palette
+      if (cp) parts.push(`色彩: ${valueToText(cp)}`)
+      return parts.map(valueToText).join("；").slice(0, 120) || "视觉方案完成"
+    }
+    case "data": {
+      const parts: string[] = []
+      const aq = so.analysis_question as string
+      if (aq) parts.push(aq)
+      const km = so.key_metrics as unknown[]
+      if (km?.length) parts.push(`指标: ${valueToText(km[0])}`)
+      const fn = so.findings as unknown[]
+      if (fn?.length) parts.push(`发现: ${valueToText(fn[0])}`)
+      const rc = so.recommendations as unknown[]
+      if (rc?.length) parts.push(`建议: ${valueToText(rc[0])}`)
+      return parts.map(valueToText).join("；").slice(0, 120) || "数据分析完成"
+    }
+    case "website": {
+      const parts: string[] = []
+      const pg = so.page_goal as string
+      if (pg) parts.push(pg)
+      const hero = so.hero as Record<string, unknown>
+      if (hero?.headline) parts.push(`首屏: ${hero.headline}`)
+      const sections = so.sections as Array<Record<string, unknown>>
+      if (sections?.length) parts.push(`${sections.length} 个板块`)
+      const seo = so.seo as Record<string, unknown>
+      if (seo?.title) parts.push(`SEO: ${seo.title}`)
+      return parts.map(valueToText).join("；").slice(0, 120) || "落地页方案完成"
+    }
+    default:
+      return summary || "执行完成"
+  }
+}
+
+/** 从 structured_output 中提取结构化关键字段 */
+function extractKeyFields(agentId: string, so: Record<string, unknown>): Array<{ label: string; value: string }> {
+  const fields: Array<{ label: string; value: string }> = []
+  if (!so || Object.keys(so).length === 0) return fields
+
+  switch (agentId) {
+    case "research":
+      if (so.market_summary) fields.push({ label: "市场摘要", value: String(so.market_summary).slice(0, 200) })
+      if (so.key_findings) fields.push({ label: "关键发现", value: listToText(so.key_findings, 3) })
+      if (so.opportunities) fields.push({ label: "机会", value: listToText(so.opportunities, 3) })
+      if (so.risks) fields.push({ label: "风险", value: listToText(so.risks, 3) })
+      break
+    case "marketing":
+      if (so.headline) fields.push({ label: "核心文案", value: String(so.headline) })
+      if (so.subheadline) fields.push({ label: "副标题", value: String(so.subheadline) })
+      if (so.cta) fields.push({ label: "CTA", value: String(so.cta) })
+      if (so.selling_points) fields.push({ label: "核心卖点", value: listToText(so.selling_points, 5) })
+      if (so.keywords) fields.push({ label: "关键词", value: listToText(so.keywords, 5) })
+      break
+    case "image":
+      if (so.style) fields.push({ label: "视觉风格", value: String(so.style) })
+      if (so.image_prompt) fields.push({ label: "图片提示词", value: String(so.image_prompt).slice(0, 200) })
+      if (so.color_palette) fields.push({ label: "色彩方案", value: valueToText(so.color_palette) })
+      if (so.usage_suggestions) fields.push({ label: "使用建议", value: valueToText(so.usage_suggestions).slice(0, 200) })
+      break
+    case "data":
+      if (so.analysis_question) fields.push({ label: "分析主题", value: String(so.analysis_question) })
+      if (so.key_metrics) fields.push({ label: "关键指标", value: listToText(so.key_metrics, 5) })
+      if (so.findings) fields.push({ label: "发现", value: listToText(so.findings, 3) })
+      if (so.recommendations) fields.push({ label: "建议", value: listToText(so.recommendations, 3) })
+      break
+    case "website":
+      if (so.page_goal) fields.push({ label: "页面目标", value: String(so.page_goal) })
+      {
+        const hero = so.hero as Record<string, unknown> | undefined
+        if (hero?.headline) fields.push({ label: "首屏标题", value: String(hero.headline) })
+        if (hero?.cta) fields.push({ label: "首屏 CTA", value: String(hero.cta) })
+      }
+      if (so.sections) {
+        const secs = so.sections as Array<Record<string, unknown>>
+        fields.push({ label: "页面板块", value: secs.slice(0, 5).map(s => s.title || s.name || "板块").join("、") })
+      }
+      break
+  }
+  return fields
+}
+
 export default function BossPage() {
   // Mode: "command-center" or "boss-lite"
   const [mode, setMode] = useState<"command-center" | "boss-lite">("boss-lite")
@@ -955,7 +1095,7 @@ export default function BossPage() {
                           </Badge>
                         </div>
                         <p className="mt-1 text-xs text-muted-foreground line-clamp-2">
-                          {r.summary || ""}
+                          {extractAgentSummary(r.agent_id, r.summary, r.structured_output)}
                         </p>
                       </div>
                     </div>
@@ -992,19 +1132,39 @@ export default function BossPage() {
                       </Badge>
                     </div>
 
-                    {/* Summary */}
-                    {r.summary && (
-                      <div className="rounded-lg border border-border bg-background/60 p-4 mb-4">
-                        <h4 className="mb-2 text-sm font-medium">摘要</h4>
-                        <p className="text-sm text-muted-foreground">{r.summary}</p>
-                      </div>
-                    )}
+                    {/* Summary — always show extracted summary */}
+                    <div className="rounded-lg border border-border bg-background/60 p-4 mb-4">
+                      <h4 className="mb-2 text-sm font-medium">摘要</h4>
+                      <p className="text-sm text-muted-foreground">
+                        {extractAgentSummary(r.agent_id, r.summary, r.structured_output)}
+                      </p>
+                    </div>
 
-                    {/* Structured Output */}
+                    {/* Key Fields — structured readable block */}
+                    {r.structured_output && (() => {
+                      const keyFields = extractKeyFields(r.agent_id, r.structured_output)
+                      if (keyFields.length === 0) return null
+                      return (
+                        <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 mb-4">
+                          <h4 className="mb-3 text-sm font-medium text-primary">关键信息</h4>
+                          <div className="space-y-2">
+                            {keyFields.map((field, i) => (
+                              <div key={i} className="flex gap-2">
+                                <span className="shrink-0 text-xs font-medium text-muted-foreground min-w-[80px]">
+                                  {field.label}
+                                </span>
+                                <span className="text-sm">{field.value}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    })()}
+
+                    {/* Structured Output — raw JSON (collapsible) */}
                     {r.structured_output && Object.keys(r.structured_output).length > 0 && (() => {
                       const so = r.structured_output
                       const provider = so.provider as string | undefined
-                      const soSummary = so.summary as string | undefined
                       return (
                         <div className="space-y-3">
                           {/* Provider info */}
@@ -1015,21 +1175,15 @@ export default function BossPage() {
                             </div>
                           )}
 
-                          {/* Summary */}
-                          {soSummary && (
-                            <div className="rounded-lg border border-border bg-background/60 p-4">
-                              <h4 className="mb-2 text-sm font-medium">详细摘要</h4>
-                              <p className="text-sm text-muted-foreground">{soSummary}</p>
-                            </div>
-                          )}
-
-                          {/* Generic structured data */}
-                          <div className="rounded-lg border border-border bg-background/60 p-4">
-                            <h4 className="mb-2 text-sm font-medium">结构化产出</h4>
-                            <pre className="whitespace-pre-wrap break-words font-sans text-xs text-muted-foreground max-h-[400px] overflow-y-auto">
+                          {/* Raw JSON */}
+                          <details className="rounded-lg border border-border bg-background/60">
+                            <summary className="p-4 cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground">
+                              查看原始 JSON 输出
+                            </summary>
+                            <pre className="px-4 pb-4 whitespace-pre-wrap break-words font-sans text-xs text-muted-foreground max-h-[400px] overflow-y-auto">
                               {JSON.stringify(so, null, 2)}
                             </pre>
-                          </div>
+                          </details>
                         </div>
                       )
                     })()}

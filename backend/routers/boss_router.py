@@ -468,80 +468,288 @@ def boss_lite_execute(request: BossLiteRequest):
 
 
 def _render_boss_lite_md(goal: str, plan: list, results: list, boss_so: dict) -> str:
-    """渲染 Boss Lite 汇总报告为 Markdown"""
+    """渲染 Boss Lite 汇总报告为 Markdown — 老板可直接阅读的作战简报"""
     lines = [
         "# Boss Lite 作战报告",
         "",
-        f"> **业务目标：** {goal}",
+        "## 总目标",
+        "",
+        goal,
         "",
         "---",
         "",
-        "## 执行计划",
+        "## 一、执行计划",
         "",
     ]
 
     for task in plan:
         status_icon = "✅" if task["status"] == "done" else "❌" if task["status"] == "failed" else "⏳"
-        lines.append(f"{status_icon} **{task['title']}** ({task['agent_id']}) — {task['purpose']}")
+        lines.append(f"- {status_icon} **{task['title']}** — {task['purpose']}")
     lines.append("")
 
-    lines += ["---", "", "## 各部门执行结果", ""]
+    lines += ["---", "", "## 二、各部门结论", ""]
 
     for r in results:
-        status_icon = "✅" if r["ok"] else "❌"
-        lines.append(f"### {status_icon} {r['title']} ({r['agent_id']})")
-        lines.append("")
-        if r["summary"]:
-            lines.append(f"> {r['summary']}")
-            lines.append("")
-
         so = r.get("structured_output") or {}
-        if so:
-            # 提取关键字段展示
-            for key in ["headline", "title", "content", "body", "summary", "market_summary",
-                        "analysis_question", "research_question", "page_goal", "image_prompt"]:
-                val = so.get(key)
-                if val and isinstance(val, str):
-                    lines.append(f"**{key}:** {val}")
-                    lines.append("")
+        agent_id = r["agent_id"]
+        status_icon = "✅" if r["ok"] else "❌"
 
-            # 列表字段
-            for key in ["key_findings", "findings", "recommendations", "risks",
-                        "tagline_options", "channels", "selling_points"]:
-                val = so.get(key)
-                if val and isinstance(val, list):
-                    lines.append(f"**{key}:**")
-                    for item in val[:5]:
-                        lines.append(f"- {item}")
-                    lines.append("")
+        lines.append(f"### {status_icon} {r['title']}")
+        lines.append("")
+
+        # 按 agent 类型提取关键信息
+        if agent_id == "research":
+            _render_research_section(lines, r, so)
+        elif agent_id == "marketing":
+            _render_marketing_section(lines, r, so)
+        elif agent_id == "image":
+            _render_image_section(lines, r, so)
+        elif agent_id == "data":
+            _render_data_section(lines, r, so)
+        elif agent_id == "website":
+            _render_website_section(lines, r, so)
+        else:
+            _render_generic_section(lines, r, so)
 
         if r.get("error"):
             lines.append(f"⚠️ 错误: {r['error']}")
             lines.append("")
 
+    # Boss 最终建议 — 基于实际结果动态生成
+    lines += ["---", "", "## 三、Boss 最终建议", ""]
+
+    succeeded_agents = [r["agent_id"] for r in results if r["ok"]]
+    failed_agents = [r["agent_id"] for r in results if not r["ok"]]
+
+    if "research" in succeeded_agents:
+        lines.append("- **先做什么：** 确认市场调研的核心发现，验证目标用户需求和竞品差距")
+    elif "marketing" in succeeded_agents:
+        lines.append("- **先做什么：** 基于营销方案准备第一批推广素材和文案")
+    elif "data" in succeeded_agents:
+        lines.append("- **先做什么：** 先建立关键指标看板，用数据确认最值得投入的方向")
+    elif "website" in succeeded_agents:
+        lines.append("- **先做什么：** 先把落地页核心结构搭出来，验证转化路径是否顺畅")
+    elif "image" in succeeded_agents:
+        lines.append("- **先做什么：** 先统一视觉方向，产出第一批可用于测试的素材")
+    else:
+        lines.append("- **先做什么：** 先重新执行 Boss Lite，补齐可用的部门输出")
+
+    if "marketing" in succeeded_agents and "image" in succeeded_agents:
+        lines.append("- **再做什么：** 结合营销文案和视觉方案，制作可用于投放的图文素材")
+    elif "website" in succeeded_agents:
+        lines.append("- **再做什么：** 参考落地页方案搭建转化页面，配合营销节奏上线")
+
+    if "data" in succeeded_agents:
+        lines.append("- **数据追踪：** 按数据分析框架建立效果追踪体系，每周复盘关键指标")
+
+    if failed_agents:
+        failed_titles = [r["title"] for r in results if not r["ok"]]
+        lines.append(f"- **风险提醒：** {', '.join(failed_titles)} 执行失败，建议手动补充或重新执行")
+
+    lines.append("- **下一步行动：** 选择 1-2 个最可行的方向，先跑最小可行版本（MVP），根据数据反馈迭代")
+    lines.append("")
+
     lines += [
-        "---",
-        "",
-        "## 总结",
-        "",
-        f"- 成功: {boss_so['succeeded']}/{boss_so['total']}",
-        f"- 失败: {boss_so['failed']}/{boss_so['total']}",
-        "",
-        "---",
-        "",
-        "## 最终建议",
-        "",
-        "根据以上各部门的分析，建议按以下优先级推进：",
-        "",
-        "1. 先确认市场调研的核心发现，验证目标用户需求",
-        "2. 基于营销方案准备第一批内容素材",
-        "3. 使用视觉方案制作配图和封面",
-        "4. 参考落地页方案搭建转化页面",
-        "5. 按数据分析框架建立效果追踪体系",
-        "",
         "---",
         "",
         f"*由 AI Company OS Boss Lite 生成 · {boss_so.get('generated_at', '')}*",
     ]
 
     return "\n".join(lines)
+
+
+def _render_research_section(lines: list, r: dict, so: dict):
+    """渲染市场调研结论"""
+    summary = r.get("summary") or so.get("summary") or so.get("market_summary", "")
+    if summary:
+        lines.append(f"- **摘要：** {summary[:200]}")
+        lines.append("")
+
+    key_findings = so.get("key_findings") or so.get("findings", [])
+    if key_findings and isinstance(key_findings, list):
+        lines.append("- **关键发现：**")
+        for item in key_findings[:5]:
+            lines.append(f"  - {_format_boss_value(item)}")
+        lines.append("")
+
+    opportunities = so.get("opportunities", [])
+    if opportunities and isinstance(opportunities, list):
+        lines.append("- **机会：**")
+        for item in opportunities[:3]:
+            lines.append(f"  - {_format_boss_value(item)}")
+        lines.append("")
+
+    risks = so.get("risks", [])
+    if risks and isinstance(risks, list):
+        lines.append("- **风险：**")
+        for item in risks[:3]:
+            lines.append(f"  - {_format_boss_value(item)}")
+        lines.append("")
+
+
+def _render_marketing_section(lines: list, r: dict, so: dict):
+    """渲染营销方案结论"""
+    headline = so.get("headline", "")
+    if headline:
+        lines.append(f"- **核心文案：** {headline}")
+        lines.append("")
+
+    body = so.get("body", "")
+    if body and isinstance(body, str):
+        lines.append(f"- **文案正文：** {body[:300]}")
+        lines.append("")
+
+    cta = so.get("cta", "")
+    if cta:
+        lines.append(f"- **CTA：** {cta}")
+        lines.append("")
+
+    selling_points = so.get("selling_points") or so.get("key_findings", [])
+    if selling_points and isinstance(selling_points, list):
+        lines.append("- **核心卖点：**")
+        for item in selling_points[:5]:
+            lines.append(f"  - {_format_boss_value(item)}")
+        lines.append("")
+
+    keywords = so.get("keywords") or so.get("hashtags", [])
+    if keywords and isinstance(keywords, list):
+        lines.append(f"- **关键词：** {', '.join(_format_boss_value(k) for k in keywords[:8])}")
+        lines.append("")
+
+
+def _render_image_section(lines: list, r: dict, so: dict):
+    """渲染视觉方案结论"""
+    style = so.get("style", "")
+    if style:
+        lines.append(f"- **视觉风格：** {style}")
+        lines.append("")
+
+    image_prompt = so.get("image_prompt", "")
+    if image_prompt:
+        lines.append(f"- **图片提示词：** {image_prompt[:200]}")
+        lines.append("")
+
+    color_palette = so.get("color_palette", "")
+    if color_palette:
+        lines.append(f"- **色彩方案：** {_format_boss_value(color_palette)}")
+        lines.append("")
+
+    usage = so.get("usage_suggestions", "")
+    if usage:
+        lines.append(f"- **使用建议：** {_format_boss_value(usage)[:200]}")
+        lines.append("")
+
+
+def _render_data_section(lines: list, r: dict, so: dict):
+    """渲染数据分析结论"""
+    question = so.get("analysis_question", "")
+    if question:
+        lines.append(f"- **分析主题：** {question}")
+        lines.append("")
+
+    metrics = so.get("key_metrics", [])
+    if metrics and isinstance(metrics, list):
+        lines.append("- **关键指标：**")
+        for item in metrics[:5]:
+            lines.append(f"  - {_format_boss_value(item)}")
+        lines.append("")
+
+    findings = so.get("findings", [])
+    if findings and isinstance(findings, list):
+        lines.append("- **发现：**")
+        for item in findings[:5]:
+            lines.append(f"  - {_format_boss_value(item)}")
+        lines.append("")
+
+    recommendations = so.get("recommendations", [])
+    if recommendations and isinstance(recommendations, list):
+        lines.append("- **建议：**")
+        for item in recommendations[:5]:
+            lines.append(f"  - {_format_boss_value(item)}")
+        lines.append("")
+
+
+def _render_website_section(lines: list, r: dict, so: dict):
+    """渲染落地页方案结论"""
+    page_goal = so.get("page_goal", "")
+    if page_goal:
+        lines.append(f"- **页面目标：** {page_goal}")
+        lines.append("")
+
+    hero = so.get("hero", {})
+    if hero and isinstance(hero, dict):
+        hero_headline = hero.get("headline", "")
+        hero_sub = hero.get("subheadline", "")
+        hero_cta = hero.get("cta", "")
+        if hero_headline:
+            lines.append(f"- **首屏标题：** {hero_headline}")
+        if hero_sub:
+            lines.append(f"  - 副标题：{hero_sub}")
+        if hero_cta:
+            lines.append(f"  - CTA：{hero_cta}")
+        lines.append("")
+
+    sections = so.get("sections", [])
+    if sections and isinstance(sections, list):
+        lines.append("- **页面板块：**")
+        for item in sections[:5]:
+            if isinstance(item, dict):
+                lines.append(f"  - {item.get('title', item.get('name', str(item)))}")
+            else:
+                lines.append(f"  - {item}")
+        lines.append("")
+
+    ctas = so.get("ctas", [])
+    if ctas and isinstance(ctas, list):
+        lines.append(f"- **CTA：** {', '.join(_format_boss_value(c) for c in ctas[:3])}")
+        lines.append("")
+
+    seo = so.get("seo", {})
+    if seo and isinstance(seo, dict):
+        lines.append("- **SEO 建议：**")
+        for k, v in list(seo.items())[:3]:
+            lines.append(f"  - {k}: {v}")
+        lines.append("")
+
+
+def _render_generic_section(lines: list, r: dict, so: dict):
+    """渲染通用结论（未知 agent 类型）"""
+    summary = r.get("summary") or so.get("summary", "")
+    if summary:
+        lines.append(f"- **摘要：** {summary[:200]}")
+        lines.append("")
+
+    # 提取常见字段
+    for key in ["headline", "title", "content", "body", "recommendations", "findings"]:
+        val = so.get(key)
+        if val and isinstance(val, str):
+            lines.append(f"- **{key}：** {val[:200]}")
+            lines.append("")
+        elif val and isinstance(val, list):
+            lines.append(f"- **{key}：**")
+            for item in val[:5]:
+                lines.append(f"  - {_format_boss_value(item)}")
+            lines.append("")
+
+
+def _format_boss_value(value: Any) -> str:
+    """把字符串、数组或对象压成适合 Markdown 摘要展示的一行文本。"""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    if isinstance(value, list):
+        return "；".join(_format_boss_value(item) for item in value if item is not None)
+    if isinstance(value, dict):
+        name = value.get("name") or value.get("title") or value.get("metric") or value.get("label")
+        description = value.get("description") or value.get("summary") or value.get("value")
+        formula = value.get("formula")
+        parts = [str(part) for part in [name, description] if part]
+        if formula:
+            parts.append(f"公式：{formula}")
+        if parts:
+            return " — ".join(parts)
+        return "；".join(f"{key}: {_format_boss_value(val)}" for key, val in list(value.items())[:4])
+    return str(value)
