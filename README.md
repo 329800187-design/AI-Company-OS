@@ -21,14 +21,16 @@ Boss Lite 已完成能力：
 - 一句话目标输入，支持 8 个常用作战模板一键填入
 - 自动拆解为 5 个业务 Agent：research / marketing / image / data / website
 - 5 个 Agent 并行执行（ThreadPoolExecutor，max_workers=5）
-- Agent Handoff v1：research / data 上游洞察传递给 marketing / image / website
+- **Agent Handoff v1 已完成**：research / data 上游洞察自动传递给 marketing / image / website
+- 前端已可视化 handoff 状态：Summary Banner 显示 handoff flow，下游 Agent 卡片显示「已参考上游洞察」，详情页显示 handoff 来源
 - 可读的 Boss 作战报告（Markdown 格式，含各部门结论和 Boss 建议）
 - 自动保存到 MiniDelivery（artifact.md + raw_agent_result.json + result.json）
 - Delivery 搜索/预览/详情/下载全部可用
 - 进度 UI（4 阶段动画）
 - 总耗时 + 单 Agent 耗时统计
+- **第二阶段核心闭环完成**：一句话目标 → 多 Agent 协同（含 handoff） → 作战报告 → 自动保存
 
-已验证 task_id 示例：`boss_b8241c004c4d`、`boss_0fbb4623b07b`、`boss_d93dae73ab76`
+已验证 task_id 示例：`boss_b8241c004c4d`、`boss_0fbb4623b07b`、`boss_d93dae73ab76`、`boss_9c21dac31fae`、`boss_c7dba8f25408`、`boss_932d0b352f0e`
 
 最近验证：
 
@@ -101,14 +103,14 @@ cd frontend-new && npm run build              # ✅ 通过
 
 ## 下一步计划
 
-第一阶段和第二阶段 Boss Lite 已基本完成。下一步可选方向：
+第一阶段和第二阶段 Boss Lite 已基本完成，Agent Handoff v1 已闭环。下一步可选方向：
 
-1. **Collaboration / Agent Handoff 扩展** — 把 Boss Lite 的 handoff 扩展成更通用的 Agent 协作链
+1. **Collaboration / Agent Handoff 通用化** — 把 Boss Lite 的 handoff 扩展成通用 Agent 协作链，支持任意 Agent 间传递上下文
 2. **真实数据源接入** — Data Agent 接入真实数据库/API
 3. **OpenClaw 联网调研** — Research Agent 接入实时搜索
 4. **真实图片生成** — Image Agent 接入图片生成 API
-5. **作战报告 PDF 导出** — 一键导出 PDF 格式的作战报告
-6. **Boss Lite 历史回顾** — 查看和对比历史 Mission
+5. **PDF 导出** — 作战报告一键导出 PDF 格式
+6. **历史 Mission 回顾** — Boss Lite 历史记录查看和对比
 
 当前边界：
 

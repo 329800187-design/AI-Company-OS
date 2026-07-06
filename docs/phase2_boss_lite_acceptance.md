@@ -92,6 +92,8 @@ POST /boss/lite/execute
   "ok": true,
   "task_id": "boss_lite_xxxx",
   "goal": "...",
+  "handoff_enabled": true,
+  "execution_mode": "two_wave_handoff",
   "plan": [...],
   "results": [
     {
@@ -99,10 +101,24 @@ POST /boss/lite/execute
       "title": "市场调研",
       "ok": true,
       "summary": "...",
-      "structured_output": {...},
+      "structured_output": {"...": "..."},
+      "used_handoff": false,
+      "handoff_sources": [],
       "warnings": [],
       "errors": [],
       "duration_ms": 5234.1
+    },
+    {
+      "agent_id": "marketing",
+      "title": "营销方案",
+      "ok": true,
+      "summary": "...",
+      "structured_output": {"...": "..."},
+      "used_handoff": true,
+      "handoff_sources": ["research", "data"],
+      "warnings": [],
+      "errors": [],
+      "duration_ms": 4321.0
     }
   ],
   "summary": {
@@ -112,10 +128,39 @@ POST /boss/lite/execute
     "total": 5,
     "total_duration_ms": 12345.6
   },
-  "structured_output": {...},
+  "structured_output": {
+    "...": "...",
+    "handoff_context": {...},
+    "handoff_enabled": true,
+    "handoff_sources": ["research", "data"],
+    "handoff_targets": ["marketing", "image", "website"],
+    "execution_mode": "two_wave_handoff"
+  },
   "delivery_task_id": "boss_b8241c004c4d"
 }
 ```
+
+**Handoff 相关字段说明：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `handoff_enabled` | bool | 是否实际启用 handoff；仅当存在可用上游洞察且有下游 Agent 时为 true |
+| `execution_mode` | string | 执行模式，启用 handoff 时为 `"two_wave_handoff"`，否则为 `"parallel"` |
+| `results[i].used_handoff` | bool | 该 Agent 是否使用了上游洞察 |
+| `results[i].handoff_sources` | string[] | 该 Agent 接收洞察的来源 Agent 列表 |
+| `structured_output.handoff_context` | object | Boss 汇总层记录的上游洞察结构 |
+| `structured_output.handoff_sources` | string[] | 本次实际传递的上游来源列表 |
+| `structured_output.handoff_targets` | string[] | 本次实际接收 handoff 的下游目标列表 |
+
+**Handoff 规则：**
+
+| Agent | used_handoff | handoff_sources | 角色 |
+|-------|-------------|-----------------|------|
+| research | false | [] | 上游（生产者） |
+| data | false | [] | 上游（生产者） |
+| marketing | true | [research, data] | 下游（消费者） |
+| image | true | [research, data] | 下游（消费者） |
+| website | true | [research, data] | 下游（消费者） |
 
 ### 5.2 执行链路
 
@@ -125,14 +170,29 @@ POST /boss/lite/execute
   → rate_limiter.check("boss_lite")
   → 构建 5 个 AgentTask（research / marketing / image / data / website）
   → Wave 1 并行执行 research / data
-  → 提取 handoff_context
-  → Wave 2 并行执行 marketing / image / website（附加上游洞察）
+  → 提取 handoff_context：从 research/data 的 structured_output 中提取关键洞察
+  → Wave 2 并行执行 marketing / image / website（附加上游洞察到 task context）
   → 每个 Agent 调用 execute_agent(agent_id, task)
-  → 收集 structured_output
+  → 收集各 Agent structured_output，并在 Boss 汇总 structured_output 中写入 handoff 字段
   → 渲染 Markdown 作战报告
   → 保存到 MiniDelivery（artifact.md + raw_agent_result.json + result.json）
-  → 返回结果
+  → 返回结果（含 handoff_enabled、execution_mode、used_handoff 等字段）
 ```
+
+### 5.3 Handoff 执行逻辑
+
+Handoff 实现了两波执行（Wave Execution）模式：
+
+1. **Wave 1**（上游）：research / data 并行执行，产出原始洞察
+2. **Handoff 提取**：从 Wave 1 的 structured_output 中提取关键信息，拼接为 handoff_context 文本
+3. **Wave 2**（下游）：marketing / image / website 并行执行，每个 Agent 的 task 中附带 handoff_context
+4. **标记回写**：下游 Agent 的结果中 `used_handoff=true`，`handoff_sources` 列出上游来源
+
+**效果：**
+- 下游 Agent 的产出会参考上游的市场调研和数据分析结论
+- 营销方案更贴合调研发现的用户画像和市场机会
+- 视觉方案更贴合数据支持的设计方向
+- 落地页方案更贴合调研发现的用户痛点和数据验证的转化路径
 
 ### 5.3 相关端点
 
@@ -180,6 +240,15 @@ Boss 页面有两种模式，默认为 **Boss Lite**：
 - **警告**：warnings 列表
 - **错误**：error 信息（如有）
 - **耗时**：单 Agent 执行时间
+- **Handoff 来源**：下游 Agent 显示「已参考上游洞察」及来源 Agent 名称
+
+### 6.4 Handoff 可视化
+
+| 展示位置 | 内容 |
+|----------|------|
+| Summary Banner | 显示 handoff flow，如「research / data → marketing / image / website」 |
+| 下游 Agent 卡片 | 显示「已参考上游洞察」标记 |
+| Agent 详情页 | 显示 handoff 来源列表（如「洞察来源：research, data」） |
 
 ---
 
@@ -291,6 +360,12 @@ boss_{uuid_hex_12}
 | 14 | 下载 | 点击下载 | HTTP 200，文件内容正确 | ✅ |
 | 15 | 构建通过 | `npm run build` | 无报错，exit 0 | ✅ |
 | 16 | Handoff 字段 | 调用 `/boss/lite/execute` | `handoff_enabled=true`，下游 Agent `used_handoff=true` | ✅ |
+| 17 | 完整 5 Agent handoff | 全部 5 Agent 执行 | marketing/image/website `used_handoff=true`，research/data `used_handoff=false` | ✅ |
+| 18 | 部分 Agent handoff | 仅执行 research + marketing | marketing `used_handoff=true`，`handoff_sources=[research]` | ✅ |
+| 19 | artifact.md handoff | 查看 artifact.md | 包含「上游洞察传递」相关内容 | ✅ |
+| 20 | 前端 handoff flow | 查看 Summary Banner | 显示 handoff flow（如 research/data → marketing/image/website） | ✅ |
+| 21 | 前端下游标记 | 查看下游 Agent 卡片 | 显示「已参考上游洞察」 | ✅ |
+| 22 | 前端详情来源 | 查看 Agent 详情页 | 显示 handoff 来源 Agent 列表 | ✅ |
 
 ---
 
@@ -303,6 +378,9 @@ boss_{uuid_hex_12}
 | `boss_b8241c004c4d` | 搜索、预览、详情、下载 |
 | `boss_0fbb4623b07b` | 搜索、预览、详情、下载 |
 | `boss_d93dae73ab76` | 搜索、预览、详情、下载 |
+| `boss_9c21dac31fae` | Handoff 验证：5 Agent 完整执行，下游 used_handoff=true |
+| `boss_c7dba8f25408` | Handoff 验证：部分 Agent 执行，handoff_sources 正确 |
+| `boss_932d0b352f0e` | Handoff 验证：artifact.md 包含上游洞察传递 |
 
 ---
 
