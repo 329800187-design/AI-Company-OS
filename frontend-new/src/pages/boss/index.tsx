@@ -388,6 +388,15 @@ export default function BossPage() {
   const [liteActiveAgent, setLiteActiveAgent] = useState<string>("")
   const [liteProgressPhase, setLiteProgressPhase] = useState(0)
 
+  // Boss Lite 历史记录
+  const [liteHistory, setLiteHistory] = useState<Array<{
+    task_id: string
+    goal: string
+    created_at: string
+    summary?: string
+  }>>([])
+  const [liteHistoryLoading, setLiteHistoryLoading] = useState(false)
+
   const modules = currentMission?.modules || []
   const activeResult = modules.find((m) => m.module_id === activeModule) || null
   const completedCount = modules.filter((m) => m.status === "done").length
@@ -404,9 +413,24 @@ export default function BossPage() {
     }
   }
 
+  // 加载 Boss Lite 历史记录
+  const loadLiteHistory = async () => {
+    setLiteHistoryLoading(true)
+    try {
+      const data = await api.listMiniDeliveryTasks({ agent_id: "boss", limit: 5 })
+      setLiteHistory(data.tasks || [])
+    } catch (error) {
+      console.error("Load lite history failed:", error)
+      setLiteHistory([])
+    } finally {
+      setLiteHistoryLoading(false)
+    }
+  }
+
   useEffect(() => {
     loadRecentMissions()
     loadTemplates()
+    loadLiteHistory()
 
     // Check for mission to load from sessionStorage
     const loadMissionId = sessionStorage.getItem("load_mission_id")
@@ -454,6 +478,8 @@ export default function BossPage() {
       if (result.results.length > 0) {
         setLiteActiveAgent(result.results[0].agent_id)
       }
+      // 执行成功后刷新历史列表
+      loadLiteHistory()
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : "执行失败"
       console.error("Boss Lite execute failed:", error)
@@ -469,6 +495,11 @@ export default function BossPage() {
     setLiteActiveAgent("")
     setLiteProgressPhase(0)
     setGoal("")
+  }
+
+  // 跳转到 Delivery 页面查看交付物
+  const viewDelivery = (taskId: string) => {
+    window.location.href = `/app?page=delivery&taskId=${encodeURIComponent(taskId)}`
   }
 
   // Boss Lite progress phase auto-cycle
@@ -1922,6 +1953,84 @@ export default function BossPage() {
             </p>
           </div>
         </div>
+      )}
+
+      {/* 最近 Boss 作战记录 — only in boss-lite mode */}
+      {mode === "boss-lite" && !isRunning && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.2 }}
+          className="p-6 rounded-2xl border border-[#E5E5E5] bg-white"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <History className="h-4 w-4 text-[#8A8A8A]" />
+              <h3 className="text-sm font-medium text-[#0B0B0B]">最近 Boss 作战记录</h3>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={loadLiteHistory}
+              disabled={liteHistoryLoading}
+              className="gap-1 text-[#8A8A8A] hover:text-[#0B0B0B]"
+            >
+              {liteHistoryLoading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RotateCcw className="h-3.5 w-3.5" />
+              )}
+              刷新
+            </Button>
+          </div>
+          {liteHistoryLoading ? (
+            <div className="flex items-center gap-2 rounded-xl border border-[#E5E5E5] bg-[#FAFAF8] p-4 text-sm text-[#6B6B6B]">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              正在加载历史记录...
+            </div>
+          ) : liteHistory.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-[#D8D8D2] bg-[#FAFAF8] p-5 text-sm text-[#6B6B6B]">
+              暂无 Boss 作战记录。执行一次 Boss Lite 后，作战报告会自动出现在这里。
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {liteHistory.map((task) => (
+                <div
+                  key={task.task_id}
+                  className="flex items-start justify-between gap-4 rounded-xl border border-[#E5E5E5] p-4 transition-all hover:border-[#B5B5B5] hover:bg-[#F9F9F7]"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-mono text-[#8A8A8A] bg-[#F4F3EF] px-2 py-0.5 rounded">
+                        {task.task_id}
+                      </span>
+                      <span className="text-xs text-[#B5B5B5]">
+                        {task.created_at}
+                      </span>
+                    </div>
+                    <p className="text-sm font-medium text-[#0B0B0B] truncate">
+                      {task.goal || "未命名作战任务"}
+                    </p>
+                    {task.summary && (
+                      <p className="mt-1 text-xs text-[#8A8A8A] line-clamp-2">
+                        {task.summary}
+                      </p>
+                    )}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => viewDelivery(task.task_id)}
+                    className="shrink-0 gap-1"
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    查看交付物
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </motion.div>
       )}
 
       {/* Boss Lite 空状态 */}
