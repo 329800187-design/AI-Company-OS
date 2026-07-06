@@ -1,6 +1,7 @@
 """Boss Router — 老板运营指挥台 API"""
 import uuid
 import json
+import time
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, List, Dict, Any
@@ -303,8 +304,10 @@ def _execute_boss_lite_agent(index: int, agent_id: str, agent_task) -> dict:
             "agent_id": str,
             "result": dict | None,
             "error": str | None,
+            "duration_ms": float,
         }
     """
+    start = time.perf_counter()
     try:
         from backend.services.agent_executor import execute_agent
         result = execute_agent(agent_id, agent_task)
@@ -314,6 +317,7 @@ def _execute_boss_lite_agent(index: int, agent_id: str, agent_task) -> dict:
             "agent_id": agent_id,
             "result": result_dict,
             "error": None,
+            "duration_ms": round((time.perf_counter() - start) * 1000, 1),
         }
     except Exception as e:
         return {
@@ -321,6 +325,7 @@ def _execute_boss_lite_agent(index: int, agent_id: str, agent_task) -> dict:
             "agent_id": agent_id,
             "result": None,
             "error": str(e),
+            "duration_ms": round((time.perf_counter() - start) * 1000, 1),
         }
 
 
@@ -385,6 +390,7 @@ def boss_lite_execute(request: BossLiteRequest):
     # 并行提交，按 index 保序收集
     raw_results: List[Optional[Dict[str, Any]]] = [None] * len(agent_tasks)
     max_workers = min(len(agent_tasks), 5)
+    total_start = time.perf_counter()
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_index = {
             executor.submit(_execute_boss_lite_agent, idx, aid, at): idx
@@ -404,6 +410,7 @@ def boss_lite_execute(request: BossLiteRequest):
                 }
 
     # 按 plan 顺序写回 task status 和 results
+    total_duration_ms = round((time.perf_counter() - total_start) * 1000, 1)
     results: List[Dict[str, Any]] = []
     for i, task in enumerate(plan):
         raw = raw_results[i]
@@ -413,7 +420,9 @@ def boss_lite_execute(request: BossLiteRequest):
                 "agent_id": task["agent_id"],
                 "result": None,
                 "error": "Agent execution did not return a result",
+                "duration_ms": 0,
             }
+        agent_duration_ms = raw.get("duration_ms", 0)
         if raw["error"] or raw["result"] is None:
             task["status"] = "failed"
             results.append({
@@ -425,6 +434,7 @@ def boss_lite_execute(request: BossLiteRequest):
                 "warnings": [],
                 "errors": [raw["error"]] if raw["error"] else ["Unknown error"],
                 "error": raw["error"] or "Unknown error",
+                "duration_ms": agent_duration_ms,
             })
         else:
             result_dict = raw["result"]
@@ -438,6 +448,7 @@ def boss_lite_execute(request: BossLiteRequest):
                 "warnings": result_dict.get("warnings", []),
                 "errors": result_dict.get("errors", []),
                 "error": result_dict.get("error"),
+                "duration_ms": agent_duration_ms,
             })
 
     # 生成汇总
@@ -457,12 +468,14 @@ def boss_lite_execute(request: BossLiteRequest):
                 "title": r["title"],
                 "ok": r["ok"],
                 "summary": r["summary"],
+                "duration_ms": r["duration_ms"],
             }
             for r in results
         ],
         "succeeded": succeeded,
         "failed": failed,
         "total": len(results),
+        "total_duration_ms": total_duration_ms,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -525,6 +538,7 @@ def boss_lite_execute(request: BossLiteRequest):
             "succeeded": succeeded,
             "failed": failed,
             "total": len(results),
+            "total_duration_ms": total_duration_ms,
         },
         "structured_output": boss_structured_output,
         "delivery_task_id": delivery_task_id,
@@ -533,12 +547,17 @@ def boss_lite_execute(request: BossLiteRequest):
 
 def _render_boss_lite_md(goal: str, plan: list, results: list, boss_so: dict) -> str:
     """渲染 Boss Lite 汇总报告为 Markdown — 老板可直接阅读的作战简报"""
+    total_dur = boss_so.get("total_duration_ms", 0)
+    total_sec = f"{total_dur / 1000:.1f}" if total_dur else "—"
+
     lines = [
         "# Boss Lite 作战报告",
         "",
         "## 总目标",
         "",
         goal,
+        "",
+        f"**总耗时：{total_sec} 秒**",
         "",
         "---",
         "",
@@ -548,7 +567,13 @@ def _render_boss_lite_md(goal: str, plan: list, results: list, boss_so: dict) ->
 
     for task in plan:
         status_icon = "✅" if task["status"] == "done" else "❌" if task["status"] == "failed" else "⏳"
-        lines.append(f"- {status_icon} **{task['title']}** — {task['purpose']}")
+        # 从 results 中找对应 agent 的 duration_ms
+        agent_dur = ""
+        for r in results:
+            if r["agent_id"] == task["agent_id"] and r.get("duration_ms"):
+                agent_dur = f" （耗时 {r['duration_ms'] / 1000:.1f}s）"
+                break
+        lines.append(f"- {status_icon} **{task['title']}** — {task['purpose']}{agent_dur}")
     lines.append("")
 
     lines += ["---", "", "## 二、各部门结论", ""]
@@ -557,8 +582,10 @@ def _render_boss_lite_md(goal: str, plan: list, results: list, boss_so: dict) ->
         so = r.get("structured_output") or {}
         agent_id = r["agent_id"]
         status_icon = "✅" if r["ok"] else "❌"
+        dur = r.get("duration_ms", 0)
+        dur_str = f" （耗时 {dur / 1000:.1f}s）" if dur else ""
 
-        lines.append(f"### {status_icon} {r['title']}")
+        lines.append(f"### {status_icon} {r['title']}{dur_str}")
         lines.append("")
 
         # 按 agent 类型提取关键信息

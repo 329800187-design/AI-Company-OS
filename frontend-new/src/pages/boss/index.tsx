@@ -312,17 +312,22 @@ export default function BossPage() {
       warnings: string[]
       errors: string[]
       error?: string
+      duration_ms?: number
     }>
     summary: {
       text: string
       succeeded: number
       failed: number
       total: number
+      total_duration_ms?: number
     }
-    structured_output: Record<string, unknown>
+    structured_output: Record<string, unknown> & {
+      total_duration_ms?: number
+    }
     delivery_task_id?: string
   } | null>(null)
   const [liteActiveAgent, setLiteActiveAgent] = useState<string>("")
+  const [liteProgressPhase, setLiteProgressPhase] = useState(0)
 
   const modules = currentMission?.modules || []
   const activeResult = modules.find((m) => m.module_id === activeModule) || null
@@ -382,6 +387,7 @@ export default function BossPage() {
 
     setIsRunning(true)
     setLiteResult(null)
+    setLiteProgressPhase(0)
 
     try {
       const result = await api.bossLiteExecute(trimmed)
@@ -402,8 +408,18 @@ export default function BossPage() {
   const resetLite = () => {
     setLiteResult(null)
     setLiteActiveAgent("")
+    setLiteProgressPhase(0)
     setGoal("")
   }
+
+  // Boss Lite progress phase auto-cycle
+  useEffect(() => {
+    if (!isRunning || mode !== "boss-lite") return
+    const timer = setInterval(() => {
+      setLiteProgressPhase((prev) => (prev < 3 ? prev + 1 : prev))
+    }, 4000)
+    return () => clearInterval(timer)
+  }, [isRunning, mode])
 
   // 加载事件日志
   const loadEvents = async (missionId: string) => {
@@ -942,6 +958,52 @@ export default function BossPage() {
         </div>
       </motion.div>
 
+      {/* Boss Lite Progress — 轻量进度展示 */}
+      {mode === "boss-lite" && isRunning && !liteResult && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="p-6 rounded-2xl border border-[#E5E5E5] bg-white"
+        >
+          <div className="flex items-center gap-3 mb-5">
+            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+            <span className="font-medium text-[#0B0B0B]">
+              正在协调 5 个 Agent 并行工作，通常需要 15–30 秒
+            </span>
+          </div>
+          <div className="space-y-3">
+            {[
+              "Boss 正在拆解目标",
+              "市场调研 / 营销 / 视觉 / 数据 / 落地页正在并行执行",
+              "Boss 正在汇总作战报告",
+              "保存到交付中心",
+            ].map((label, phase) => (
+              <div key={phase} className="flex items-center gap-3">
+                {liteProgressPhase > phase ? (
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-green" />
+                ) : liteProgressPhase === phase ? (
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+                ) : (
+                  <div className="h-4 w-4 shrink-0 rounded-full border border-[#D4D4D4]" />
+                )}
+                <span
+                  className={cn(
+                    "text-sm",
+                    liteProgressPhase > phase
+                      ? "text-green"
+                      : liteProgressPhase === phase
+                        ? "text-[#0B0B0B] font-medium"
+                        : "text-[#B5B5B5]"
+                  )}
+                >
+                  {label}
+                </span>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+      )}
+
       {/* Mission 状态横幅 + 审核按钮 — only in command-center mode */}
       {mode === "command-center" && currentMission && (
         <motion.div
@@ -1046,6 +1108,11 @@ export default function BossPage() {
                 {liteResult.summary.failed > 0 && (
                   <Badge variant="destructive">{liteResult.summary.failed} 失败</Badge>
                 )}
+                {liteResult.summary.total_duration_ms != null && liteResult.summary.total_duration_ms > 0 && (
+                  <Badge variant="outline">
+                    耗时 {(liteResult.summary.total_duration_ms / 1000).toFixed(1)}s
+                  </Badge>
+                )}
                 {liteResult.delivery_task_id && (
                   <Button
                     variant="outline"
@@ -1097,6 +1164,11 @@ export default function BossPage() {
                         <p className="mt-1 text-xs text-muted-foreground line-clamp-2">
                           {extractAgentSummary(r.agent_id, r.summary, r.structured_output)}
                         </p>
+                        {r.duration_ms != null && r.duration_ms > 0 && (
+                          <p className="mt-1 text-xs text-[#8A8A8A]">
+                            耗时 {(r.duration_ms / 1000).toFixed(1)}s
+                          </p>
+                        )}
                       </div>
                     </div>
                   </button>
@@ -1127,9 +1199,16 @@ export default function BossPage() {
                           <p className="text-sm text-muted-foreground">{r.agent_id}</p>
                         </div>
                       </div>
+                      <div className="flex items-center gap-2">
                       <Badge variant={r.ok ? "success" : "destructive"}>
                         {r.ok ? "成功" : "失败"}
                       </Badge>
+                      {r.duration_ms != null && r.duration_ms > 0 && (
+                        <Badge variant="outline">
+                          耗时 {(r.duration_ms / 1000).toFixed(1)}s
+                        </Badge>
+                      )}
+                    </div>
                     </div>
 
                     {/* Summary — always show extracted summary */}
