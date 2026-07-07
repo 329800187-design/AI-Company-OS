@@ -86,7 +86,7 @@ cd frontend-new && npm run build              # ✅ 通过
 
 当前项目已推进到：
 
-> 第三阶段 CollaborationGraph 已接入 Boss Lite（DAG 驱动执行 + 真实 API 验收通过）
+> 第三阶段 CollaborationGraph 已接入 Boss Lite，自定义 DAG API + Graph Template 持久化已完成
 
 已经完成：
 
@@ -113,13 +113,14 @@ cd frontend-new && npm run build              # ✅ 通过
   - ✅ MiniDelivery 搜索/详情/预览/下载全部验证通过。
   - ✅ 新增 `POST /boss/graph/execute` 自定义 DAG API 最小版，支持调用方传入 nodes/edges 后按图执行。
   - ✅ Boss 页面新增「协作图 / Collaboration Graph」可视化卡片，展示 waves、edges、节点状态和 handoff 来源。
-  - 待做：跨 Mission 协作、自定义图模板/持久化、图编辑器。
+  - ✅ Graph Template 持久化：`POST /boss/graph/templates` 创建、`GET` 列表、`GET/{id}` 获取、`DELETE/{id}` 删除、`POST/{id}/execute` 按模板执行。
+  - 待做：跨 Mission 协作、前端模板 UI、图编辑器。
 
 ## 下一步计划
 
-第一阶段、第二阶段 Boss Lite 已完成，第三阶段 CollaborationGraph 已接入 Boss Lite，并新增自定义 DAG API 最小版。下一步可选方向：
+第一阶段、第二阶段 Boss Lite 已完成，第三阶段 CollaborationGraph 已接入 Boss Lite，并新增自定义 DAG API 和 Graph Template 持久化。下一步可选方向：
 
-1. **自定义图模板/持久化（P1）** — 保存常用 nodes/edges 配置，支持复用
+1. **前端模板 UI（P1）** — 模板列表、选择、一键执行的前端界面
 2. **前端 DAG 编辑器（P1）** — 从只读可视化升级为可配置 nodes/edges
 3. **OpenClaw 联网调研（P1）** — Research Agent 接入实时搜索
 4. **真实数据源接入（P1）** — Data Agent 接入真实数据库/API

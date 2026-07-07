@@ -2,8 +2,8 @@
 
 > 阶段：Phase 3 — P0 Agent 协作通用化
 > 创建日期：2026-07-07
-> 最后更新：2026-07-07
-> 状态：**Boss Lite 已接入 CollaborationGraph · 真实 API 验收通过**
+> 最后更新：2026-07-08
+> 状态：**Graph Template 最小版已完成 · 支持 create/list/get/delete/execute**
 
 ---
 
@@ -277,6 +277,7 @@ Wave 1: ["marketing", "image", "website"]
 | Phase 3.3 | 真实 API 端到端验收（5 场景） | 测试 + 文档 | ✅ 已完成 |
 | Phase 3.4 | 用户自定义 DAG API 最小版 | `POST /boss/graph/execute` | ✅ 已完成 |
 | Phase 3.5 | 前端 DAG 可视化最小版 | Boss 页面 GraphPreview | ✅ 已完成 |
+| Phase 3.6 | 自定义图模板持久化 | Graph Template Store + API | ✅ 已完成 |
 | 远期 | 前端 DAG 编辑器 | 前端 | 待定 |
 | 远期 | 跨 Mission 协作 | 架构 | 待定 |
 
@@ -321,6 +322,8 @@ Wave 1: ["marketing", "image", "website"]
 - ✅ `tests/test_boss_lite_graph.py` — 新增 Boss Lite Graph 集成测试
 - ✅ `tests/test_boss_graph_execute.py` — 新增自定义 Graph API 测试
 - ✅ `frontend-new/src/pages/boss/index.tsx` — 新增协作图只读可视化卡片
+- ✅ `backend/services/graph_template_store.py` — Graph Template 持久化服务
+- ✅ `tests/test_graph_template_store.py` — Graph Template 测试（21 个）
 - ❌ `collaboration_executor.py` — 未改
 - ❌ `collaboration_planner.py` — 未改
 
@@ -332,8 +335,8 @@ Wave 1: ["marketing", "image", "website"]
 # 1. 后端导入验证
 python -c "import backend.app; print('ok')"
 
-# 2. Collaboration Graph + Boss Lite / Boss Graph 测试
-pytest tests/test_collaboration_graph.py tests/test_boss_lite_graph.py tests/test_boss_graph_execute.py -q
+# 2. Collaboration Graph + Boss Lite / Boss Graph / Graph Template 测试
+pytest tests/test_collaboration_graph.py tests/test_boss_lite_graph.py tests/test_boss_graph_execute.py tests/test_graph_template_store.py -q
 
 # 3. 前端构建
 cd frontend-new && npm run build
@@ -528,15 +531,61 @@ Boss 页面已新增「协作图 / Collaboration Graph」只读卡片，用于�
 
 ---
 
-## 十四、仍未完成
+## 十四、自定义图模板持久化（Phase 3.6）
+
+### 14.1 功能说明
+
+用户可将常用自定义 DAG 配置保存为可复用的 Graph Template，后续一键执行。
+
+### 14.2 存储
+
+- 路径：`output/graph_templates/{template_id}.json`
+- 格式：JSON，包含 `template_id`、`name`、`description`、`goal_hint`、`nodes`、`edges`、`created_at`、`updated_at`
+- 不接入数据库，纯文件系统
+- `template_id` 限制为 `tpl_[A-Za-z0-9_-]+`，避免路径型 ID 读写文件。
+
+### 14.3 新增 API
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/boss/graph/templates` | POST | 创建模板（校验图合法性） |
+| `/boss/graph/templates` | GET | 列出所有模板 |
+| `/boss/graph/templates/{template_id}` | GET | 获取单个模板 |
+| `/boss/graph/templates/{template_id}` | DELETE | 删除模板 |
+| `/boss/graph/templates/{template_id}/execute` | POST | 按模板执行 DAG |
+
+### 14.4 DAG 校验
+
+创建模板时使用 `validate_graph()` 校验：
+- 节点 ID 唯一性
+- 边引用合法性
+- 自环检测
+- 循环依赖检测
+
+无效图返回 HTTP 400。
+
+### 14.5 按模板执行
+
+`POST /boss/graph/templates/{template_id}/execute` 读取模板配置，构造 `BossGraphExecuteRequest`，复用 `boss_graph_execute` 逻辑执行。
+
+### 14.6 测试覆盖
+
+`tests/test_graph_template_store.py` 覆盖 21 个场景：
+- 存储层：保存/读取/列出/删除/落盘/空列表/不存在/自定义 ID/无边/非法 ID 拒绝
+- API 层：创建成功/无效图 400/自环 400/列出/获取/获取 404/删除/删除 404/按模板执行/执行 404
+
+---
+
+## 十五、仍未完成
 
 | 项目 | 说明 |
 |------|------|
 | 前端 DAG 编辑器 | 从只读 GraphPreview 升级为可配置 nodes/edges |
-| 自定义图模板/持久化 | 保存常用 nodes/edges 配置并支持复用 |
+| 前端模板 UI | 模板列表、选择、一键执行的前端界面 |
 | 跨 Mission 协作 | 不同 Mission 之间的 Agent 输出复用 |
 | CollaborationPlan 统一 | 将 CollaborationGraph 与现有 CollaborationPlan 合并 |
+| 多用户权限 | 模板隔离、权限控制 |
 
 ---
 
-*由 AI Company OS Phase 3 P0 生成 · 2026-07-08 · 最后更新：前端 DAG 可视化最小版*
+*由 AI Company OS Phase 3 P0 生成 · 2026-07-08 · 最后更新：自定义图模板持久化*

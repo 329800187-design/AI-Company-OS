@@ -330,6 +330,24 @@ class BossGraphExecuteRequest(BaseModel):
     save_to_delivery: bool = Field(default=True, description="是否自动保存到交付中心")
 
 
+# ── Graph Template 请求模型 ─────────────────────────────────
+
+
+class BossGraphTemplateCreateRequest(BaseModel):
+    """创建 Graph Template 请求"""
+    name: str = Field(..., min_length=2, max_length=100, description="模板名称")
+    description: str = Field(default="", max_length=500, description="模板描述")
+    goal_hint: str = Field(default="", max_length=500, description="目标提示")
+    nodes: List[BossGraphNodeRequest] = Field(..., min_length=1, description="图节点列表")
+    edges: List[BossGraphEdgeRequest] = Field(default_factory=list, description="图边列表")
+
+
+class BossGraphTemplateExecuteRequest(BaseModel):
+    """按模板执行请求"""
+    goal: str = Field(..., min_length=2, max_length=5000, description="业务目标")
+    save_to_delivery: bool = Field(default=True, description="是否自动保存到交付中心")
+
+
 # ── Boss Lite Handoff ──────────────────────────────────────
 
 _HANDOFF_LABELS = {
@@ -1223,6 +1241,120 @@ def boss_graph_execute(request: BossGraphExecuteRequest):
         "structured_output": boss_structured_output,
         "delivery_task_id": delivery_task_id,
     }
+
+
+# ── Graph Template API ──────────────────────────────────────
+
+
+@router.post("/graph/templates", summary="创建 Graph Template")
+def create_graph_template(request: BossGraphTemplateCreateRequest):
+    """保存自定义 DAG 配置为可复用模板"""
+    # 校验图合法性
+    graph = _build_custom_graph_from_nodes_edges(request.nodes, request.edges)
+    validation = validate_graph(graph)
+    if not validation.valid:
+        raise HTTPException(status_code=400, detail={
+            "message": "协作图校验失败",
+            "errors": validation.errors,
+            "warnings": validation.warnings,
+        })
+
+    from backend.services.graph_template_store import save_template
+
+    nodes_data = [n.model_dump() for n in request.nodes]
+    edges_data = [e.model_dump() for e in request.edges]
+
+    template = save_template(
+        name=request.name,
+        nodes=nodes_data,
+        edges=edges_data,
+        description=request.description,
+        goal_hint=request.goal_hint,
+    )
+    return {"ok": True, "template": template}
+
+
+@router.get("/graph/templates", summary="列出 Graph Templates")
+def list_graph_templates():
+    """列出所有已保存的 graph template"""
+    from backend.services.graph_template_store import list_templates
+
+    templates = list_templates()
+    return {"ok": True, "templates": templates, "total": len(templates)}
+
+
+@router.get("/graph/templates/{template_id}", summary="获取单个 Graph Template")
+def get_graph_template(template_id: str):
+    """获取指定 template 的完整配置"""
+    from backend.services.graph_template_store import get_template
+
+    template = get_template(template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail=f"模板 {template_id} 不存在")
+    return {"ok": True, "template": template}
+
+
+@router.delete("/graph/templates/{template_id}", summary="删除 Graph Template")
+def delete_graph_template(template_id: str):
+    """删除指定 template"""
+    from backend.services.graph_template_store import delete_template
+
+    try:
+        deleted = delete_template(template_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"删除失败: {e}")
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"模板 {template_id} 不存在")
+    return {"ok": True, "deleted": True, "template_id": template_id}
+
+
+@router.post("/graph/templates/{template_id}/execute", summary="按 Graph Template 执行")
+def execute_graph_template(template_id: str, request: BossGraphTemplateExecuteRequest):
+    """读取 template 配置并执行 DAG"""
+    from backend.services.graph_template_store import get_template
+
+    template = get_template(template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail=f"模板 {template_id} 不存在")
+
+    # 构造 BossGraphExecuteRequest 并复用执行逻辑
+    nodes = [BossGraphNodeRequest(**n) for n in template["nodes"]]
+    edges = [BossGraphEdgeRequest(**e) for e in template.get("edges", [])]
+
+    execute_request = BossGraphExecuteRequest(
+        goal=request.goal,
+        nodes=nodes,
+        edges=edges,
+        save_to_delivery=request.save_to_delivery,
+    )
+
+    return boss_graph_execute(execute_request)
+
+
+def _build_custom_graph_from_nodes_edges(
+    nodes: List[BossGraphNodeRequest],
+    edges: List[BossGraphEdgeRequest],
+) -> CollaborationGraph:
+    """从 nodes/edges 列表构造 CollaborationGraph（用于模板校验）"""
+    graph_nodes = [
+        CollaborationNode(
+            id=n.id,
+            agent_id=n.agent_id,
+            label=n.title,
+            config={"task_type": n.task_type, "prompt": n.prompt},
+        )
+        for n in nodes
+    ]
+    graph_edges = [
+        CollaborationEdge(
+            from_node=e.from_node,
+            to_node=e.to_node,
+            label=e.handoff_type,
+        )
+        for e in edges
+    ]
+    return CollaborationGraph(nodes=graph_nodes, edges=graph_edges)
 
 
 def _render_boss_lite_md(goal: str, plan: list, results: list, boss_so: dict) -> str:
