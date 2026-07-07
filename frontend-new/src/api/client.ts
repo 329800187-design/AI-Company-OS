@@ -1070,6 +1070,104 @@ class ApiClient {
   getMiniDeliveryDownloadUrl(taskId: string) {
     return `${API_BASE}/minidelivery/tasks/${taskId}/download`
   }
+
+  // ── Graph Template APIs ──────────────────────────────────────────────
+
+  async listBossGraphTemplates() {
+    return this.request<{
+      ok: boolean
+      templates: Array<{
+        template_id: string
+        name: string
+        description: string
+        goal_hint: string
+        nodes: Array<{
+          id: string
+          agent_id: string
+          task_type: string
+          title: string
+          prompt: string
+        }>
+        edges: Array<{
+          from_node: string
+          to_node: string
+          handoff_type: string
+        }>
+        created_at: string
+        updated_at: string
+      }>
+      total: number
+    }>("/boss/graph/templates")
+  }
+
+  async getBossGraphTemplate(templateId: string) {
+    return this.request<{
+      ok: boolean
+      template: {
+        template_id: string
+        name: string
+        description: string
+        goal_hint: string
+        nodes: Array<{
+          id: string
+          agent_id: string
+          task_type: string
+          title: string
+          prompt: string
+        }>
+        edges: Array<{
+          from_node: string
+          to_node: string
+          handoff_type: string
+        }>
+        created_at: string
+        updated_at: string
+      }
+    }>(`/boss/graph/templates/${templateId}`)
+  }
+
+  async deleteBossGraphTemplate(templateId: string) {
+    return this.request<{
+      ok: boolean
+      deleted: boolean
+      template_id: string
+    }>(`/boss/graph/templates/${templateId}`, {
+      method: "DELETE",
+    })
+  }
+
+  async executeBossGraphTemplate(templateId: string, payload: { goal: string; save_to_delivery?: boolean }) {
+    return this.request<{
+      ok: boolean
+      task_id: string
+      execution_mode: string
+      goal: string
+      waves: string[][]
+      results: Array<{
+        node_id: string
+        agent_id: string
+        title: string
+        ok: boolean
+        summary: string
+        structured_output: Record<string, unknown>
+        error: string | null
+        duration_ms: number
+        used_handoff: boolean
+        handoff_sources: string[]
+      }>
+      summary: {
+        total: number
+        succeeded: number
+        failed: number
+        total_duration_ms: number
+      }
+      structured_output: Record<string, unknown>
+      delivery_task_id?: string
+    }>(`/boss/graph/templates/${templateId}/execute`, {
+      method: "POST",
+      body: payload,
+    })
+  }
 }
 
 export const api = new ApiClient()

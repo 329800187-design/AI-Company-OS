@@ -24,6 +24,8 @@ import {
   BarChart3,
   Palette,
   BookOpen,
+  Trash2,
+  GitBranch,
 } from "lucide-react"
 import { api } from "@/api/client"
 import { Badge } from "@/components/ui/badge"
@@ -736,6 +738,23 @@ export default function BossPage() {
     loadLiteHistory()
   }
 
+  // Graph Template state
+  interface GraphTemplate {
+    template_id: string
+    name: string
+    description: string
+    goal_hint: string
+    nodes: Array<{ id: string; agent_id: string; task_type: string; title: string; prompt: string }>
+    edges: Array<{ from_node: string; to_node: string; handoff_type: string }>
+    created_at: string
+    updated_at: string
+  }
+  const [graphTemplates, setGraphTemplates] = useState<GraphTemplate[]>([])
+  const [graphTemplatesLoading, setGraphTemplatesLoading] = useState(false)
+  const [graphTemplatesError, setGraphTemplatesError] = useState<string | null>(null)
+  const [graphTemplateExecutingId, setGraphTemplateExecutingId] = useState<string | null>(null)
+  const [graphTemplateResult, setGraphTemplateResult] = useState<Record<string, unknown> | null>(null)
+
   // 时间本地化：ISO → 中文本地时间
   const formatLocalTime = (iso: string): string => {
     if (!iso) return "时间未知"
@@ -842,10 +861,67 @@ export default function BossPage() {
     await loadLiteHistory(nextLimit)
   }
 
+  // 加载 Graph Templates
+  const loadGraphTemplates = async () => {
+    setGraphTemplatesLoading(true)
+    setGraphTemplatesError(null)
+    try {
+      const data = await api.listBossGraphTemplates()
+      setGraphTemplates(data.templates || [])
+    } catch (error) {
+      console.error("Load graph templates failed:", error)
+      setGraphTemplatesError(error instanceof Error ? error.message : "加载模板失败")
+      setGraphTemplates([])
+    } finally {
+      setGraphTemplatesLoading(false)
+    }
+  }
+
+  // 按模板执行
+  const executeGraphTemplate = async (template: GraphTemplate) => {
+    const effectiveGoal = goal.trim() || template.goal_hint.trim()
+    if (!effectiveGoal) {
+      alert("请输入目标或选择有 goal_hint 的模板")
+      return
+    }
+    if (graphTemplateExecutingId) return
+
+    setGraphTemplateExecutingId(template.template_id)
+    setGraphTemplateResult(null)
+    try {
+      const result = await api.executeBossGraphTemplate(template.template_id, {
+        goal: effectiveGoal,
+        save_to_delivery: true,
+      })
+      setGraphTemplateResult(result as unknown as Record<string, unknown>)
+      loadLiteHistory()
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "执行失败"
+      console.error("Execute graph template failed:", error)
+      alert(`按模板执行失败: ${errorMsg}`)
+    } finally {
+      setGraphTemplateExecutingId(null)
+    }
+  }
+
+  // 删除 Graph Template
+  const deleteGraphTemplate = async (templateId: string) => {
+    if (!window.confirm("确定删除此模板？")) return
+    try {
+      await api.deleteBossGraphTemplate(templateId)
+      setGraphTemplates((prev) => prev.filter((t) => t.template_id !== templateId))
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "删除失败"
+      console.error("Delete graph template failed:", error)
+      alert(`删除模板失败: ${errorMsg}`)
+    }
+  }
+
   useEffect(() => {
     loadRecentMissions()
     loadTemplates()
     loadLiteHistory()
+    loadGraphTemplates()
 
     // Check for mission to load from sessionStorage
     const loadMissionId = sessionStorage.getItem("load_mission_id")
@@ -1524,6 +1600,248 @@ export default function BossPage() {
           </div>
         </div>
       </motion.div>
+
+      {/* Graph Templates — only in boss-lite mode */}
+      {mode === "boss-lite" && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.15 }}
+          className="p-6 rounded-2xl border border-[#E5E5E5] bg-white"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <GitBranch className="h-4 w-4 text-[#8A8A8A]" />
+              <h3 className="text-sm font-medium text-[#0B0B0B]">Graph Templates / 协作图模板</h3>
+              {graphTemplates.length > 0 && (
+                <Badge variant="secondary">{graphTemplates.length}</Badge>
+              )}
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={loadGraphTemplates}
+              disabled={graphTemplatesLoading}
+              className="gap-1 text-[#8A8A8A] hover:text-[#0B0B0B]"
+            >
+              {graphTemplatesLoading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RotateCcw className="h-3.5 w-3.5" />
+              )}
+              刷新
+            </Button>
+          </div>
+
+          {graphTemplatesError && (
+            <div className="mb-4 rounded-lg border border-red/20 bg-red/5 p-3 text-sm text-red-500">
+              {graphTemplatesError}
+            </div>
+          )}
+
+          {graphTemplatesLoading ? (
+            <div className="flex items-center gap-2 rounded-xl border border-[#E5E5E5] bg-[#FAFAF8] p-4 text-sm text-[#6B6B6B]">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              正在加载模板...
+            </div>
+          ) : graphTemplates.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-[#D8D8D2] bg-[#FAFAF8] p-5 text-sm text-[#6B6B6B]">
+              暂无模板，可先通过 API 创建模板
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {graphTemplates.map((tpl) => {
+                const isExecuting = graphTemplateExecutingId === tpl.template_id
+                return (
+                  <div
+                    key={tpl.template_id}
+                    className="rounded-xl border border-[#E5E5E5] p-4 transition-all hover:border-[#B5B5B5] hover:bg-[#F9F9F7]"
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-sm font-medium text-[#0B0B0B]">{tpl.name}</span>
+                          <span className="text-[10px] font-mono text-[#B5B5B5] bg-[#F4F3EF] px-1.5 py-0.5 rounded">
+                            {tpl.template_id}
+                          </span>
+                        </div>
+                        {tpl.description && (
+                          <p className="text-xs text-[#8A8A8A] mb-1">{tpl.description}</p>
+                        )}
+                        {tpl.goal_hint && (
+                          <p className="text-xs text-[#6B6B6B] line-clamp-2">
+                            <span className="text-[#B5B5B5]">目标提示：</span>{tpl.goal_hint}
+                          </p>
+                        )}
+                      </div>
+                      <div className="shrink-0 flex items-center gap-1.5">
+                        <Badge variant="outline">{tpl.nodes.length} 节点</Badge>
+                        <Badge variant="outline">{tpl.edges.length} 边</Badge>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between mt-3 pt-3 border-t border-[#F0F0EC]">
+                      <span className="text-[11px] text-[#B5B5B5]">
+                        {formatLocalTime(tpl.created_at)}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setGoal(tpl.goal_hint)
+                            setGraphTemplateResult(null)
+                          }}
+                          disabled={!tpl.goal_hint.trim()}
+                          className="gap-1 text-xs"
+                        >
+                          使用目标
+                        </Button>
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={() => executeGraphTemplate(tpl)}
+                          disabled={!!graphTemplateExecutingId}
+                          className="gap-1 text-xs"
+                        >
+                          {isExecuting ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Play className="h-3 w-3" />
+                          )}
+                          {isExecuting ? "执行中..." : "按模板执行"}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => deleteGraphTemplate(tpl.template_id)}
+                          className="gap-1 text-xs text-[#B5B5B5] hover:text-red-500"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          删除
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </motion.div>
+      )}
+
+      {/* Graph Template Result */}
+      {mode === "boss-lite" && graphTemplateResult && (() => {
+        const result = graphTemplateResult
+        const ok = result.ok as boolean
+        const resultGoal = result.goal as string
+        const summary = result.summary as Record<string, unknown> | undefined
+        const deliveryTaskId = result.delivery_task_id as string | undefined
+        const graph = normalizeGraphResult(result)
+        const results = (result.results as Array<Record<string, unknown>>) || []
+
+        return (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-4"
+          >
+            {/* Summary Banner */}
+            <div className={cn(
+              "p-4 rounded-2xl border",
+              ok ? "border-green/30 bg-green/5" : "border-red/30 bg-red/5"
+            )}>
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  {ok ? (
+                    <CheckCircle2 className="h-5 w-5 text-green" />
+                  ) : (
+                    <AlertCircle className="h-5 w-5 text-red-500" />
+                  )}
+                  <div>
+                    <span className="font-medium text-sm">
+                      {ok ? "模板执行成功" : "模板执行失败"}
+                    </span>
+                    {resultGoal && (
+                      <span className="ml-3 text-xs text-muted-foreground">{resultGoal}</span>
+                    )}
+                    {deliveryTaskId && (
+                      <span className="ml-3 text-xs text-muted-foreground">
+                        交付物 ID: {deliveryTaskId}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {summary && (
+                    <>
+                      <Badge variant="success">{summary.succeeded as number} 成功</Badge>
+                      {(summary.failed as number) > 0 && (
+                        <Badge variant="destructive">{summary.failed as number} 失败</Badge>
+                      )}
+                      {(summary.total_duration_ms as number) > 0 && (
+                        <Badge variant="outline">
+                          耗时 {((summary.total_duration_ms as number) / 1000).toFixed(1)}s
+                        </Badge>
+                      )}
+                    </>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setGraphTemplateResult(null)}
+                    className="gap-1 text-[#B5B5B5] hover:text-[#8A8A8A]"
+                  >
+                    关闭
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {/* Collaboration Graph */}
+            {graph && <GraphPreviewCard graph={graph} />}
+
+            {/* Node Results Summary */}
+            {results.length > 0 && (
+              <div className="p-6 rounded-2xl border border-[#E5E5E5] bg-white">
+                <h4 className="text-sm font-medium text-[#8A8A8A] mb-3 uppercase tracking-wider">节点结果 / Node Results</h4>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {results.map((r, i) => {
+                    const nodeOk = r.ok as boolean
+                    const nodeTitle = (r.title as string) || (r.agent_id as string) || "unknown"
+                    const nodeSummary = r.summary as string
+                    const nodeDuration = r.duration_ms as number
+                    return (
+                      <div
+                        key={i}
+                        className={cn(
+                          "rounded-xl border p-4",
+                          nodeOk ? "border-green/20 bg-green/5" : "border-red/20 bg-red/5"
+                        )}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm font-medium text-[#0B0B0B]">{nodeTitle}</span>
+                          <Badge variant={nodeOk ? "success" : "destructive"}>
+                            {nodeOk ? "成功" : "失败"}
+                          </Badge>
+                        </div>
+                        <div className="space-y-1 text-xs text-[#8A8A8A]">
+                          <div>Agent: <span className="font-mono">{r.agent_id as string}</span></div>
+                          {nodeDuration > 0 && <div>耗时: {(nodeDuration / 1000).toFixed(1)}s</div>}
+                          {nodeSummary && (
+                            <div className="mt-1.5 pt-1.5 border-t border-[#E5E5E5] text-[#6B6B6B]">
+                              {truncateText(nodeSummary, 100)}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </motion.div>
+        )
+      })()}
 
       {/* Boss Lite Progress — 轻量进度展示 */}
       {mode === "boss-lite" && isRunning && !liteResult && (

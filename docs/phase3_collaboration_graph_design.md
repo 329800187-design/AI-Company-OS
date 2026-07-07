@@ -3,7 +3,7 @@
 > 阶段：Phase 3 — P0 Agent 协作通用化
 > 创建日期：2026-07-07
 > 最后更新：2026-07-08
-> 状态：**Graph Template 最小版已完成 · 支持 create/list/get/delete/execute**
+> 状态：**Graph Template 前后端最小闭环已完成**
 
 ---
 
@@ -278,6 +278,7 @@ Wave 1: ["marketing", "image", "website"]
 | Phase 3.4 | 用户自定义 DAG API 最小版 | `POST /boss/graph/execute` | ✅ 已完成 |
 | Phase 3.5 | 前端 DAG 可视化最小版 | Boss 页面 GraphPreview | ✅ 已完成 |
 | Phase 3.6 | 自定义图模板持久化 | Graph Template Store + API | ✅ 已完成 |
+| Phase 3.7 | Graph Template 前端 UI | 模板列表 / 使用目标 / 按模板执行 / 删除 | ✅ 已完成 |
 | 远期 | 前端 DAG 编辑器 | 前端 | 待定 |
 | 远期 | 跨 Mission 协作 | 架构 | 待定 |
 
@@ -324,6 +325,8 @@ Wave 1: ["marketing", "image", "website"]
 - ✅ `frontend-new/src/pages/boss/index.tsx` — 新增协作图只读可视化卡片
 - ✅ `backend/services/graph_template_store.py` — Graph Template 持久化服务
 - ✅ `tests/test_graph_template_store.py` — Graph Template 测试（21 个）
+- ✅ `frontend-new/src/api/client.ts` — Graph Template 前端 API client
+- ✅ `frontend-new/src/pages/boss/index.tsx` — Graph Templates 面板和按模板执行结果展示
 - ❌ `collaboration_executor.py` — 未改
 - ❌ `collaboration_planner.py` — 未改
 
@@ -576,16 +579,38 @@ Boss 页面已新增「协作图 / Collaboration Graph」只读卡片，用于�
 
 ---
 
-## 十五、仍未完成
+## 十五、Graph Template 前端 UI（Phase 3.7）
+
+Boss 页面已新增 Graph Templates 面板，复用后端模板 API：
+
+| 前端方法 | 后端端点 |
+|----------|----------|
+| `listBossGraphTemplates()` | `GET /boss/graph/templates` |
+| `getBossGraphTemplate(id)` | `GET /boss/graph/templates/{id}` |
+| `deleteBossGraphTemplate(id)` | `DELETE /boss/graph/templates/{id}` |
+| `executeBossGraphTemplate(id, payload)` | `POST /boss/graph/templates/{id}/execute` |
+
+面板能力：
+- 展示模板名称、描述、目标提示、模板 ID、节点数、边数、创建时间
+- 「使用目标」将 `goal_hint` 填入 Boss Lite 输入框
+- 「按模板执行」优先使用当前输入目标，否则使用模板 `goal_hint`
+- 执行结果复用 `GraphPreviewCard` 展示 waves、edges、节点状态和 handoff 来源
+- 删除模板后自动从本地列表移除
+
+当前未做模板创建 UI，模板创建仍需要通过 API。
+
+---
+
+## 十六、仍未完成
 
 | 项目 | 说明 |
 |------|------|
+| 模板创建 UI | 在前端创建并保存 nodes/edges 模板 |
 | 前端 DAG 编辑器 | 从只读 GraphPreview 升级为可配置 nodes/edges |
-| 前端模板 UI | 模板列表、选择、一键执行的前端界面 |
 | 跨 Mission 协作 | 不同 Mission 之间的 Agent 输出复用 |
 | CollaborationPlan 统一 | 将 CollaborationGraph 与现有 CollaborationPlan 合并 |
 | 多用户权限 | 模板隔离、权限控制 |
 
 ---
 
-*由 AI Company OS Phase 3 P0 生成 · 2026-07-08 · 最后更新：自定义图模板持久化*
+*由 AI Company OS Phase 3 P0 生成 · 2026-07-08 · 最后更新：Graph Template 前端 UI*
