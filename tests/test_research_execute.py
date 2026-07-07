@@ -362,6 +362,34 @@ class TestResearchAgentSearchIntegration:
         from agents.research_agent.agent import ResearchAgent
         assert ResearchAgent._format_sources([]) == []
 
+    def test_normalize_sources_supports_strings_dicts_and_dedupes(self):
+        """_normalize_sources 应支持 string/dict 混合类型并去重"""
+        from agents.research_agent.agent import ResearchAgent
+        sources = ResearchAgent._normalize_sources([
+            "报告A — https://a.com",
+            {"title": "报告B", "url": "https://b.com"},
+            {"name": "报告C", "link": "https://c.com"},
+            {"source_url": "https://d.com"},
+            123,
+            "报告A — https://a.com",
+            "   ",
+            {},
+        ])
+        assert sources == [
+            "报告A — https://a.com",
+            "报告B — https://b.com",
+            "报告C — https://c.com",
+            "https://d.com",
+            "123",
+        ]
+
+    def test_normalize_sources_non_list_and_empty_values(self):
+        """_normalize_sources 应安全处理非 list 和空值"""
+        from agents.research_agent.agent import ResearchAgent
+        assert ResearchAgent._normalize_sources(" https://example.com ") == ["https://example.com"]
+        assert ResearchAgent._normalize_sources("   ") == []
+        assert ResearchAgent._normalize_sources(None) == []
+
     def test_fallback_includes_search_sources(self):
         """模板 fallback 应包含搜索结果 sources"""
         from agents.research_agent.agent import ResearchAgent

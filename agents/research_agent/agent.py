@@ -158,8 +158,10 @@ class ResearchAgent(BaseAgent):
         llm_result = self._try_llm(sys_prompt, prompt, task_type)
         if llm_result is not None:
             enriched = self._enrich_result(llm_result, prompt)
-            # 确保 sources 包含搜索结果（LLM 可能未完整返回）
-            if not enriched.get("sources") and search_results:
+            # 规范化 sources 为 string[]（LLM 可能返回 objects）
+            enriched["sources"] = self._normalize_sources(enriched.get("sources", []))
+            # 如果 LLM 未返回有效 sources，注入搜索结果
+            if not enriched["sources"] and search_results:
                 enriched["sources"] = self._format_sources(search_results)
             enriched["content_type"] = task_type
             return self.ok(
@@ -314,6 +316,40 @@ class ResearchAgent(BaseAgent):
             elif title:
                 sources.append(title)
         return sources
+
+    @staticmethod
+    def _normalize_sources(sources: Any) -> List[str]:
+        """将 sources 统一转换为 string[]（LLM 可能返回 dict[] 或混合类型）"""
+        if not sources:
+            return []
+        if not isinstance(sources, list):
+            value = str(sources).strip()
+            return [value] if value else []
+
+        normalized = []
+        seen = set()
+
+        for source in sources:
+            value = ""
+            if isinstance(source, str):
+                value = source.strip()
+            elif isinstance(source, dict):
+                title = str(source.get("title") or source.get("name") or "").strip()
+                url = str(source.get("url") or source.get("link") or source.get("source_url") or "").strip()
+                if title and url:
+                    value = f"{title} — {url}"
+                elif url:
+                    value = url
+                elif title:
+                    value = title
+            else:
+                value = str(source).strip()
+
+            if value and value not in seen:
+                normalized.append(value)
+                seen.add(value)
+
+        return normalized
 
     @staticmethod
     def _get_search_provider_name() -> str:
