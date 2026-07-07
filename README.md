@@ -8,9 +8,9 @@
 
 五个业务页 + MiniDelivery 交付中心端到端闭环验收完成。
 
-### 第二阶段：Boss Lite ✅ 已基本完成
+### 第二阶段：Boss Lite ✅ 已完成
 
-> 一句话目标 → 5 个 Agent 并行执行 → 可读作战报告 → 自动保存交付中心
+> 一句话目标 → 5 个 Agent 并行执行（含 Handoff） → 可读作战报告 → 自动保存交付中心 → 历史工作台可查可复用
 
 当前推荐入口：**http://localhost:5173/app?page=boss**
 
@@ -28,9 +28,11 @@ Boss Lite 已完成能力：
 - Delivery 搜索/预览/详情/下载全部可用
 - 进度 UI（4 阶段动画）
 - 总耗时 + 单 Agent 耗时统计
-- **第二阶段核心闭环完成**：一句话目标 → 多 Agent 协同（含 handoff） → 作战报告 → 自动保存
+- **Boss Lite 历史工作台**：搜索/排序/加载更多/隐藏/恢复/复制目标/复用目标/查看交付物
+- **历史复盘 Badge**：成功率、耗时、Handoff 标记、execution_mode
+- **第二阶段核心闭环完成**：一句话目标 → 多 Agent 协同（含 handoff） → 作战报告 → 自动保存 → 历史可查可复用
 
-已验证 task_id 示例：`boss_b8241c004c4d`、`boss_0fbb4623b07b`、`boss_d93dae73ab76`、`boss_9c21dac31fae`、`boss_c7dba8f25408`、`boss_932d0b352f0e`
+已验证 task_id 示例：`boss_91329f9f810d`、`boss_9c21dac31fae`、`boss_932d0b352f0e`、`boss_c7dba8f25408`、`boss_27654a577ba5`、`boss_b8241c004c4d`、`boss_0fbb4623b07b`、`boss_d93dae73ab76`
 
 最近验证：
 
@@ -83,7 +85,7 @@ cd frontend-new && npm run build              # ✅ 通过
 
 当前项目已推进到：
 
-> 第二阶段 Boss Lite 已基本完成
+> 第二阶段 Boss Lite 已完成（核心闭环 + 历史工作台）
 
 已经完成：
 
@@ -93,24 +95,25 @@ cd frontend-new && npm run build              # ✅ 通过
   - 前端五个业务页按 `structured_output` 做结构化展示。
   - `/agents/{agent_id}/execute` 统一端点，普通业务 Agent 跳过 Governance Guard。
 
-- **第二阶段（Boss Lite）** ✅ 已基本完成
+- **第二阶段（Boss Lite）** ✅ 已完成
   - Boss 页面默认 Boss Lite 模式，一句话目标 → 5 Agent 并行执行。
   - Agent Handoff v1：先执行 research / data，再把上游洞察传递给下游 Agent。
   - 8 个常用作战模板（新品上线、品牌冷启动、小红书种草、抖音增长、SEO 增长、落地页转化、竞品调研、数据复盘）。
   - 并行执行 + 进度 UI + 总耗时/单 Agent 耗时统计。
   - 可读 Markdown 作战报告，自动保存到 MiniDelivery。
   - Delivery 搜索/预览/详情/下载已验证。
+  - **Boss Lite 历史工作台**：搜索/排序/加载更多/隐藏/恢复/复制目标/复用目标/查看交付物/复盘 Badge。
 
 ## 下一步计划
 
-第一阶段和第二阶段 Boss Lite 已基本完成，Agent Handoff v1 已闭环。下一步可选方向：
+第一阶段和第二阶段 Boss Lite 已完成，Agent Handoff v1 已闭环，历史工作台已完成。下一步可选方向：
 
-1. **Collaboration / Agent Handoff 通用化** — 把 Boss Lite 的 handoff 扩展成通用 Agent 协作链，支持任意 Agent 间传递上下文
-2. **真实数据源接入** — Data Agent 接入真实数据库/API
-3. **OpenClaw 联网调研** — Research Agent 接入实时搜索
-4. **真实图片生成** — Image Agent 接入图片生成 API
-5. **PDF 导出** — 作战报告一键导出 PDF 格式
-6. **历史 Mission 回顾** — Boss Lite 历史记录查看和对比
+1. **Collaboration / Agent Handoff 通用化（P0）** — 把 Boss Lite 的 handoff 扩展成通用 Agent 协作链，支持任意 Agent 间传递上下文
+2. **OpenClaw 联网调研（P1）** — Research Agent 接入实时搜索
+3. **真实数据源接入（P1）** — Data Agent 接入真实数据库/API
+4. **真实图片生成（P2）** — Image Agent 接入图片生成 API
+5. **PDF 导出（P2）** — 作战报告一键导出 PDF 格式
+6. **历史 Mission 对比（P2）** — Boss Lite 历史记录对比分析
 
 当前边界：
 
