@@ -2143,9 +2143,15 @@ export default function BossPage() {
                       <span className="ml-3 text-xs text-muted-foreground">{resultGoal}</span>
                     )}
                     {deliveryTaskId && (
-                      <span className="ml-3 text-xs text-muted-foreground">
-                        交付物 ID: {deliveryTaskId}
-                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => viewDelivery(deliveryTaskId)}
+                        className="gap-1"
+                      >
+                        <FileText className="h-3.5 w-3.5" />
+                        查看交付物
+                      </Button>
                     )}
                   </div>
                 </div>
@@ -2399,11 +2405,11 @@ export default function BossPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled
-                    className="gap-1 opacity-70"
+                    onClick={() => viewDelivery(liteResult.delivery_task_id!)}
+                    className="gap-1"
                   >
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    已保存到交付中心
+                    <FileText className="h-3.5 w-3.5" />
+                    查看交付物
                   </Button>
                 )}
               </div>
