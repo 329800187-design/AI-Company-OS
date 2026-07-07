@@ -276,7 +276,8 @@ Wave 1: ["marketing", "image", "website"]
 | Phase 3.2 | 用 Graph 重构 Boss Lite 执行路径 | boss_router.py | ✅ 已完成 |
 | Phase 3.3 | 真实 API 端到端验收（5 场景） | 测试 + 文档 | ✅ 已完成 |
 | Phase 3.4 | 用户自定义 DAG API 最小版 | `POST /boss/graph/execute` | ✅ 已完成 |
-| 远期 | 前端 DAG 可视化编辑器 | 前端 | 待定 |
+| Phase 3.5 | 前端 DAG 可视化最小版 | Boss 页面 GraphPreview | ✅ 已完成 |
+| 远期 | 前端 DAG 编辑器 | 前端 | 待定 |
 | 远期 | 跨 Mission 协作 | 架构 | 待定 |
 
 ---
@@ -319,9 +320,9 @@ Wave 1: ["marketing", "image", "website"]
 - ✅ `boss_router.py` — 新增 `POST /boss/graph/execute` 自定义 DAG 执行端点
 - ✅ `tests/test_boss_lite_graph.py` — 新增 Boss Lite Graph 集成测试
 - ✅ `tests/test_boss_graph_execute.py` — 新增自定义 Graph API 测试
+- ✅ `frontend-new/src/pages/boss/index.tsx` — 新增协作图只读可视化卡片
 - ❌ `collaboration_executor.py` — 未改
 - ❌ `collaboration_planner.py` — 未改
-- ❌ 前端代码 — 未改
 
 ---
 
@@ -503,15 +504,39 @@ topological_waves(graph)
 
 ---
 
-## 十三、仍未完成
+## 十三、前端 DAG 可视化最小版
+
+Boss 页面已新增「协作图 / Collaboration Graph」只读卡片，用于展示 Agent 协作过程。
+
+### 13.1 支持的数据结构
+
+`normalizeGraphResult(result)` 按优先级兼容：
+- `result.graph.nodes / result.graph.edges`
+- `result.structured_output.graph`
+- `result.waves / result.structured_output.waves`
+- `result.results[].handoff_sources` 推断 edges
+- `structured_output.handoff_sources + handoff_targets` 推断 edges
+- 无图数据时将所有节点归入单个 wave
+
+### 13.2 展示内容
+
+- **Waves**：按波次展示节点 chip，成功/失败/未知使用不同状态色
+- **Edges**：展示 `from → to` 依赖关系，推断边显示「推断」
+- **节点详情**：展示 `node_id / agent_id / title / ok / duration_ms / handoff_sources / summary`
+
+当前版本只做只读展示，不做拖拽、不做编辑器、不调用 `/boss/graph/execute`。
+
+---
+
+## 十四、仍未完成
 
 | 项目 | 说明 |
 |------|------|
-| 前端图可视化 | 在前端展示 DAG 结构和执行状态 |
+| 前端 DAG 编辑器 | 从只读 GraphPreview 升级为可配置 nodes/edges |
 | 自定义图模板/持久化 | 保存常用 nodes/edges 配置并支持复用 |
 | 跨 Mission 协作 | 不同 Mission 之间的 Agent 输出复用 |
 | CollaborationPlan 统一 | 将 CollaborationGraph 与现有 CollaborationPlan 合并 |
 
 ---
 
-*由 AI Company OS Phase 3 P0 生成 · 2026-07-07 · 最后更新：自定义 DAG API 最小版*
+*由 AI Company OS Phase 3 P0 生成 · 2026-07-08 · 最后更新：前端 DAG 可视化最小版*

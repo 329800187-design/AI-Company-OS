@@ -208,6 +208,298 @@ function listToText(value: unknown, limit = 3): string {
 }
 
 /** 从 structured_output 中提取可读摘要，控制在 80-120 字 */
+function formatDuration(ms?: number): string | null {
+  if (!ms || ms <= 0) return null
+  if (ms < 1000) return `${ms}ms`
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
+// ── Graph helpers ──────────────────────────────────────────────
+
+interface GraphNode {
+  id: string
+  agent_id?: string
+  title?: string
+  ok?: boolean
+  duration_ms?: number
+  summary?: string
+  used_handoff?: boolean
+  handoff_sources?: string[]
+}
+
+interface GraphEdge {
+  from: string
+  to: string
+  type?: string
+  inferred?: boolean
+}
+
+interface NormalizedGraph {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  waves: string[][]
+}
+
+function truncateText(text?: string, max = 80): string {
+  if (!text) return ""
+  return text.length > max ? text.slice(0, max - 3) + "..." : text
+}
+
+function getNodeStatus(node: GraphNode): "success" | "failed" | "unknown" {
+  if (node.ok === true) return "success"
+  if (node.ok === false) return "failed"
+  return "unknown"
+}
+
+function normalizeGraphResult(result: Record<string, unknown>): NormalizedGraph | null {
+  if (!result) return null
+
+  const nodes: GraphNode[] = []
+  const edges: GraphEdge[] = []
+  let waves: string[][] = []
+
+  // Source 1: result.graph or result.structured_output.graph
+  const graphData = (result.graph as Record<string, unknown>) || ((result.structured_output as Record<string, unknown>)?.graph as Record<string, unknown>)
+  const wavesData = (result.waves as string[][]) || ((result.structured_output as Record<string, unknown>)?.waves as string[][])
+
+  // Collect results array
+  const resultsArr = (result.results as Array<Record<string, unknown>>) || []
+
+  // Build nodes from results
+  if (resultsArr.length > 0) {
+    for (const r of resultsArr) {
+      nodes.push({
+        id: (r.node_id as string) || (r.agent_id as string) || "unknown",
+        agent_id: r.agent_id as string | undefined,
+        title: (r.title as string) || (r.agent_id as string),
+        ok: r.ok as boolean | undefined,
+        duration_ms: r.duration_ms as number | undefined,
+        summary: r.summary as string | undefined,
+        used_handoff: r.used_handoff as boolean | undefined,
+        handoff_sources: r.handoff_sources as string[] | undefined,
+      })
+    }
+  }
+
+  // Source 2: graph.nodes (override if present)
+  if (graphData?.nodes && Array.isArray(graphData.nodes)) {
+    const gNodes = graphData.nodes as Array<Record<string, unknown>>
+    if (nodes.length === 0) {
+      for (const n of gNodes) {
+        nodes.push({
+          id: (n.id as string) || (n.agent_id as string) || "unknown",
+          agent_id: n.agent_id as string | undefined,
+          title: (n.title as string) || (n.label as string),
+          ok: n.ok as boolean | undefined,
+        })
+      }
+    }
+  }
+
+  // Build edges
+  if (graphData?.edges && Array.isArray(graphData.edges)) {
+    for (const e of graphData.edges as Array<Record<string, unknown>>) {
+      edges.push({
+        from: (e.from as string) || (e.source as string) || "",
+        to: (e.to as string) || (e.target as string) || "",
+        type: e.type as string | undefined,
+        inferred: e.inferred as boolean | undefined,
+      })
+    }
+  }
+
+  // Fallback: infer edges from handoff_sources
+  if (edges.length === 0) {
+    // Per-node handoff_sources → inferred edges
+    for (const node of nodes) {
+      if (node.handoff_sources && node.handoff_sources.length > 0) {
+        for (const src of node.handoff_sources) {
+          edges.push({ from: src, to: node.id, type: "handoff", inferred: true })
+        }
+      }
+    }
+    // Global handoff_sources → handoff_targets
+    if (edges.length === 0) {
+      const so = (result.structured_output as Record<string, unknown>) || {}
+      const hoEnabled = (result.handoff_enabled as boolean) ?? (so.handoff_enabled as boolean)
+      if (hoEnabled) {
+        const sources = (so.handoff_sources as string[]) || []
+        const targets = (so.handoff_targets as string[]) || []
+        if (sources.length > 0 && targets.length > 0) {
+          for (const src of sources) {
+            for (const tgt of targets) {
+              edges.push({ from: src, to: tgt, type: "handoff", inferred: true })
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Build waves
+  if (wavesData && Array.isArray(wavesData) && wavesData.length > 0) {
+    waves = wavesData
+  } else {
+    // Infer waves from handoff structure
+    const so = (result.structured_output as Record<string, unknown>) || {}
+    const hoEnabled = (result.handoff_enabled as boolean) ?? (so.handoff_enabled as boolean)
+    if (hoEnabled && edges.length > 0) {
+      // Topological wave inference: sources first, targets second
+      const sourceIds = new Set(edges.map(e => e.from))
+      const targetIds = new Set(edges.map(e => e.to))
+      const wave1 = nodes.filter(n => sourceIds.has(n.id) && !targetIds.has(n.id)).map(n => n.id)
+      const wave2 = nodes.filter(n => targetIds.has(n.id)).map(n => n.id)
+      const wave0 = nodes.filter(n => !sourceIds.has(n.id) && !targetIds.has(n.id)).map(n => n.id)
+      if (wave0.length > 0) waves.push(wave0)
+      if (wave1.length > 0) waves.push(wave1)
+      if (wave2.length > 0) waves.push(wave2)
+    }
+    if (waves.length === 0) {
+      // All nodes in one wave
+      waves = [nodes.map(n => n.id)]
+    }
+  }
+
+  if (nodes.length === 0) return null
+  return { nodes, edges, waves }
+}
+
+// ── Graph Preview Card ─────────────────────────────────────────
+
+function GraphPreviewCard({ graph }: { graph: NormalizedGraph }) {
+  const nodeMap = new Map(graph.nodes.map(n => [n.id, n]))
+
+  return (
+    <div className="p-6 rounded-2xl border border-[#E5E5E5] bg-white">
+      <div className="flex items-center gap-2 mb-5">
+        <BarChart3 className="h-5 w-5 text-primary" />
+        <h3 className="text-lg font-semibold text-[#0B0B0B]">协作图 / Collaboration Graph</h3>
+        <Badge variant="outline">{graph.nodes.length} 节点</Badge>
+        <Badge variant="outline">{graph.edges.length} 边</Badge>
+      </div>
+
+      {/* Waves */}
+      <div className="mb-6">
+        <h4 className="text-sm font-medium text-[#8A8A8A] mb-3 uppercase tracking-wider">执行波次 / Waves</h4>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          {graph.waves.map((wave, wi) => (
+            <div key={wi} className="flex-1 rounded-xl border border-[#E5E5E5] bg-[#FAFAF8] p-4">
+              <div className="text-xs font-medium text-[#B5B5B5] mb-2">Wave {wi + 1}</div>
+              <div className="flex flex-wrap gap-2">
+                {wave.map(nodeId => {
+                  const node = nodeMap.get(nodeId)
+                  const status = getNodeStatus(node || { id: nodeId })
+                  return (
+                    <span
+                      key={nodeId}
+                      className={cn(
+                        "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium",
+                        status === "success" && "bg-green/10 text-green border border-green/20",
+                        status === "failed" && "bg-red-50 text-red-500 border border-red/20",
+                        status === "unknown" && "bg-[#F4F3EF] text-[#8A8A8A] border border-[#E5E5E5]"
+                      )}
+                    >
+                      {status === "success" ? "✓" : status === "failed" ? "✗" : "·"} {node?.title || nodeId}
+                      {node?.used_handoff && (
+                        <span className="ml-1 px-1 py-0.5 rounded text-[10px] bg-primary/10 text-primary border border-primary/20">
+                          已接收上游
+                        </span>
+                      )}
+                    </span>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Edges */}
+      {graph.edges.length > 0 && (
+        <div className="mb-6">
+          <h4 className="text-sm font-medium text-[#8A8A8A] mb-3 uppercase tracking-wider">依赖关系 / Edges</h4>
+          <div className="flex flex-wrap gap-2">
+            {graph.edges.map((edge, i) => (
+              <span
+                key={i}
+                className={cn(
+                  "inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-mono",
+                  edge.inferred
+                    ? "bg-yellow-50 text-yellow-700 border border-yellow/20"
+                    : "bg-[#F4F3EF] text-[#5A5A5A] border border-[#E5E5E5]"
+                )}
+              >
+                {edge.from}
+                <span className="text-[#B5B5B5]">→</span>
+                {edge.to}
+                {edge.type && (
+                  <span className="ml-1 text-[10px] text-[#8A8A8A]">({edge.type})</span>
+                )}
+                {edge.inferred && (
+                  <span className="ml-1 text-[10px] text-yellow-600">推断</span>
+                )}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Node Details */}
+      <div>
+        <h4 className="text-sm font-medium text-[#8A8A8A] mb-3 uppercase tracking-wider">节点详情 / Nodes</h4>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {graph.nodes.map(node => {
+            const status = getNodeStatus(node)
+            return (
+              <div
+                key={node.id}
+                className={cn(
+                  "rounded-xl border p-4",
+                  status === "success" && "border-green/20 bg-green/5",
+                  status === "failed" && "border-red/20 bg-red/5",
+                  status === "unknown" && "border-[#E5E5E5] bg-[#FAFAF8]"
+                )}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-[#0B0B0B]">{node.title || node.id}</span>
+                  <Badge variant={status === "success" ? "success" : status === "failed" ? "destructive" : "secondary"}>
+                    {status === "success" ? "成功" : status === "failed" ? "失败" : "未知"}
+                  </Badge>
+                </div>
+                <div className="space-y-1 text-xs text-[#8A8A8A]">
+                  {node.agent_id && node.agent_id !== node.id && (
+                    <div>Agent: <span className="font-mono">{node.agent_id}</span></div>
+                  )}
+                  <div>ID: <span className="font-mono">{node.id}</span></div>
+                  {node.duration_ms != null && node.duration_ms > 0 && (
+                    <div>耗时: {formatDuration(node.duration_ms)}</div>
+                  )}
+                  {node.used_handoff && (
+                    <div className="flex items-center gap-1 text-primary">
+                      <Sparkles className="h-3 w-3" />
+                      已接收上游
+                    </div>
+                  )}
+                  {node.handoff_sources && node.handoff_sources.length > 0 && (
+                    <div>来源: {node.handoff_sources.join(", ")}</div>
+                  )}
+                  {node.summary && (
+                    <div className="mt-1.5 pt-1.5 border-t border-[#E5E5E5] text-[#6B6B6B]">
+                      {truncateText(node.summary, 80)}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── End Graph helpers ──────────────────────────────────────────
+
 function extractAgentSummary(agentId: string, summary: string, so: Record<string, unknown>): string {
   // 优先用 summary
   if (summary && summary.length > 10) return summary.length > 120 ? summary.slice(0, 117) + "..." : summary
@@ -835,12 +1127,6 @@ export default function BossPage() {
     return map[status] || status
   }
 
-  const formatDuration = (ms?: number) => {
-    if (!ms || ms <= 0) return null
-    if (ms < 1000) return `${ms}ms`
-    return `${(ms / 1000).toFixed(1)}s`
-  }
-
   /** 从历史 task 中提取复盘 badge 列表（只用 API 实际返回的字段） */
   const getTaskOutcomeBadges = (task: {
     artifact_type?: string
@@ -1427,6 +1713,13 @@ export default function BossPage() {
               </div>
             </div>
           </div>
+
+          {/* Collaboration Graph */}
+          {(() => {
+            const graph = normalizeGraphResult(liteResult as unknown as Record<string, unknown>)
+            if (!graph) return null
+            return <GraphPreviewCard graph={graph} />
+          })()}
 
           {/* Agent Navigation + Results */}
           <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
