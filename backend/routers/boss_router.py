@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from backend.services.boss_command_center import get_boss_command_center, MODULE_ORDER
+from backend.services.collaboration_graph import build_boss_lite_graph, topological_waves
 from backend.security import input_validator, rate_limiter
 
 router = APIRouter(prefix="/boss", tags=["Boss / 老板指挥台"])
@@ -295,17 +296,7 @@ class BossLiteRequest(BaseModel):
     save_to_delivery: bool = Field(default=True, description="是否自动保存到交付中心")
 
 
-# ── Boss Lite Handoff v1 ────────────────────────────────────
-
-# Wave 分类：research/data 是上游，marketing/image/website 是下游
-_WAVE1_AGENTS = {"research", "data"}
-_WAVE2_AGENTS = {"marketing", "image", "website"}
-
-HANDOFF_SOURCES = {
-    "marketing": ["research", "data"],
-    "image": ["research", "data"],
-    "website": ["research", "data"],
-}
+# ── Boss Lite Handoff ──────────────────────────────────────
 
 _HANDOFF_LABELS = {
     "research": "Research",
@@ -322,13 +313,6 @@ _HANDOFF_CN_LABELS = {
     "image": "视觉",
     "website": "落地页",
 }
-
-
-def _classify_waves(selected_agents: list) -> tuple:
-    """把选中的 agents 分成两波。返回 (wave1, wave2) 各自的 agent_id 列表，保持原始顺序。"""
-    wave1 = [a for a in selected_agents if a in _WAVE1_AGENTS]
-    wave2 = [a for a in selected_agents if a in _WAVE2_AGENTS]
-    return wave1, wave2
 
 
 def _extract_handoff_context(results_map: dict) -> dict:
@@ -374,13 +358,12 @@ def _extract_handoff_context(results_map: dict) -> dict:
     return ctx
 
 
-def _build_handoff_prompt(agent_id: str, handoff_ctx: dict) -> str:
-    """为 wave2 agent 构建 handoff 附言。"""
+def _build_handoff_prompt(agent_id: str, handoff_ctx: dict, ho_sources: list) -> str:
+    """为下游 agent 构建 handoff 附言。"""
     parts = []
 
-    sources = HANDOFF_SOURCES.get(agent_id, [])
-    has_research = "research" in sources and handoff_ctx.get("research_summary")
-    has_data = "data" in sources and handoff_ctx.get("data_key_metrics")
+    has_research = "research" in ho_sources and handoff_ctx.get("research_summary")
+    has_data = "data" in ho_sources and handoff_ctx.get("data_key_metrics")
 
     if not has_research and not has_data:
         return ""
@@ -478,14 +461,12 @@ def _execute_boss_lite_agent(index: int, agent_id: str, agent_task) -> dict:
 @router.post("/lite/execute", summary="Boss Lite — 一句话目标 → 多 Agent 协同执行")
 def boss_lite_execute(request: BossLiteRequest):
     """
-    Boss Lite Handoff v1:
+    Boss Lite DAG 协作执行:
     1. 接收一句话业务目标
-    2. 拆解为 Agent 任务
-    3. 第一波并行执行 research + data
-    4. 提取 handoff_context
-    5. 第二波并行执行 marketing + image + website（带上游洞察）
-    6. 生成 Boss 汇总报告
-    7. 保存到 MiniDelivery（可选）
+    2. 构建 CollaborationGraph DAG，按拓扑 wave 执行
+    3. 基于图的上游依赖决定 handoff sources
+    4. 生成 Boss 汇总报告
+    5. 保存到 MiniDelivery（可选）
     """
     is_valid, error_msg = input_validator.validate_message(request.goal)
     if not is_valid:
@@ -516,10 +497,14 @@ def boss_lite_execute(request: BossLiteRequest):
             "status": "pending",
         })
 
-    # ── 两波并行 Handoff ──
+    # ── DAG 协作图执行 ──
     from backend.schemas.agent_protocol import AgentTask
 
-    wave1_ids, wave2_ids = _classify_waves(selected_agents)
+    graph = build_boss_lite_graph(agents=selected_agents)
+    waves = topological_waves(graph)
+    # downstream_agents: 有上游依赖的 agent（需要 handoff 的 agent）
+    downstream_agents = {edge.to_node for edge in graph.edges}
+
     handoff_enabled = False
     actual_handoff_sources: List[str] = []
     handoff_ctx = {}
@@ -527,109 +512,64 @@ def boss_lite_execute(request: BossLiteRequest):
     agent_durations: Dict[str, float] = {}  # agent_id → duration_ms
     total_start = time.perf_counter()
 
-    # ── Wave 1: research + data 并行 ──
-    if wave1_ids:
-        wave1_tasks = []
-        for i, task in enumerate(plan):
-            if task["agent_id"] in wave1_ids:
-                agent_task = AgentTask(
-                    task_id=f"boss_lite_{uuid.uuid4().hex[:8]}",
-                    goal=request.goal,
-                    task_type=task["task_type"],
-                    context={"source": "boss_lite", "prompt": task["prompt"]},
-                    input={"prompt": task["prompt"]},
-                )
-                wave1_tasks.append((i, task["agent_id"], agent_task))
-
-        wave1_raw: List[Optional[Dict[str, Any]]] = [None] * len(wave1_tasks)
-        max_workers = min(len(wave1_tasks), 5)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_idx = {
-                executor.submit(_execute_boss_lite_agent, idx, aid, at): j
-                for j, (idx, aid, at) in enumerate(wave1_tasks)
-            }
-            for future in as_completed(future_to_idx):
-                j = future_to_idx[future]
-                try:
-                    wave1_raw[j] = future.result()
-                except Exception as e:
-                    idx, aid, _ = wave1_tasks[j]
-                    wave1_raw[j] = {
-                        "index": idx,
-                        "agent_id": aid,
-                        "result": None,
-                        "error": str(e),
-                    }
-
-        # 收集 wave1 结果到 results_map
-        for raw in wave1_raw:
-            if raw is None:
-                continue
-            aid = raw["agent_id"]
-            agent_durations[aid] = raw.get("duration_ms", 0)
-            if raw["error"] or raw["result"] is None:
-                results_map[aid] = {"ok": False, "error": raw["error"], "structured_output": {}}
-            else:
-                rd = raw["result"]
-                results_map[aid] = {
-                    "ok": rd.get("ok", False),
-                    "summary": rd.get("summary", ""),
-                    "structured_output": rd.get("structured_output") or rd.get("output") or {},
-                    "warnings": rd.get("warnings", []),
-                    "errors": rd.get("errors", []),
-                    "error": rd.get("error"),
-                }
-
-        # 提取 handoff_context
+    # ── 按 wave 顺序执行 ──
+    for wave in waves:
+        # 从已完成的结果中提取 handoff context
         handoff_ctx = _extract_handoff_context(results_map)
         actual_handoff_sources = _actual_handoff_sources(handoff_ctx)
-        handoff_enabled = bool(actual_handoff_sources and wave2_ids)
+        wave_has_downstream = any(aid in downstream_agents for aid in wave)
+        if actual_handoff_sources and wave_has_downstream:
+            handoff_enabled = True
 
-    # ── Wave 2: marketing + image + website 并行（带 handoff） ──
-    if wave2_ids:
-        wave2_tasks = []
+        # 为本 wave 的每个 agent 构建任务
+        wave_tasks = []
         for i, task in enumerate(plan):
-            if task["agent_id"] in wave2_ids:
-                # 构建带 handoff 的 prompt
-                base_prompt = task["prompt"]
-                handoff_prompt = _build_handoff_prompt(task["agent_id"], handoff_ctx)
-                full_prompt = base_prompt + handoff_prompt if handoff_prompt else base_prompt
+            if task["agent_id"] not in wave:
+                continue
+            base_prompt = task["prompt"]
+            # 基于图的上游依赖判断 handoff sources
+            upstream = graph.upstream_of(task["agent_id"])
+            agent_ho_sources = [s for s in upstream if s in results_map and results_map[s].get("ok")]
+            # 为有上游依赖的 agent 构建 handoff prompt
+            handoff_prompt = _build_handoff_prompt(task["agent_id"], handoff_ctx, agent_ho_sources) if agent_ho_sources else ""
+            full_prompt = base_prompt + handoff_prompt if handoff_prompt else base_prompt
 
-                agent_task = AgentTask(
-                    task_id=f"boss_lite_{uuid.uuid4().hex[:8]}",
-                    goal=request.goal,
-                    task_type=task["task_type"],
-                    context={
-                        "source": "boss_lite",
-                        "prompt": full_prompt,
-                        "handoff_context": handoff_ctx if handoff_enabled else {},
-                    },
-                    input={"prompt": full_prompt},
-                )
-                wave2_tasks.append((i, task["agent_id"], agent_task))
+            agent_task = AgentTask(
+                task_id=f"boss_lite_{uuid.uuid4().hex[:8]}",
+                goal=request.goal,
+                task_type=task["task_type"],
+                context={
+                    "source": "boss_lite",
+                    "prompt": full_prompt,
+                    "handoff_context": handoff_ctx if agent_ho_sources else {},
+                },
+                input={"prompt": full_prompt},
+            )
+            wave_tasks.append((i, task["agent_id"], agent_task, agent_ho_sources))
 
-        wave2_raw: List[Optional[Dict[str, Any]]] = [None] * len(wave2_tasks)
-        max_workers = min(len(wave2_tasks), 5)
+        # 并行执行本 wave
+        wave_raw: List[Optional[Dict[str, Any]]] = [None] * len(wave_tasks)
+        max_workers = min(len(wave_tasks), 5)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_idx = {
                 executor.submit(_execute_boss_lite_agent, idx, aid, at): j
-                for j, (idx, aid, at) in enumerate(wave2_tasks)
+                for j, (idx, aid, at, _) in enumerate(wave_tasks)
             }
             for future in as_completed(future_to_idx):
                 j = future_to_idx[future]
                 try:
-                    wave2_raw[j] = future.result()
+                    wave_raw[j] = future.result()
                 except Exception as e:
-                    idx, aid, _ = wave2_tasks[j]
-                    wave2_raw[j] = {
+                    idx, aid, _, _ = wave_tasks[j]
+                    wave_raw[j] = {
                         "index": idx,
                         "agent_id": aid,
                         "result": None,
                         "error": str(e),
                     }
 
-        # 收集 wave2 结果到 results_map
-        for raw in wave2_raw:
+        # 收集本 wave 结果
+        for raw in wave_raw:
             if raw is None:
                 continue
             aid = raw["agent_id"]
@@ -649,11 +589,16 @@ def boss_lite_execute(request: BossLiteRequest):
 
     # ── 按 plan 顺序组装最终 results ──
     total_duration_ms = round((time.perf_counter() - total_start) * 1000, 1)
+    # 计算 handoff_targets（基于图：有上游依赖且成功执行的 agent）
+    handoff_targets = [aid for aid in downstream_agents if aid in selected_agents and results_map.get(aid, {}).get("ok")]
     results: List[Dict[str, Any]] = []
     for task in plan:
         aid = task["agent_id"]
         rd = results_map.get(aid)
         dur = agent_durations.get(aid, 0)
+        # 基于图判断该 agent 的实际 handoff sources
+        upstream = graph.upstream_of(aid)
+        agent_ho_sources = [s for s in upstream if s in results_map and results_map[s].get("ok")]
 
         if rd is None:
             task["status"] = "failed"
@@ -687,7 +632,7 @@ def boss_lite_execute(request: BossLiteRequest):
             })
         else:
             task["status"] = "done"
-            used_ho = aid in wave2_ids and handoff_enabled
+            used_ho = bool(agent_ho_sources and handoff_enabled)
             results.append({
                 "agent_id": aid,
                 "title": task["title"],
@@ -699,7 +644,7 @@ def boss_lite_execute(request: BossLiteRequest):
                 "error": None,
                 "duration_ms": dur,
                 "used_handoff": used_ho,
-                "handoff_sources": actual_handoff_sources if used_ho else [],
+                "handoff_sources": agent_ho_sources if used_ho else [],
             })
 
     # 生成汇总
@@ -709,7 +654,7 @@ def boss_lite_execute(request: BossLiteRequest):
     if failed > 0:
         summary_text += f"，{failed} 个失败"
     if handoff_enabled:
-        flow_text = _format_handoff_flow(actual_handoff_sources, wave2_ids, _HANDOFF_LABELS)
+        flow_text = _format_handoff_flow(actual_handoff_sources, handoff_targets, _HANDOFF_LABELS)
         summary_text += f"（已启用部门协作：{flow_text}）"
 
     # 构建 Boss 汇总 structured_output
@@ -734,7 +679,7 @@ def boss_lite_execute(request: BossLiteRequest):
         "total_duration_ms": total_duration_ms,
         "handoff_context": handoff_ctx,
         "handoff_sources": actual_handoff_sources,
-        "handoff_targets": wave2_ids if handoff_enabled else [],
+        "handoff_targets": handoff_targets if handoff_enabled else [],
         "handoff_enabled": handoff_enabled,
         "execution_mode": "two_wave_handoff" if handoff_enabled else "parallel",
         "generated_at": datetime.now(timezone.utc).isoformat(),
