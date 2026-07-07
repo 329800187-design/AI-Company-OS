@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { motion } from "framer-motion"
-import { Search, Sparkles, Loader2, CheckCircle2, AlertCircle, ChevronDown, AlertTriangle } from "lucide-react"
+import { Search, Sparkles, Loader2, CheckCircle2, AlertCircle, ChevronDown, AlertTriangle, Globe, Database } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
@@ -97,6 +97,18 @@ export default function ResearchPage() {
   const isFallback = result?.metadata?.fallback === true
   const hasWarnings = (result?.warnings?.length ?? 0) > 0
   const hasErrors = (result?.errors?.length ?? 0) > 0
+
+  // Search provider display mapping
+  const searchProvider = String(result?.metadata?.search_provider ?? "")
+  const searchProviderLabel: Record<string, { label: string; icon: typeof Globe; variant: "success" | "warning" | "outline" }> = {
+    MockSearchProvider: { label: "模拟搜索", icon: Database, variant: "warning" },
+    SerpAPIProvider: { label: "SerpAPI 实时搜索", icon: Globe, variant: "success" },
+    BingSearchProvider: { label: "Bing 实时搜索", icon: Globe, variant: "success" },
+  }
+  const spInfo = searchProviderLabel[searchProvider]
+  const sourcesCount = Array.isArray(result?.structured_output?.sources)
+    ? (result.structured_output.sources as string[]).length
+    : 0
 
   return (
     <div className="space-y-6">
@@ -236,6 +248,15 @@ export default function ResearchPage() {
             )}
             {!!result.metadata?.source && (
               <Badge variant="outline">来源: {String(result.metadata.source)}</Badge>
+            )}
+            {spInfo && (
+              <Badge variant={spInfo.variant} className="gap-1">
+                <spInfo.icon className="w-3 h-3" />
+                {spInfo.label}
+              </Badge>
+            )}
+            {sourcesCount > 0 && (
+              <Badge variant="outline">{sourcesCount} 条来源</Badge>
             )}
             {result.ok && (
               <SaveToDeliveryButton

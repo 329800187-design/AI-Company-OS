@@ -70,7 +70,86 @@ flowchart LR
   F --> G["MiniDelivery artifact.md 信息来源"]
 ```
 
-## 六、验收结果
+## 六、配置真实搜索 API
+
+### 6.1 SerpAPI（推荐）
+
+1. 注册 [SerpAPI](https://serpapi.com/) 账号（免费额度 100 次/月）。
+2. 在控制台获取 API Key。
+3. 设置环境变量：
+
+```bash
+# Linux / macOS
+export SERPAPI_API_KEY="your_api_key_here"
+
+# Windows PowerShell
+$env:SERPAPI_API_KEY = "your_api_key_here"
+
+# .env 文件（推荐）
+SERPAPI_API_KEY=your_api_key_here
+WEB_SEARCH_PROVIDER=auto
+```
+
+### 6.2 Bing Web Search API
+
+1. 注册 [Azure](https://azure.microsoft.com/) 账号。
+2. 创建 Bing Search v7 资源，获取 Subscription Key。
+3. 设置环境变量：
+
+```bash
+# Linux / macOS
+export BING_SEARCH_API_KEY="your_api_key_here"
+
+# Windows PowerShell
+$env:BING_SEARCH_API_KEY = "your_api_key_here"
+
+# .env 文件（推荐）
+BING_SEARCH_API_KEY=your_api_key_here
+WEB_SEARCH_PROVIDER=auto
+```
+
+### 6.3 强制指定 Provider
+
+```bash
+# 强制使用 SerpAPI（即使也配了 Bing key）
+WEB_SEARCH_PROVIDER=serpapi
+
+# 强制使用 Bing
+WEB_SEARCH_PROVIDER=bing
+
+# 强制使用 mock（本地调试用）
+WEB_SEARCH_PROVIDER=mock
+```
+
+### 6.4 验证配置
+
+```bash
+# 检查当前 provider
+python -c "from backend.services.web_search_service import get_provider_info; print(get_provider_info())"
+
+# 测试搜索
+python -c "from backend.services.web_search_service import search_web; print(search_web('test', max_results=2))"
+```
+
+返回示例：
+
+```json
+{"provider": "SerpAPIProvider", "has_api_key": true, "env_provider": "auto"}
+```
+
+### 6.5 前端展示
+
+Research 页面结果区会自动显示搜索来源状态：
+
+| Provider | 显示 | 图标 |
+|---|---|---|
+| `MockSearchProvider` | ⚠️ 模拟搜索 | 数据库图标（黄色） |
+| `SerpAPIProvider` | ✅ SerpAPI 实时搜索 | 地球图标（绿色） |
+| `BingSearchProvider` | ✅ Bing 实时搜索 | 地球图标（绿色） |
+
+搜索结果数量也会以 `N 条来源` 的形式展示。
+
+## 七、验收结果
 
 已验证：
 
@@ -87,7 +166,7 @@ flowchart LR
   - `/governance/run` 端点当前返回 404。
 - `tests/test_minidelivery.py` 中部分列表分页测试依赖旧的 `OUTPUT_ROOT` patch 方式，和本轮 sources 渲染无关。
 
-## 七、剩余风险
+## 八、剩余风险
 
 1. Mock provider 返回模拟数据，正式使用需要配置真实搜索 API key。
 2. 真实搜索 API 的延迟、限流、费用需要单独评估。

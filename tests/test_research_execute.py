@@ -208,6 +208,24 @@ class TestResearchExecuteEndpoint:
         # mock provider 应返回模拟搜索结果
         assert len(sources) > 0, "sources 应包含搜索结果（mock provider）"
 
+    def test_execute_research_metadata_search_provider(self):
+        """metadata.search_provider 应返回当前搜索 provider 名称"""
+        resp = client.post("/agents/research/execute", json={
+            "task_id": "",
+            "goal": "帮我为手工耳环做一份竞品调研简报",
+            "task_type": "research_brief",
+            "context": {},
+            "input": {},
+        })
+        data = resp.json()
+        assert data["ok"] is True
+        meta = data.get("metadata", {})
+        assert "search_provider" in meta, "metadata 必须包含 search_provider"
+        # 无 API key 时应为 MockSearchProvider
+        assert meta["search_provider"] in (
+            "MockSearchProvider", "SerpAPIProvider", "BingSearchProvider"
+        ), f"未知的 search_provider: {meta['search_provider']}"
+
 
 class TestResearchGovernanceGuard:
     """Governance guard 在 /agents/research/execute 仍然生效"""
