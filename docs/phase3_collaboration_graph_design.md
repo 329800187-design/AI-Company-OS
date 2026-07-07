@@ -275,7 +275,7 @@ Wave 1: ["marketing", "image", "website"]
 | Phase 3.1 | 新建 collaboration_graph.py，纯函数骨架 | 无路由改动 | ✅ 已完成 |
 | Phase 3.2 | 用 Graph 重构 Boss Lite 执行路径 | boss_router.py | ✅ 已完成 |
 | Phase 3.3 | 真实 API 端到端验收（5 场景） | 测试 + 文档 | ✅ 已完成 |
-| 下一步 | 用户自定义 DAG API | 前端 + API | 待定 |
+| Phase 3.4 | 用户自定义 DAG API 最小版 | `POST /boss/graph/execute` | ✅ 已完成 |
 | 远期 | 前端 DAG 可视化编辑器 | 前端 | 待定 |
 | 远期 | 跨 Mission 协作 | 架构 | 待定 |
 
@@ -316,7 +316,9 @@ Wave 1: ["marketing", "image", "website"]
 ### 8.3 已改动的文件
 
 - ✅ `boss_router.py` — Boss Lite 执行路径改为 Graph 驱动
+- ✅ `boss_router.py` — 新增 `POST /boss/graph/execute` 自定义 DAG 执行端点
 - ✅ `tests/test_boss_lite_graph.py` — 新增 Boss Lite Graph 集成测试
+- ✅ `tests/test_boss_graph_execute.py` — 新增自定义 Graph API 测试
 - ❌ `collaboration_executor.py` — 未改
 - ❌ `collaboration_planner.py` — 未改
 - ❌ 前端代码 — 未改
@@ -329,8 +331,8 @@ Wave 1: ["marketing", "image", "website"]
 # 1. 后端导入验证
 python -c "import backend.app; print('ok')"
 
-# 2. Collaboration Graph + Boss Lite Graph 测试
-pytest tests/test_collaboration_graph.py tests/test_boss_lite_graph.py -q
+# 2. Collaboration Graph + Boss Lite / Boss Graph 测试
+pytest tests/test_collaboration_graph.py tests/test_boss_lite_graph.py tests/test_boss_graph_execute.py -q
 
 # 3. 前端构建
 cd frontend-new && npm run build
@@ -440,15 +442,76 @@ agent_ho_sources = [s for s in upstream if s in results_map and results_map[s].g
 
 ---
 
-## 十二、仍未完成
+## 十二、自定义 DAG API 最小版
+
+### 12.1 新增端点
+
+```http
+POST /boss/graph/execute
+```
+
+请求方可以直接传入 `nodes` 和 `edges` 定义任意 Agent 协作图。后端会先构造 `CollaborationGraph`，再执行：
+
+```python
+validate_graph(graph)
+topological_waves(graph)
+```
+
+若图存在缺失节点引用、自环或循环依赖，接口返回 HTTP 400，并包含校验错误。
+
+### 12.2 请求核心字段
+
+| 字段 | 说明 |
+|------|------|
+| `goal` | 总业务目标 |
+| `nodes[].id` | 图节点 ID，可与 `agent_id` 不同 |
+| `nodes[].agent_id` | 实际执行的 Agent |
+| `nodes[].task_type` | 传给 `AgentTask` 的任务类型 |
+| `nodes[].title` | 展示标题 |
+| `nodes[].prompt` | 节点执行 prompt |
+| `edges[].from_node` | 上游节点 |
+| `edges[].to_node` | 下游节点 |
+| `edges[].handoff_type` | 默认 `context` |
+| `save_to_delivery` | 是否保存到 MiniDelivery，默认 `true` |
+
+### 12.3 返回与保存
+
+返回结构包含：
+- `execution_mode: "custom_graph"`
+- `waves`
+- `results[].node_id`
+- `results[].used_handoff`
+- `results[].handoff_sources`
+- `summary.total_duration_ms`
+- `structured_output.graph`
+
+当 `save_to_delivery=true` 时，保存为：
+- `artifact_type: "boss_graph"`
+- `source_page: "boss_graph"`
+- `artifact.md`
+- `raw_agent_result.json`
+- `result.json`
+
+### 12.4 测试覆盖
+
+`tests/test_boss_graph_execute.py` 覆盖：
+- 无效图校验：缺失引用、自环、循环依赖、重复 ID
+- wave 划分：单节点、两层 DAG、三层链路
+- 请求模型默认值：`handoff_type=context`、`save_to_delivery=true`
+- API mock 执行：单节点、research → marketing handoff、上游失败不 handoff
+- MiniDelivery 保存：验证 `artifact.md`、`raw_agent_result.json`、`result.json` 落盘
+
+---
+
+## 十三、仍未完成
 
 | 项目 | 说明 |
 |------|------|
-| 自定义 DAG API | 允许用户通过 API 定义任意 Agent 依赖关系 |
 | 前端图可视化 | 在前端展示 DAG 结构和执行状态 |
+| 自定义图模板/持久化 | 保存常用 nodes/edges 配置并支持复用 |
 | 跨 Mission 协作 | 不同 Mission 之间的 Agent 输出复用 |
 | CollaborationPlan 统一 | 将 CollaborationGraph 与现有 CollaborationPlan 合并 |
 
 ---
 
-*由 AI Company OS Phase 3 P0 生成 · 2026-07-07 · 最后更新：Boss Lite 接入 + 真实 API 验收*
+*由 AI Company OS Phase 3 P0 生成 · 2026-07-07 · 最后更新：自定义 DAG API 最小版*

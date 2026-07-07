@@ -9,7 +9,14 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from backend.services.boss_command_center import get_boss_command_center, MODULE_ORDER
-from backend.services.collaboration_graph import build_boss_lite_graph, topological_waves
+from backend.services.collaboration_graph import (
+    build_boss_lite_graph,
+    topological_waves,
+    CollaborationNode,
+    CollaborationEdge,
+    CollaborationGraph,
+    validate_graph,
+)
 from backend.security import input_validator, rate_limiter
 
 router = APIRouter(prefix="/boss", tags=["Boss / 老板指挥台"])
@@ -293,6 +300,33 @@ class BossLiteRequest(BaseModel):
     """Boss Lite 一句话执行请求"""
     goal: str = Field(..., min_length=2, max_length=5000, description="业务目标")
     agents: Optional[List[str]] = Field(default=None, description="指定执行的 Agent 列表，None 表示全部 5 个")
+    save_to_delivery: bool = Field(default=True, description="是否自动保存到交付中心")
+
+
+# ── Boss Graph 自定义 DAG 请求模型 ───────────────────────────
+
+
+class BossGraphNodeRequest(BaseModel):
+    """自定义协作图节点"""
+    id: str = Field(..., min_length=1, max_length=100, description="图节点 ID")
+    agent_id: str = Field(..., min_length=1, max_length=100, description="实际执行的 agent_id")
+    task_type: str = Field(default="general", max_length=100, description="传给 AgentTask 的任务类型")
+    title: str = Field(default="", max_length=200, description="展示标题")
+    prompt: str = Field(default="", max_length=10000, description="该节点 prompt")
+
+
+class BossGraphEdgeRequest(BaseModel):
+    """自定义协作图边"""
+    from_node: str = Field(..., min_length=1, max_length=100, description="上游节点 ID")
+    to_node: str = Field(..., min_length=1, max_length=100, description="下游节点 ID")
+    handoff_type: str = Field(default="context", max_length=50, description="handoff 类型")
+
+
+class BossGraphExecuteRequest(BaseModel):
+    """自定义协作图执行请求"""
+    goal: str = Field(..., min_length=2, max_length=5000, description="业务目标")
+    nodes: List[BossGraphNodeRequest] = Field(..., min_length=1, description="图节点列表")
+    edges: List[BossGraphEdgeRequest] = Field(default_factory=list, description="图边列表")
     save_to_delivery: bool = Field(default=True, description="是否自动保存到交付中心")
 
 
@@ -750,6 +784,444 @@ def boss_lite_execute(request: BossLiteRequest):
         "delivery_task_id": delivery_task_id,
         "handoff_enabled": handoff_enabled,
         "execution_mode": boss_structured_output["execution_mode"],
+    }
+
+
+# ── Boss Graph 自定义 DAG 执行 ───────────────────────────────
+
+
+def _build_custom_graph(request: BossGraphExecuteRequest) -> CollaborationGraph:
+    """从请求构造 CollaborationGraph"""
+    nodes = [
+        CollaborationNode(
+            id=n.id,
+            agent_id=n.agent_id,
+            label=n.title,
+            config={"task_type": n.task_type, "prompt": n.prompt},
+        )
+        for n in request.nodes
+    ]
+    edges = [
+        CollaborationEdge(
+            from_node=e.from_node,
+            to_node=e.to_node,
+            label=e.handoff_type,
+        )
+        for e in request.edges
+    ]
+    return CollaborationGraph(nodes=nodes, edges=edges)
+
+
+def _extract_custom_handoff_context(results_map: dict, graph: CollaborationGraph, node_id: str) -> tuple:
+    """从上游节点结果中提取 handoff context。
+
+    Returns:
+        (handoff_prompt, handoff_sources) — handoff 附言和实际来源列表
+    """
+    upstream_ids = graph.upstream_of(node_id)
+    # 只取成功执行的上游
+    successful_upstream = [uid for uid in upstream_ids if results_map.get(uid, {}).get("ok")]
+
+    if not successful_upstream:
+        return "", []
+
+    parts = ["\n\n---\n## 上游节点洞察（请参考并保持一致）\n"]
+    for uid in successful_upstream:
+        upstream_result = results_map[uid]
+        upstream_node = graph.get_node(uid)
+        label = upstream_node.label if upstream_node else uid
+        so = upstream_result.get("structured_output") or {}
+        summary = upstream_result.get("summary") or so.get("summary", "")
+
+        parts.append(f"### {label}")
+        if summary:
+            parts.append(f"- 摘要：{summary[:300]}")
+
+        # 提取常见结构化字段
+        for key in ["key_findings", "findings", "recommendations", "opportunities", "risks"]:
+            items = so.get(key, [])
+            if items and isinstance(items, list):
+                cn_label = {"key_findings": "关键发现", "findings": "发现", "recommendations": "建议",
+                            "opportunities": "机会", "risks": "风险"}.get(key, key)
+                for item in items[:3]:
+                    parts.append(f"- {cn_label}: {_format_boss_value(item)}")
+        parts.append("")
+
+    parts.append("请确保你的输出与以上上游节点结论保持一致。")
+    return "\n".join(parts), successful_upstream
+
+
+def _execute_graph_node(node: CollaborationNode, agent_task) -> dict:
+    """执行单个图节点，返回结果 dict"""
+    start = time.perf_counter()
+    try:
+        from backend.services.agent_executor import execute_agent
+        result = execute_agent(node.agent_id, agent_task)
+        result_dict = result.model_dump(by_alias=False)
+        return {
+            "node_id": node.id,
+            "agent_id": node.agent_id,
+            "result": result_dict,
+            "error": None,
+            "duration_ms": round((time.perf_counter() - start) * 1000, 1),
+        }
+    except Exception as e:
+        return {
+            "node_id": node.id,
+            "agent_id": node.agent_id,
+            "result": None,
+            "error": str(e),
+            "duration_ms": round((time.perf_counter() - start) * 1000, 1),
+        }
+
+
+def _render_boss_graph_md(goal: str, request: BossGraphExecuteRequest, waves: list, results: list, boss_so: dict) -> str:
+    """渲染自定义图执行报告为 Markdown"""
+    total_dur = boss_so.get("total_duration_ms", 0)
+    total_sec = f"{total_dur / 1000:.1f}" if total_dur else "—"
+
+    lines = [
+        "# Boss Graph 自定义协作图报告",
+        "",
+        "## 总目标",
+        "",
+        goal,
+        "",
+        f"**总耗时：{total_sec} 秒**",
+        "",
+        "---",
+        "",
+        "## 一、图结构",
+        "",
+        "### 节点",
+        "",
+    ]
+
+    for n in request.nodes:
+        lines.append(f"- **{n.title or n.id}** (agent: {n.agent_id}, type: {n.task_type})")
+    lines.append("")
+
+    lines.append("### 依赖关系")
+    lines.append("")
+    if request.edges:
+        for e in request.edges:
+            from_title = next((n.title or n.id for n in request.nodes if n.id == e.from_node), e.from_node)
+            to_title = next((n.title or n.id for n in request.nodes if n.id == e.to_node), e.to_node)
+            lines.append(f"- {from_title} → {to_title} ({e.handoff_type})")
+    else:
+        lines.append("无依赖关系（全部并行执行）")
+    lines.append("")
+
+    lines += ["---", "", "## 二、执行 Wave", ""]
+    for i, wave in enumerate(waves):
+        wave_labels = []
+        for nid in wave:
+            node = next((n for n in request.nodes if n.id == nid), None)
+            wave_labels.append(node.title or nid if node else nid)
+        lines.append(f"- **Wave {i + 1}:** {', '.join(wave_labels)}")
+    lines.append("")
+
+    lines += ["---", "", "## 三、各节点结果", ""]
+    for r in results:
+        status_icon = "✅" if r["ok"] else "❌"
+        dur = r.get("duration_ms", 0)
+        dur_str = f" （耗时 {dur / 1000:.1f}s）" if dur else ""
+        lines.append(f"### {status_icon} {r['title']}{dur_str}")
+        lines.append("")
+
+        if r.get("used_handoff"):
+            sources = ", ".join(r.get("handoff_sources", []))
+            lines.append(f"- **Handoff 来源：** {sources}")
+            lines.append("")
+
+        so = r.get("structured_output") or {}
+        summary = r.get("summary") or so.get("summary", "")
+        if summary:
+            lines.append(f"- **摘要：** {summary[:300]}")
+            lines.append("")
+
+        for key in ["key_findings", "findings", "recommendations"]:
+            items = so.get(key, [])
+            if items and isinstance(items, list):
+                cn_label = {"key_findings": "关键发现", "findings": "发现", "recommendations": "建议"}.get(key, key)
+                lines.append(f"- **{cn_label}：**")
+                for item in items[:3]:
+                    lines.append(f"  - {_format_boss_value(item)}")
+                lines.append("")
+
+        if r.get("error"):
+            lines.append(f"- ⚠️ 错误: {r['error']}")
+            lines.append("")
+
+    lines += [
+        "---",
+        "",
+        f"*由 AI Company OS Boss Graph 生成 · {boss_so.get('generated_at', '')}*",
+    ]
+
+    return "\n".join(lines)
+
+
+@router.post("/graph/execute", summary="Boss Graph — 自定义 DAG 协作图执行")
+def boss_graph_execute(request: BossGraphExecuteRequest):
+    """
+    自定义协作图执行:
+    1. 接收 nodes/edges 定义的 DAG
+    2. 校验图合法性
+    3. 按拓扑 wave 并行执行
+    4. 基于图上游依赖传递 handoff
+    5. 保存到 MiniDelivery（可选）
+    """
+    # Governance Guard
+    from backend.governance.guard import guard_payload, governance_block_response
+    blocked, classification = guard_payload({"goal": request.goal})
+    if blocked:
+        return governance_block_response(classification)
+
+    is_valid_input, error_msg = input_validator.validate_message(request.goal)
+    if not is_valid_input:
+        raise HTTPException(status_code=400, detail=error_msg)
+
+    is_allowed, rate_msg = rate_limiter.check("boss_graph", max_requests=5, window_seconds=60)
+    if not is_allowed:
+        raise HTTPException(status_code=429, detail=rate_msg)
+
+    # 构造图
+    graph = _build_custom_graph(request)
+
+    # 校验图
+    validation = validate_graph(graph)
+    if not validation.valid:
+        raise HTTPException(status_code=400, detail={
+            "message": "协作图校验失败",
+            "errors": validation.errors,
+            "warnings": validation.warnings,
+        })
+
+    # 拓扑 wave
+    waves = topological_waves(graph)
+
+    # 构建 node_id → node 映射
+    node_map = {n.id: n for n in request.nodes}
+
+    # 按 wave 顺序执行
+    from backend.schemas.agent_protocol import AgentTask
+
+    results_map: Dict[str, Dict[str, Any]] = {}  # node_id → result_dict
+    node_durations: Dict[str, float] = {}
+    total_start = time.perf_counter()
+
+    for wave in waves:
+        wave_tasks = []
+        for node_id in wave:
+            node = node_map[node_id]
+            graph_node = graph.get_node(node_id)
+
+            # 计算 handoff
+            handoff_prompt, handoff_sources = _extract_custom_handoff_context(results_map, graph, node_id)
+            full_prompt = node.prompt + handoff_prompt if handoff_prompt else node.prompt
+
+            # 上游节点 ID 列表
+            upstream_ids = graph.upstream_of(node_id)
+
+            agent_task = AgentTask(
+                task_id=f"boss_graph_{uuid.uuid4().hex[:8]}",
+                goal=request.goal,
+                task_type=node.task_type,
+                context={
+                    "source": "boss_graph",
+                    "node_id": node_id,
+                    "upstream_nodes": upstream_ids,
+                    "handoff_sources": handoff_sources,
+                },
+                input={"prompt": full_prompt},
+            )
+            wave_tasks.append((node_id, graph_node, agent_task, handoff_sources))
+
+        # 并行执行本 wave
+        max_workers = min(len(wave_tasks), 5)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_idx = {}
+            for j, (node_id, graph_node, agent_task, _) in enumerate(wave_tasks):
+                future = executor.submit(_execute_graph_node, graph_node, agent_task)
+                future_to_idx[future] = j
+
+            wave_raw = [None] * len(wave_tasks)
+            for future in as_completed(future_to_idx):
+                j = future_to_idx[future]
+                try:
+                    wave_raw[j] = future.result()
+                except Exception as e:
+                    node_id, graph_node, _, _ = wave_tasks[j]
+                    wave_raw[j] = {
+                        "node_id": node_id,
+                        "agent_id": graph_node.agent_id,
+                        "result": None,
+                        "error": str(e),
+                    }
+
+        # 收集本 wave 结果
+        for raw in wave_raw:
+            if raw is None:
+                continue
+            nid = raw["node_id"]
+            node_durations[nid] = raw.get("duration_ms", 0)
+            if raw["error"] or raw["result"] is None:
+                results_map[nid] = {"ok": False, "error": raw["error"], "structured_output": {}}
+            else:
+                rd = raw["result"]
+                results_map[nid] = {
+                    "ok": rd.get("ok", False),
+                    "summary": rd.get("summary", ""),
+                    "structured_output": rd.get("structured_output") or rd.get("output") or {},
+                    "warnings": rd.get("warnings", []),
+                    "errors": rd.get("errors", []),
+                    "error": rd.get("error"),
+                }
+
+    total_duration_ms = round((time.perf_counter() - total_start) * 1000, 1)
+
+    # 按 nodes 输入顺序组装 results
+    results: List[Dict[str, Any]] = []
+    for node in request.nodes:
+        nid = node.id
+        rd = results_map.get(nid)
+        dur = node_durations.get(nid, 0)
+        upstream_ids = graph.upstream_of(nid)
+        successful_upstream = [uid for uid in upstream_ids if results_map.get(uid, {}).get("ok")]
+
+        if rd is None:
+            results.append({
+                "node_id": nid,
+                "agent_id": node.agent_id,
+                "title": node.title or nid,
+                "ok": False,
+                "summary": "",
+                "structured_output": {},
+                "error": "Node execution did not return a result",
+                "duration_ms": dur,
+                "used_handoff": False,
+                "handoff_sources": [],
+            })
+        elif rd.get("error") or not rd.get("ok"):
+            results.append({
+                "node_id": nid,
+                "agent_id": node.agent_id,
+                "title": node.title or nid,
+                "ok": False,
+                "summary": "",
+                "structured_output": rd.get("structured_output", {}),
+                "error": rd.get("error") or "Unknown error",
+                "duration_ms": dur,
+                "used_handoff": False,
+                "handoff_sources": [],
+            })
+        else:
+            used_ho = bool(successful_upstream)
+            results.append({
+                "node_id": nid,
+                "agent_id": node.agent_id,
+                "title": node.title or nid,
+                "ok": True,
+                "summary": rd.get("summary", ""),
+                "structured_output": rd.get("structured_output", {}),
+                "error": None,
+                "duration_ms": dur,
+                "used_handoff": used_ho,
+                "handoff_sources": successful_upstream if used_ho else [],
+            })
+
+    # 生成汇总
+    succeeded = sum(1 for r in results if r["ok"])
+    failed = len(results) - succeeded
+
+    boss_structured_output = {
+        "goal": request.goal,
+        "graph": {
+            "nodes": [{"id": n.id, "agent_id": n.agent_id, "title": n.title} for n in request.nodes],
+            "edges": [{"from": e.from_node, "to": e.to_node, "type": e.handoff_type} for e in request.edges],
+        },
+        "waves": waves,
+        "results_summary": [
+            {
+                "node_id": r["node_id"],
+                "agent_id": r["agent_id"],
+                "title": r["title"],
+                "ok": r["ok"],
+                "summary": r["summary"],
+                "duration_ms": r["duration_ms"],
+                "used_handoff": r["used_handoff"],
+                "handoff_sources": r.get("handoff_sources", []),
+            }
+            for r in results
+        ],
+        "succeeded": succeeded,
+        "failed": failed,
+        "total": len(results),
+        "total_duration_ms": total_duration_ms,
+        "handoff_enabled": any(r["used_handoff"] for r in results),
+        "execution_mode": "custom_graph",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # 保存到 MiniDelivery
+    delivery_task_id = None
+    if request.save_to_delivery:
+        try:
+            from backend.minidelivery.artifact_writer import ensure_output_dir
+
+            artifact_md = _render_boss_graph_md(request.goal, request, waves, results, boss_structured_output)
+
+            task_id = f"boss_graph_{uuid.uuid4().hex[:12]}"
+            task_dir = ensure_output_dir(task_id)
+
+            md_path = task_dir / "artifact.md"
+            md_path.write_text(artifact_md, encoding="utf-8")
+
+            raw_path = task_dir / "raw_agent_result.json"
+            raw_path.write_text(
+                json.dumps(boss_structured_output, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+            result_json = {
+                "task_id": task_id,
+                "goal": request.goal,
+                "agent_id": "boss",
+                "artifact_type": "boss_graph",
+                "title": f"Boss Graph: {request.goal[:50]}",
+                "source_page": "boss_graph",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "ok": succeeded > 0,
+                "mode": "boss_graph",
+                "summary": f"自定义图执行完成：{succeeded}/{len(results)} 个节点成功",
+                "artifact_path": str(md_path),
+                "raw_agent_result_path": str(raw_path),
+            }
+            json_path = task_dir / "result.json"
+            json_path.write_text(
+                json.dumps(result_json, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            delivery_task_id = task_id
+        except Exception:
+            pass
+
+    return {
+        "ok": succeeded > 0,
+        "task_id": delivery_task_id or f"boss_graph_{uuid.uuid4().hex[:8]}",
+        "execution_mode": "custom_graph",
+        "goal": request.goal,
+        "waves": waves,
+        "results": results,
+        "summary": {
+            "total": len(results),
+            "succeeded": succeeded,
+            "failed": failed,
+            "total_duration_ms": total_duration_ms,
+        },
+        "structured_output": boss_structured_output,
+        "delivery_task_id": delivery_task_id,
     }
 
 

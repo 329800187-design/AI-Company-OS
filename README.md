@@ -111,14 +111,15 @@ cd frontend-new && npm run build              # ✅ 通过
   - ✅ 支持 partial agents 自动裁剪子图，handoff_sources 从图上游依赖动态计算。
   - ✅ 5 个真实 API 场景验收通过（默认5agent、research+marketing、data+website、marketing only、research+data）。
   - ✅ MiniDelivery 搜索/详情/预览/下载全部验证通过。
-  - 待做：自定义 DAG API、前端图可视化、跨 Mission 协作。
+  - ✅ 新增 `POST /boss/graph/execute` 自定义 DAG API 最小版，支持调用方传入 nodes/edges 后按图执行。
+  - 待做：前端图可视化、跨 Mission 协作、自定义图模板/持久化。
 
 ## 下一步计划
 
-第一阶段、第二阶段 Boss Lite 已完成，第三阶段 CollaborationGraph 已接入 Boss Lite 并通过真实 API 验收。下一步可选方向：
+第一阶段、第二阶段 Boss Lite 已完成，第三阶段 CollaborationGraph 已接入 Boss Lite，并新增自定义 DAG API 最小版。下一步可选方向：
 
-1. **自定义 DAG API（P0）** — 允许用户通过 API 定义任意 Agent 依赖关系
-2. **前端 DAG 可视化（P1）** — 在前端展示协作图结构和执行状态
+1. **前端 DAG 可视化（P1）** — 在前端展示协作图结构和执行状态
+2. **自定义图模板/持久化（P1）** — 保存常用 nodes/edges 配置，支持复用
 3. **OpenClaw 联网调研（P1）** — Research Agent 接入实时搜索
 4. **真实数据源接入（P1）** — Data Agent 接入真实数据库/API
 5. **真实图片生成（P2）** — Image Agent 接入图片生成 API
