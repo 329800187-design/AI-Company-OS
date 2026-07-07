@@ -3,7 +3,7 @@
 > 阶段：Phase 3 — P0 Agent 协作通用化
 > 创建日期：2026-07-07
 > 最后更新：2026-07-08
-> 状态：**Graph Template 创建 UI 已完成**
+> 状态：**Graph Template 更新闭环已完成**
 
 ---
 
@@ -280,6 +280,8 @@ Wave 1: ["marketing", "image", "website"]
 | Phase 3.6 | 自定义图模板持久化 | Graph Template Store + API | ✅ 已完成 |
 | Phase 3.7 | Graph Template 前端 UI | 模板列表 / 使用目标 / 按模板执行 / 删除 | ✅ 已完成 |
 | Phase 3.8 | Graph Template 创建 UI | 创建模板表单 / 节点边编辑 / 前端校验 / 保存 | ✅ 已完成 |
+| Phase 3.9 | Graph Template 克隆 UI | 克隆按钮 / 创建表单复用 / name 追加副本 | ✅ 已完成 |
+| Phase 3.10 | Graph Template 更新 | PUT API / 前端编辑模式 / 保留 created_at | ✅ 已完成 |
 | 远期 | 前端 DAG 编辑器 | 前端 | 待定 |
 | 远期 | 跨 Mission 协作 | 架构 | 待定 |
 
@@ -325,7 +327,7 @@ Wave 1: ["marketing", "image", "website"]
 - ✅ `tests/test_boss_graph_execute.py` — 新增自定义 Graph API 测试
 - ✅ `frontend-new/src/pages/boss/index.tsx` — 新增协作图只读可视化卡片
 - ✅ `backend/services/graph_template_store.py` — Graph Template 持久化服务
-- ✅ `tests/test_graph_template_store.py` — Graph Template 测试（21 个）
+- ✅ `tests/test_graph_template_store.py` — Graph Template 测试（28 个）
 - ✅ `frontend-new/src/api/client.ts` — Graph Template 前端 API client
 - ✅ `frontend-new/src/pages/boss/index.tsx` — Graph Templates 面板和按模板执行结果展示
 - ✅ `frontend-new/src/api/client.ts` — 新增 `createBossGraphTemplate()` 创建模板 API
@@ -642,10 +644,11 @@ Boss 页面 Graph Templates 面板新增「创建模板」按钮和表单：
 | 项目 | 说明 |
 |------|------|
 | 前端 DAG 编辑器 | 从只读 GraphPreview 升级为可配置 nodes/edges |
-| 模板更新 | PUT /boss/graph/templates/{id}，前端编辑模式 |
+| ~~模板更新~~ | ✅ 已完成 — Phase 3.10 |
 | 跨 Mission 协作 | 不同 Mission 之间的 Agent 输出复用 |
 | CollaborationPlan 统一 | 将 CollaborationGraph 与现有 CollaborationPlan 合并 |
 | 多用户权限 | 模板隔离、权限控制 |
+| 版本历史 | 模板版本管理 |
 
 ---
 
@@ -671,10 +674,57 @@ Phase 3.9 实现了「克隆模板」功能：用户点击已有模板的「克�
 5. 点击「保存模板」→ 调用 `createBossGraphTemplate()` → 刷新列表
 6. 原模板不受影响
 
-### 18.4 模板更新（仍未实现）
+### 18.4 模板更新（Phase 3.10）
 
-模板更新需要后端新增 `PUT /boss/graph/templates/{template_id}`，前端增加「编辑」按钮和 edit 模式。当前版本未实现。
+模板更新已实现，详见第十九节。
 
 ---
 
-*由 AI Company OS Phase 3 P0 生成 · 2026-07-08 · 最后更新：模板克隆 UI（Phase 3.9）*
+## 十九、模板更新（Phase 3.10）
+
+### 19.1 概述
+
+Phase 3.10 实现了 Graph Template 更新功能：用户点击已有模板的「编辑」按钮后，创建表单自动展开并填入该模板的全部内容，进入编辑模式。保存时调用 `PUT /boss/graph/templates/{template_id}` 更新已有模板，而不是创建新模板。
+
+### 19.2 后端
+
+- 新增 `update_template(template_id, name, nodes, edges, description, goal_hint)` 到 `graph_template_store.py`
+- 保留原 `created_at`，`updated_at` 用当前时间
+- template_id 不合法或不存在返回 None
+- 新增 `PUT /boss/graph/templates/{template_id}` 端点到 `boss_router.py`
+- 请求结构复用 `BossGraphTemplateCreateRequest`
+- 不存在返回 404，无效图返回 400
+
+### 19.3 前端
+
+- 新增 `updateBossGraphTemplate(templateId, payload)` 到 `client.ts`
+- Boss 页面新增 `editingTemplateId` 状态
+- 每个模板卡片新增「编辑」按钮
+- 点击「编辑」→ 填入创建表单 → 进入编辑模式
+- 表单标题变为「编辑 Graph Template」，保存按钮变为「更新模板」
+- 保存时根据 `editingTemplateId` 决定调用 create 还是 update
+- 克隆时必须清空 `editingTemplateId`，确保克隆保存为新模板
+- 取消时清空 `editingTemplateId`
+
+### 19.4 交互流程
+
+1. 用户在模板卡片点击「编辑」
+2. 创建表单展开，name、description、goal_hint、nodes、edges 原样填入
+3. 表单标题变为「编辑 Graph Template」，保存按钮变为「更新模板」
+4. 用户可自由修改
+5. 点击「更新模板」→ 调用 `updateBossGraphTemplate()` → 刷新列表
+6. 原模板被更新，`created_at` 不变，`updated_at` 更新
+
+### 19.5 测试覆盖
+
+- update_template 成功
+- update_template 保留 created_at，更新 updated_at
+- update_template 不存在返回 None
+- update_template 非法 template_id 返回 None
+- PUT API 成功
+- PUT API 不存在返回 404
+- PUT API 无效图返回 400
+
+---
+
+*由 AI Company OS Phase 3 P0 生成 · 2026-07-08 · 最后更新：模板更新（Phase 3.10）*

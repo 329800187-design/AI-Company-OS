@@ -117,14 +117,16 @@ cd frontend-new && npm run build              # ✅ 通过
   - ✅ Boss 页面新增 Graph Templates 面板：模板列表、目标填充、按模板执行、删除模板、结果可视化。
   - ✅ Boss 页面新增模板创建表单：基础信息、节点/边编辑、前端校验、保存后刷新列表。
   - ✅ Graph Template 克隆 UI：点击「克隆」自动填入创建表单，name 追加「副本」，保存为新模板。
-  - 待做：跨 Mission 协作、图编辑器、模板更新（PUT API + 编辑模式）。
+  - ✅ Graph Template 更新：`PUT /boss/graph/templates/{id}` 更新已有模板，前端编辑模式，保留 created_at。
+  - Graph Template 闭环：创建 → 列表 → 编辑 → 克隆 → 删除 → 按模板执行 → 结果可视化。
+  - 待做：跨 Mission 协作、图编辑器、多用户权限、版本历史。
 
 ## 下一步计划
 
 第一阶段、第二阶段 Boss Lite 已完成，第三阶段 CollaborationGraph 已接入 Boss Lite，并新增自定义 DAG API 与 Graph Template 创建/使用闭环。下一步可选方向：
 
 1. **前端 DAG 编辑器（P1）** — 从表单编辑升级为图形化配置 nodes/edges
-2. **模板更新（P1）** — PUT API + 前端编辑模式
+2. ~~**模板更新（P1）**~~ ✅ 已完成 — PUT API + 前端编辑模式
 3. **OpenClaw 联网调研（P1）** — Research Agent 接入实时搜索
 4. **真实数据源接入（P1）** — Data Agent 接入真实数据库/API
 5. **真实图片生成（P2）** — Image Agent 接入图片生成 API

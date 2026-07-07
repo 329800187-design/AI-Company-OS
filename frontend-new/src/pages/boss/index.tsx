@@ -793,6 +793,7 @@ export default function BossPage() {
   const [createDraft, setCreateDraft] = useState<GraphTemplateDraft>(DEFAULT_DRAFT)
   const [createSubmitting, setCreateSubmitting] = useState(false)
   const [createFormError, setCreateFormError] = useState<string | null>(null)
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null)
 
   // 时间本地化：ISO → 中文本地时间
   const formatLocalTime = (iso: string): string => {
@@ -981,7 +982,7 @@ export default function BossPage() {
     return errors
   }
 
-  // 创建模板 — 保存
+  // 创建/更新模板 — 保存
   const saveGraphTemplate = async () => {
     setCreateFormError(null)
     const errors = validateDraft(createDraft)
@@ -991,7 +992,7 @@ export default function BossPage() {
     }
     setCreateSubmitting(true)
     try {
-      await api.createBossGraphTemplate({
+      const payload = {
         name: createDraft.name.trim(),
         description: createDraft.description.trim() || undefined,
         goal_hint: createDraft.goal_hint.trim() || undefined,
@@ -1007,14 +1008,20 @@ export default function BossPage() {
           to_node: e.to_node.trim(),
           handoff_type: e.handoff_type.trim() || undefined,
         })),
-      })
+      }
+      if (editingTemplateId) {
+        await api.updateBossGraphTemplate(editingTemplateId, payload)
+        setEditingTemplateId(null)
+      } else {
+        await api.createBossGraphTemplate(payload)
+      }
       setShowCreateForm(false)
       setCreateDraft(DEFAULT_DRAFT)
       setCreateFormError(null)
       loadGraphTemplates()
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : "创建失败"
-      console.error("Create graph template failed:", error)
+      const errorMsg = error instanceof Error ? error.message : "保存失败"
+      console.error("Save graph template failed:", error)
       setCreateFormError(errorMsg)
     } finally {
       setCreateSubmitting(false)
@@ -1023,8 +1030,23 @@ export default function BossPage() {
 
   // 克隆模板：将已有模板内容填入创建表单
   const cloneGraphTemplate = (tpl: GraphTemplate) => {
+    setEditingTemplateId(null)
     setCreateDraft({
       name: `${tpl.name} 副本`,
+      description: tpl.description,
+      goal_hint: tpl.goal_hint,
+      nodes: tpl.nodes.map((n) => ({ ...n })),
+      edges: tpl.edges.map((e) => ({ ...e })),
+    })
+    setCreateFormError(null)
+    setShowCreateForm(true)
+  }
+
+  // 编辑模板：将已有模板内容填入创建表单，进入编辑模式
+  const editGraphTemplate = (tpl: GraphTemplate) => {
+    setEditingTemplateId(tpl.template_id)
+    setCreateDraft({
+      name: tpl.name,
       description: tpl.description,
       goal_hint: tpl.goal_hint,
       nodes: tpl.nodes.map((n) => ({ ...n })),
@@ -1741,7 +1763,10 @@ export default function BossPage() {
                 onClick={() => {
                   setShowCreateForm(!showCreateForm)
                   setCreateFormError(null)
-                  if (!showCreateForm) setCreateDraft(DEFAULT_DRAFT)
+                  if (!showCreateForm) {
+                    setCreateDraft(DEFAULT_DRAFT)
+                    setEditingTemplateId(null)
+                  }
                 }}
                 className="gap-1 text-xs"
               >
@@ -1774,7 +1799,7 @@ export default function BossPage() {
           {/* 创建模板表单 */}
           {showCreateForm && (
             <div className="mb-4 rounded-xl border border-[#E5E5E5] bg-[#FAFAF8] p-5">
-              <h4 className="text-sm font-medium text-[#0B0B0B] mb-4">创建 Graph Template</h4>
+              <h4 className="text-sm font-medium text-[#0B0B0B] mb-4">{editingTemplateId ? "编辑 Graph Template" : "创建 Graph Template"}</h4>
 
               {/* 基础字段 */}
               <div className="grid gap-3 sm:grid-cols-3 mb-4">
@@ -1955,7 +1980,7 @@ export default function BossPage() {
                   className="gap-1 text-xs"
                 >
                   {createSubmitting ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
-                  {createSubmitting ? "保存中..." : "保存模板"}
+                  {createSubmitting ? "保存中..." : editingTemplateId ? "更新模板" : "保存模板"}
                 </Button>
                 <Button
                   variant="outline"
@@ -1964,6 +1989,7 @@ export default function BossPage() {
                     setShowCreateForm(false)
                     setCreateDraft(DEFAULT_DRAFT)
                     setCreateFormError(null)
+                    setEditingTemplateId(null)
                   }}
                   className="gap-1 text-xs"
                 >
@@ -2052,6 +2078,15 @@ export default function BossPage() {
                         >
                           <Copy className="h-3 w-3" />
                           克隆
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => editGraphTemplate(tpl)}
+                          className="gap-1 text-xs text-[#6B6B6B] hover:text-[#0B0B0B]"
+                        >
+                          <FileText className="h-3 w-3" />
+                          编辑
                         </Button>
                         <Button
                           variant="ghost"

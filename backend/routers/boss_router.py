@@ -1294,6 +1294,41 @@ def get_graph_template(template_id: str):
     return {"ok": True, "template": template}
 
 
+@router.put("/graph/templates/{template_id}", summary="更新 Graph Template")
+def update_graph_template(template_id: str, request: BossGraphTemplateCreateRequest):
+    """更新已有的 graph template"""
+    from backend.services.graph_template_store import get_template, update_template
+
+    existing = get_template(template_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail=f"模板 {template_id} 不存在")
+
+    # 校验图合法性
+    graph = _build_custom_graph_from_nodes_edges(request.nodes, request.edges)
+    validation = validate_graph(graph)
+    if not validation.valid:
+        raise HTTPException(status_code=400, detail={
+            "message": "协作图校验失败",
+            "errors": validation.errors,
+            "warnings": validation.warnings,
+        })
+
+    nodes_data = [n.model_dump() for n in request.nodes]
+    edges_data = [e.model_dump() for e in request.edges]
+
+    template = update_template(
+        template_id=template_id,
+        name=request.name,
+        nodes=nodes_data,
+        edges=edges_data,
+        description=request.description,
+        goal_hint=request.goal_hint,
+    )
+    if template is None:
+        raise HTTPException(status_code=404, detail=f"模板 {template_id} 不存在")
+    return {"ok": True, "template": template}
+
+
 @router.delete("/graph/templates/{template_id}", summary="删除 Graph Template")
 def delete_graph_template(template_id: str):
     """删除指定 template"""

@@ -137,6 +137,59 @@ def list_templates() -> List[Dict[str, Any]]:
     return templates
 
 
+def update_template(
+    template_id: str,
+    name: str,
+    nodes: List[Dict[str, Any]],
+    edges: List[Dict[str, Any]],
+    description: str = "",
+    goal_hint: str = "",
+) -> Optional[Dict[str, Any]]:
+    """更新已有的 graph template。
+
+    Args:
+        template_id: 模板 ID
+        name: 模板名称
+        nodes: 节点列表
+        edges: 边列表
+        description: 模板描述
+        goal_hint: 目标提示
+
+    Returns:
+        完整的 template dict，不存在或 ID 非法返回 None
+    """
+    if not _is_valid_template_id(template_id):
+        return None
+
+    existing = get_template(template_id)
+    if existing is None:
+        return None
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    template = {
+        "template_id": template_id,
+        "name": name,
+        "description": description,
+        "goal_hint": goal_hint,
+        "nodes": nodes,
+        "edges": edges,
+        "created_at": existing.get("created_at", now),
+        "updated_at": now,
+    }
+
+    file_path = _template_path(template_id)
+    if file_path is None:
+        return None
+    file_path.write_text(
+        json.dumps(template, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    logger.info("Updated graph template: %s (%s)", template_id, name)
+    return template
+
+
 def delete_template(template_id: str) -> bool:
     """删除 template。
 

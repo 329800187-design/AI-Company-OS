@@ -20,6 +20,7 @@ from backend.services.graph_template_store import (
     get_template,
     list_templates,
     delete_template,
+    update_template,
 )
 
 
@@ -174,6 +175,95 @@ class TestTemplateStore:
         assert template["edges"] == []
         loaded = get_template(template["template_id"])
         assert loaded["edges"] == []
+
+    def test_update_template_success(self):
+        """更新模板成功"""
+        template = save_template(
+            name="原始名称",
+            nodes=self._sample_nodes(),
+            edges=self._sample_edges(),
+            description="原始描述",
+            goal_hint="原始目标",
+        )
+        tid = template["template_id"]
+
+        new_nodes = [
+            {"id": "research", "agent_id": "research", "task_type": "research_brief", "title": "新调研", "prompt": "新调研内容"},
+            {"id": "marketing", "agent_id": "marketing", "task_type": "copywriting", "title": "新营销", "prompt": "新营销内容"},
+            {"id": "image", "agent_id": "image", "task_type": "image_prompt", "title": "视觉", "prompt": "视觉内容"},
+        ]
+        new_edges = [
+            {"from_node": "research", "to_node": "marketing", "handoff_type": "context"},
+            {"from_node": "research", "to_node": "image", "handoff_type": "context"},
+        ]
+
+        updated = update_template(
+            template_id=tid,
+            name="更新后的名称",
+            nodes=new_nodes,
+            edges=new_edges,
+            description="更新后的描述",
+            goal_hint="更新后的目标",
+        )
+
+        assert updated is not None
+        assert updated["template_id"] == tid
+        assert updated["name"] == "更新后的名称"
+        assert updated["description"] == "更新后的描述"
+        assert updated["goal_hint"] == "更新后的目标"
+        assert len(updated["nodes"]) == 3
+        assert len(updated["edges"]) == 2
+
+        # 读取验证
+        loaded = get_template(tid)
+        assert loaded is not None
+        assert loaded["name"] == "更新后的名称"
+        assert len(loaded["nodes"]) == 3
+
+    def test_update_preserves_created_at(self):
+        """更新保留 created_at，更新 updated_at"""
+        template = save_template(
+            name="时间测试",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+        tid = template["template_id"]
+        original_created = template["created_at"]
+        original_updated = template["updated_at"]
+
+        import time
+        time.sleep(0.01)
+
+        updated = update_template(
+            template_id=tid,
+            name="时间测试更新",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+
+        assert updated is not None
+        assert updated["created_at"] == original_created
+        assert updated["updated_at"] != original_updated
+
+    def test_update_nonexistent_returns_none(self):
+        """更新不存在的模板返回 None"""
+        result = update_template(
+            template_id="tpl_nonexistent",
+            name="不存在",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+        assert result is None
+
+    def test_update_invalid_template_id_returns_none(self):
+        """非法 template_id 返回 None"""
+        result = update_template(
+            template_id="../evil",
+            name="邪恶",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+        assert result is None
 
 
 # ── API 集成测试 ──────────────────────────────────────────────
@@ -434,3 +524,85 @@ class TestGraphTemplateAPI:
             "goal": "测试目标",
         })
         assert response.status_code == 404
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_update_template_success(self, mock_guard, mock_rate):
+        """PUT 更新模板成功"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+
+        # 创建
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "待更新",
+            "nodes": _sample_api_nodes(),
+            "edges": _sample_api_edges(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+
+        # 更新
+        new_nodes = [
+            {"id": "research", "agent_id": "research", "task_type": "research_brief", "title": "新调研", "prompt": "新内容"},
+            {"id": "marketing", "agent_id": "marketing", "task_type": "copywriting", "title": "新营销", "prompt": "新营销"},
+            {"id": "image", "agent_id": "image", "task_type": "image_prompt", "title": "视觉", "prompt": "视觉内容"},
+        ]
+        new_edges = [
+            {"from_node": "research", "to_node": "marketing", "handoff_type": "context"},
+            {"from_node": "research", "to_node": "image", "handoff_type": "context"},
+        ]
+
+        response = client.put(f"/boss/graph/templates/{tid}", json={
+            "name": "更新后的模板",
+            "description": "新描述",
+            "goal_hint": "新目标",
+            "nodes": new_nodes,
+            "edges": new_edges,
+        })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["template"]["name"] == "更新后的模板"
+        assert data["template"]["description"] == "新描述"
+        assert len(data["template"]["nodes"]) == 3
+        assert len(data["template"]["edges"]) == 2
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_update_nonexistent_template_404(self, mock_guard, mock_rate):
+        """PUT 不存在的模板返回 404"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        response = client.put("/boss/graph/templates/tpl_nonexistent", json={
+            "name": "不存在",
+            "nodes": _sample_api_nodes(),
+        })
+        assert response.status_code == 404
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_update_template_invalid_graph_400(self, mock_guard, mock_rate):
+        """PUT 无效图返回 400"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+
+        # 创建
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "待更新",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+
+        # 更新为无效图
+        response = client.put(f"/boss/graph/templates/{tid}", json={
+            "name": "无效图更新",
+            "nodes": [{"id": "a", "agent_id": "research", "title": "A", "prompt": "p"}],
+            "edges": [{"from_node": "a", "to_node": "x"}],
+        })
+        assert response.status_code == 400
