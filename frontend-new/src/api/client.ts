@@ -1126,6 +1126,51 @@ class ApiClient {
     }>(`/boss/graph/templates/${templateId}`)
   }
 
+  async createBossGraphTemplate(payload: {
+    name: string
+    description?: string
+    goal_hint?: string
+    nodes: Array<{
+      id: string
+      agent_id: string
+      task_type?: string
+      title?: string
+      prompt?: string
+    }>
+    edges: Array<{
+      from_node: string
+      to_node: string
+      handoff_type?: string
+    }>
+  }) {
+    return this.request<{
+      ok: boolean
+      template: {
+        template_id: string
+        name: string
+        description: string
+        goal_hint: string
+        nodes: Array<{
+          id: string
+          agent_id: string
+          task_type: string
+          title: string
+          prompt: string
+        }>
+        edges: Array<{
+          from_node: string
+          to_node: string
+          handoff_type: string
+        }>
+        created_at: string
+        updated_at: string
+      }
+    }>("/boss/graph/templates", {
+      method: "POST",
+      body: payload,
+    })
+  }
+
   async deleteBossGraphTemplate(templateId: string) {
     return this.request<{
       ok: boolean

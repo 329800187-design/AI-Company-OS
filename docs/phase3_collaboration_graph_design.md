@@ -3,7 +3,7 @@
 > 阶段：Phase 3 — P0 Agent 协作通用化
 > 创建日期：2026-07-07
 > 最后更新：2026-07-08
-> 状态：**Graph Template 前后端最小闭环已完成**
+> 状态：**Graph Template 创建 UI 已完成**
 
 ---
 
@@ -279,6 +279,7 @@ Wave 1: ["marketing", "image", "website"]
 | Phase 3.5 | 前端 DAG 可视化最小版 | Boss 页面 GraphPreview | ✅ 已完成 |
 | Phase 3.6 | 自定义图模板持久化 | Graph Template Store + API | ✅ 已完成 |
 | Phase 3.7 | Graph Template 前端 UI | 模板列表 / 使用目标 / 按模板执行 / 删除 | ✅ 已完成 |
+| Phase 3.8 | Graph Template 创建 UI | 创建模板表单 / 节点边编辑 / 前端校验 / 保存 | ✅ 已完成 |
 | 远期 | 前端 DAG 编辑器 | 前端 | 待定 |
 | 远期 | 跨 Mission 协作 | 架构 | 待定 |
 
@@ -327,6 +328,8 @@ Wave 1: ["marketing", "image", "website"]
 - ✅ `tests/test_graph_template_store.py` — Graph Template 测试（21 个）
 - ✅ `frontend-new/src/api/client.ts` — Graph Template 前端 API client
 - ✅ `frontend-new/src/pages/boss/index.tsx` — Graph Templates 面板和按模板执行结果展示
+- ✅ `frontend-new/src/api/client.ts` — 新增 `createBossGraphTemplate()` 创建模板 API
+- ✅ `frontend-new/src/pages/boss/index.tsx` — 新增创建模板表单（节点/边编辑、前端校验、保存）
 - ❌ `collaboration_executor.py` — 未改
 - ❌ `collaboration_planner.py` — 未改
 
@@ -597,20 +600,53 @@ Boss 页面已新增 Graph Templates 面板，复用后端模板 API：
 - 执行结果复用 `GraphPreviewCard` 展示 waves、edges、节点状态和 handoff 来源
 - 删除模板后自动从本地列表移除
 
-当前未做模板创建 UI，模板创建仍需要通过 API。
+---
+
+## 十六、Phase 3.8：Graph Template 创建 UI
+
+Boss 页面 Graph Templates 面板新增「创建模板」按钮和表单：
+
+### 16.1 表单字段
+
+- 基础：name（必填）、description、goal_hint
+- 节点列表：每行 id / agent_id / task_type / title / prompt，支持添加/删除
+- 边列表：每行 from_node / to_node / handoff_type，支持添加/删除
+
+### 16.2 前端校验规则
+
+提交前校验：
+- name 非空且 ≥ 2 字符
+- nodes 至少 1 个
+- node.id / node.agent_id 非空
+- node id 不重复
+- edge.from_node / edge.to_node 非空
+- edge 不能自环
+- edge 引用的节点必须存在
+
+### 16.3 默认草稿
+
+点击「创建模板」时默认填入两节点模板（research → marketing），方便用户直接修改。
+
+### 16.4 新增 API 方法
+
+`createBossGraphTemplate(payload)` → `POST /boss/graph/templates`
+
+### 16.5 保存流程
+
+1. 前端校验 → 2. 调用 API → 3. 成功后收起表单、刷新列表 → 4. 失败显示错误
 
 ---
 
-## 十六、仍未完成
+## 十七、仍未完成
 
 | 项目 | 说明 |
 |------|------|
-| 模板创建 UI | 在前端创建并保存 nodes/edges 模板 |
 | 前端 DAG 编辑器 | 从只读 GraphPreview 升级为可配置 nodes/edges |
+| 模板更新 / 克隆 | update / clone template |
 | 跨 Mission 协作 | 不同 Mission 之间的 Agent 输出复用 |
 | CollaborationPlan 统一 | 将 CollaborationGraph 与现有 CollaborationPlan 合并 |
 | 多用户权限 | 模板隔离、权限控制 |
 
 ---
 
-*由 AI Company OS Phase 3 P0 生成 · 2026-07-08 · 最后更新：Graph Template 前端 UI*
+*由 AI Company OS Phase 3 P0 生成 · 2026-07-08 · 最后更新：Graph Template 创建 UI（Phase 3.8）*

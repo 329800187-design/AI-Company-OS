@@ -13,6 +13,7 @@ import {
   Loader2,
   Megaphone,
   Play,
+  Plus,
   RotateCcw,
   Search,
   Shield,
@@ -755,6 +756,43 @@ export default function BossPage() {
   const [graphTemplateExecutingId, setGraphTemplateExecutingId] = useState<string | null>(null)
   const [graphTemplateResult, setGraphTemplateResult] = useState<Record<string, unknown> | null>(null)
 
+  // Graph Template 创建表单状态
+  interface GraphNodeDraft {
+    id: string
+    agent_id: string
+    task_type: string
+    title: string
+    prompt: string
+  }
+  interface GraphEdgeDraft {
+    from_node: string
+    to_node: string
+    handoff_type: string
+  }
+  interface GraphTemplateDraft {
+    name: string
+    description: string
+    goal_hint: string
+    nodes: GraphNodeDraft[]
+    edges: GraphEdgeDraft[]
+  }
+  const DEFAULT_DRAFT: GraphTemplateDraft = {
+    name: "新品上线协作图",
+    description: "research → marketing",
+    goal_hint: "为一个品牌做新品上线计划",
+    nodes: [
+      { id: "research", agent_id: "research", task_type: "research_brief", title: "市场调研", prompt: "调研目标市场、用户需求、竞品与机会" },
+      { id: "marketing", agent_id: "marketing", task_type: "copywriting", title: "营销文案", prompt: "基于上游洞察生成新品上线营销文案" },
+    ],
+    edges: [
+      { from_node: "research", to_node: "marketing", handoff_type: "context" },
+    ],
+  }
+  const [showCreateForm, setShowCreateForm] = useState(false)
+  const [createDraft, setCreateDraft] = useState<GraphTemplateDraft>(DEFAULT_DRAFT)
+  const [createSubmitting, setCreateSubmitting] = useState(false)
+  const [createFormError, setCreateFormError] = useState<string | null>(null)
+
   // 时间本地化：ISO → 中文本地时间
   const formatLocalTime = (iso: string): string => {
     if (!iso) return "时间未知"
@@ -914,6 +952,71 @@ export default function BossPage() {
       const errorMsg = error instanceof Error ? error.message : "删除失败"
       console.error("Delete graph template failed:", error)
       alert(`删除模板失败: ${errorMsg}`)
+    }
+  }
+
+  // 创建模板 — 前端校验
+  const validateDraft = (draft: GraphTemplateDraft): string[] => {
+    const errors: string[] = []
+    if (!draft.name.trim() || draft.name.trim().length < 2) errors.push("模板名称不能为空且至少 2 个字符")
+    if (draft.nodes.length < 1) errors.push("至少需要 1 个节点")
+    const nodeIds = new Set<string>()
+    for (let i = 0; i < draft.nodes.length; i++) {
+      const n = draft.nodes[i]
+      if (!n.id.trim()) errors.push(`节点 ${i + 1}: id 不能为空`)
+      if (!n.agent_id.trim()) errors.push(`节点 ${i + 1}: agent_id 不能为空`)
+      if (nodeIds.has(n.id.trim())) errors.push(`节点 id "${n.id.trim()}" 重复`)
+      nodeIds.add(n.id.trim())
+    }
+    const nodeIdSet = new Set(draft.nodes.map((n) => n.id.trim()))
+    for (let i = 0; i < draft.edges.length; i++) {
+      const e = draft.edges[i]
+      if (!e.from_node.trim()) errors.push(`边 ${i + 1}: from_node 不能为空`)
+      if (!e.to_node.trim()) errors.push(`边 ${i + 1}: to_node 不能为空`)
+      if (e.from_node.trim() === e.to_node.trim()) errors.push(`边 ${i + 1}: 不能自环 (${e.from_node.trim()} → ${e.to_node.trim()})`)
+      if (e.from_node.trim() && !nodeIdSet.has(e.from_node.trim())) errors.push(`边 ${i + 1}: from_node "${e.from_node.trim()}" 引用的节点不存在`)
+      if (e.to_node.trim() && !nodeIdSet.has(e.to_node.trim())) errors.push(`边 ${i + 1}: to_node "${e.to_node.trim()}" 引用的节点不存在`)
+    }
+    return errors
+  }
+
+  // 创建模板 — 保存
+  const saveGraphTemplate = async () => {
+    setCreateFormError(null)
+    const errors = validateDraft(createDraft)
+    if (errors.length > 0) {
+      setCreateFormError(errors.join("\n"))
+      return
+    }
+    setCreateSubmitting(true)
+    try {
+      await api.createBossGraphTemplate({
+        name: createDraft.name.trim(),
+        description: createDraft.description.trim() || undefined,
+        goal_hint: createDraft.goal_hint.trim() || undefined,
+        nodes: createDraft.nodes.map((n) => ({
+          id: n.id.trim(),
+          agent_id: n.agent_id.trim(),
+          task_type: n.task_type.trim() || undefined,
+          title: n.title.trim() || undefined,
+          prompt: n.prompt.trim() || undefined,
+        })),
+        edges: createDraft.edges.map((e) => ({
+          from_node: e.from_node.trim(),
+          to_node: e.to_node.trim(),
+          handoff_type: e.handoff_type.trim() || undefined,
+        })),
+      })
+      setShowCreateForm(false)
+      setCreateDraft(DEFAULT_DRAFT)
+      setCreateFormError(null)
+      loadGraphTemplates()
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "创建失败"
+      console.error("Create graph template failed:", error)
+      setCreateFormError(errorMsg)
+    } finally {
+      setCreateSubmitting(false)
     }
   }
 
@@ -1617,25 +1720,242 @@ export default function BossPage() {
                 <Badge variant="secondary">{graphTemplates.length}</Badge>
               )}
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={loadGraphTemplates}
-              disabled={graphTemplatesLoading}
-              className="gap-1 text-[#8A8A8A] hover:text-[#0B0B0B]"
-            >
-              {graphTemplatesLoading ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <RotateCcw className="h-3.5 w-3.5" />
-              )}
-              刷新
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => {
+                  setShowCreateForm(!showCreateForm)
+                  setCreateFormError(null)
+                  if (!showCreateForm) setCreateDraft(DEFAULT_DRAFT)
+                }}
+                className="gap-1 text-xs"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                创建模板
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={loadGraphTemplates}
+                disabled={graphTemplatesLoading}
+                className="gap-1 text-[#8A8A8A] hover:text-[#0B0B0B]"
+              >
+                {graphTemplatesLoading ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-3.5 w-3.5" />
+                )}
+                刷新
+              </Button>
+            </div>
           </div>
 
           {graphTemplatesError && (
             <div className="mb-4 rounded-lg border border-red/20 bg-red/5 p-3 text-sm text-red-500">
               {graphTemplatesError}
+            </div>
+          )}
+
+          {/* 创建模板表单 */}
+          {showCreateForm && (
+            <div className="mb-4 rounded-xl border border-[#E5E5E5] bg-[#FAFAF8] p-5">
+              <h4 className="text-sm font-medium text-[#0B0B0B] mb-4">创建 Graph Template</h4>
+
+              {/* 基础字段 */}
+              <div className="grid gap-3 sm:grid-cols-3 mb-4">
+                <div>
+                  <label className="block text-xs text-[#8A8A8A] mb-1">名称 *</label>
+                  <input
+                    type="text"
+                    value={createDraft.name}
+                    onChange={(e) => setCreateDraft({ ...createDraft, name: e.target.value })}
+                    className="w-full rounded-lg border border-[#E5E5E5] bg-white px-3 py-2 text-sm text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]"
+                    placeholder="模板名称"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-[#8A8A8A] mb-1">描述</label>
+                  <input
+                    type="text"
+                    value={createDraft.description}
+                    onChange={(e) => setCreateDraft({ ...createDraft, description: e.target.value })}
+                    className="w-full rounded-lg border border-[#E5E5E5] bg-white px-3 py-2 text-sm text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]"
+                    placeholder="模板描述"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-[#8A8A8A] mb-1">目标提示</label>
+                  <input
+                    type="text"
+                    value={createDraft.goal_hint}
+                    onChange={(e) => setCreateDraft({ ...createDraft, goal_hint: e.target.value })}
+                    className="w-full rounded-lg border border-[#E5E5E5] bg-white px-3 py-2 text-sm text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]"
+                    placeholder="goal_hint"
+                  />
+                </div>
+              </div>
+
+              {/* 节点编辑 */}
+              <div className="mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-[#8A8A8A]">节点 / Nodes</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCreateDraft({
+                      ...createDraft,
+                      nodes: [...createDraft.nodes, { id: "", agent_id: "", task_type: "", title: "", prompt: "" }],
+                    })}
+                    className="gap-1 text-xs h-7"
+                  >
+                    <Plus className="h-3 w-3" />
+                    添加节点
+                  </Button>
+                </div>
+                <div className="space-y-2">
+                  {createDraft.nodes.map((node, ni) => (
+                    <div key={ni} className="grid gap-2 grid-cols-[1fr_1fr_1fr_1fr_1fr_auto] items-end">
+                      <div>
+                        {ni === 0 && <label className="block text-[10px] text-[#B5B5B5] mb-1">id *</label>}
+                        <input type="text" value={node.id} onChange={(e) => {
+                          const nodes = [...createDraft.nodes]; nodes[ni] = { ...nodes[ni], id: e.target.value }; setCreateDraft({ ...createDraft, nodes })
+                        }} className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1.5 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]" placeholder="id" />
+                      </div>
+                      <div>
+                        {ni === 0 && <label className="block text-[10px] text-[#B5B5B5] mb-1">agent_id *</label>}
+                        <input type="text" value={node.agent_id} onChange={(e) => {
+                          const nodes = [...createDraft.nodes]; nodes[ni] = { ...nodes[ni], agent_id: e.target.value }; setCreateDraft({ ...createDraft, nodes })
+                        }} className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1.5 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]" placeholder="agent_id" />
+                      </div>
+                      <div>
+                        {ni === 0 && <label className="block text-[10px] text-[#B5B5B5] mb-1">task_type</label>}
+                        <input type="text" value={node.task_type} onChange={(e) => {
+                          const nodes = [...createDraft.nodes]; nodes[ni] = { ...nodes[ni], task_type: e.target.value }; setCreateDraft({ ...createDraft, nodes })
+                        }} className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1.5 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]" placeholder="task_type" />
+                      </div>
+                      <div>
+                        {ni === 0 && <label className="block text-[10px] text-[#B5B5B5] mb-1">title</label>}
+                        <input type="text" value={node.title} onChange={(e) => {
+                          const nodes = [...createDraft.nodes]; nodes[ni] = { ...nodes[ni], title: e.target.value }; setCreateDraft({ ...createDraft, nodes })
+                        }} className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1.5 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]" placeholder="title" />
+                      </div>
+                      <div>
+                        {ni === 0 && <label className="block text-[10px] text-[#B5B5B5] mb-1">prompt</label>}
+                        <input type="text" value={node.prompt} onChange={(e) => {
+                          const nodes = [...createDraft.nodes]; nodes[ni] = { ...nodes[ni], prompt: e.target.value }; setCreateDraft({ ...createDraft, nodes })
+                        }} className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1.5 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]" placeholder="prompt" />
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          const nodes = createDraft.nodes.filter((_, i) => i !== ni)
+                          const removedId = createDraft.nodes[ni].id.trim()
+                          const edges = removedId
+                            ? createDraft.edges.filter((e) => e.from_node.trim() !== removedId && e.to_node.trim() !== removedId)
+                            : createDraft.edges
+                          setCreateDraft({ ...createDraft, nodes, edges })
+                        }}
+                        className="h-7 w-7 p-0 text-[#B5B5B5] hover:text-red-500"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 边编辑 */}
+              <div className="mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-[#8A8A8A]">边 / Edges</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCreateDraft({
+                      ...createDraft,
+                      edges: [...createDraft.edges, { from_node: "", to_node: "", handoff_type: "context" }],
+                    })}
+                    className="gap-1 text-xs h-7"
+                  >
+                    <Plus className="h-3 w-3" />
+                    添加边
+                  </Button>
+                </div>
+                {createDraft.edges.length === 0 ? (
+                  <p className="text-xs text-[#B5B5B5]">暂无边（节点将并行执行）</p>
+                ) : (
+                  <div className="space-y-2">
+                    {createDraft.edges.map((edge, ei) => (
+                      <div key={ei} className="grid gap-2 grid-cols-[1fr_1fr_1fr_auto] items-end">
+                        <div>
+                          {ei === 0 && <label className="block text-[10px] text-[#B5B5B5] mb-1">from_node *</label>}
+                          <input type="text" value={edge.from_node} onChange={(e) => {
+                            const edges = [...createDraft.edges]; edges[ei] = { ...edges[ei], from_node: e.target.value }; setCreateDraft({ ...createDraft, edges })
+                          }} className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1.5 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]" placeholder="from_node" />
+                        </div>
+                        <div>
+                          {ei === 0 && <label className="block text-[10px] text-[#B5B5B5] mb-1">to_node *</label>}
+                          <input type="text" value={edge.to_node} onChange={(e) => {
+                            const edges = [...createDraft.edges]; edges[ei] = { ...edges[ei], to_node: e.target.value }; setCreateDraft({ ...createDraft, edges })
+                          }} className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1.5 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]" placeholder="to_node" />
+                        </div>
+                        <div>
+                          {ei === 0 && <label className="block text-[10px] text-[#B5B5B5] mb-1">handoff_type</label>}
+                          <input type="text" value={edge.handoff_type} onChange={(e) => {
+                            const edges = [...createDraft.edges]; edges[ei] = { ...edges[ei], handoff_type: e.target.value }; setCreateDraft({ ...createDraft, edges })
+                          }} className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1.5 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]" placeholder="handoff_type" />
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            const edges = createDraft.edges.filter((_, i) => i !== ei)
+                            setCreateDraft({ ...createDraft, edges })
+                          }}
+                          className="h-7 w-7 p-0 text-[#B5B5B5] hover:text-red-500"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 错误提示 */}
+              {createFormError && (
+                <div className="mb-3 rounded-lg border border-red/20 bg-red/5 p-3 text-xs text-red-500 whitespace-pre-line">
+                  {createFormError}
+                </div>
+              )}
+
+              {/* 操作按钮 */}
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={saveGraphTemplate}
+                  disabled={createSubmitting}
+                  className="gap-1 text-xs"
+                >
+                  {createSubmitting ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+                  {createSubmitting ? "保存中..." : "保存模板"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setShowCreateForm(false)
+                    setCreateDraft(DEFAULT_DRAFT)
+                    setCreateFormError(null)
+                  }}
+                  className="gap-1 text-xs"
+                >
+                  取消
+                </Button>
+              </div>
             </div>
           )}
 
@@ -1646,7 +1966,7 @@ export default function BossPage() {
             </div>
           ) : graphTemplates.length === 0 ? (
             <div className="rounded-xl border border-dashed border-[#D8D8D2] bg-[#FAFAF8] p-5 text-sm text-[#6B6B6B]">
-              暂无模板，可先通过 API 创建模板
+              暂无模板，点击上方「创建模板」按钮创建第一个协作图模板。
             </div>
           ) : (
             <div className="space-y-3">
