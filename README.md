@@ -45,6 +45,7 @@ cd frontend-new && npm run build              # ✅ 通过
 
 - `docs/phase2_boss_lite_acceptance.md` — 第二阶段 Boss Lite 验收清单
 - `docs/phase1_acceptance_checklist.md` — 第一阶段验收清单
+- `docs/phase3_collaboration_graph_design.md` — 第三阶段 CollaborationGraph 设计 + 验收
 - `docs/business_pages_user_guide.md` — 业务页面使用说明
 - `docs/project_progress_snapshot_2026-07-06.md` — 详细进度快照
 - `docs/VISION.md` — 项目愿景
@@ -85,7 +86,7 @@ cd frontend-new && npm run build              # ✅ 通过
 
 当前项目已推进到：
 
-> 第二阶段 Boss Lite 已完成（核心闭环 + 历史工作台）
+> 第三阶段 CollaborationGraph 已接入 Boss Lite（DAG 驱动执行 + 真实 API 验收通过）
 
 已经完成：
 
@@ -104,16 +105,25 @@ cd frontend-new && npm run build              # ✅ 通过
   - Delivery 搜索/预览/详情/下载已验证。
   - **Boss Lite 历史工作台**：搜索/排序/加载更多/隐藏/恢复/复制目标/复用目标/查看交付物/复盘 Badge。
 
+- **第三阶段（CollaborationGraph）** 🔄 进行中
+  - ✅ `collaboration_graph.py` 通用 DAG 数据结构 + 拓扑排序（wave 划分）。
+  - ✅ Boss Lite 执行路径已从硬编码 wave 重构为 Graph 驱动（`build_boss_lite_graph → topological_waves`）。
+  - ✅ 支持 partial agents 自动裁剪子图，handoff_sources 从图上游依赖动态计算。
+  - ✅ 5 个真实 API 场景验收通过（默认5agent、research+marketing、data+website、marketing only、research+data）。
+  - ✅ MiniDelivery 搜索/详情/预览/下载全部验证通过。
+  - 待做：自定义 DAG API、前端图可视化、跨 Mission 协作。
+
 ## 下一步计划
 
-第一阶段和第二阶段 Boss Lite 已完成，Agent Handoff v1 已闭环，历史工作台已完成。下一步可选方向：
+第一阶段、第二阶段 Boss Lite 已完成，第三阶段 CollaborationGraph 已接入 Boss Lite 并通过真实 API 验收。下一步可选方向：
 
-1. **Collaboration / Agent Handoff 通用化（P0）** — 把 Boss Lite 的 handoff 扩展成通用 Agent 协作链，支持任意 Agent 间传递上下文
-2. **OpenClaw 联网调研（P1）** — Research Agent 接入实时搜索
-3. **真实数据源接入（P1）** — Data Agent 接入真实数据库/API
-4. **真实图片生成（P2）** — Image Agent 接入图片生成 API
-5. **PDF 导出（P2）** — 作战报告一键导出 PDF 格式
-6. **历史 Mission 对比（P2）** — Boss Lite 历史记录对比分析
+1. **自定义 DAG API（P0）** — 允许用户通过 API 定义任意 Agent 依赖关系
+2. **前端 DAG 可视化（P1）** — 在前端展示协作图结构和执行状态
+3. **OpenClaw 联网调研（P1）** — Research Agent 接入实时搜索
+4. **真实数据源接入（P1）** — Data Agent 接入真实数据库/API
+5. **真实图片生成（P2）** — Image Agent 接入图片生成 API
+6. **PDF 导出（P2）** — 作战报告一键导出 PDF 格式
+7. **历史 Mission 对比（P2）** — Boss Lite 历史记录对比分析
 
 当前边界：
 

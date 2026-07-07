@@ -2,7 +2,8 @@
 
 > 阶段：Phase 3 — P0 Agent 协作通用化
 > 创建日期：2026-07-07
-> 状态：**架构设计 + 最小骨架**
+> 最后更新：2026-07-07
+> 状态：**Boss Lite 已接入 CollaborationGraph · 真实 API 验收通过**
 
 ---
 
@@ -63,10 +64,10 @@ HANDOFF_SOURCES = {
 |------|------|-------------|
 | `CollaborationPlan` / `CollaborationStep` | 线性步进执行，支持 depends_on | ❌ 不改 |
 | `collaboration_executor.py` | 顺序执行 CollaborationPlan | ❌ 不改 |
-| `boss_router.py` Boss Lite | 硬编码两波 handoff | ❌ 不改 |
-| `collaboration_graph.py`（新建） | 通用 DAG → wave 划分 | ✅ 新建 |
+| `boss_router.py` Boss Lite | 硬编码两波 handoff → **已改为 Graph 驱动** | ✅ 已重构 |
+| `collaboration_graph.py` | 通用 DAG → wave 划分 | ✅ 已完成 |
 
-**策略：** 新建 CollaborationGraph 作为独立模块，不接入任何现有路由。后续可以把 Boss Lite 的硬编码逻辑替换为 Graph 驱动。
+**实际策略：** `collaboration_graph.py` 作为独立模块提供 DAG 数据结构和拓扑排序，`boss_router.py` 的 Boss Lite 执行路径已从硬编码 wave 改为 `build_boss_lite_graph(agents) → topological_waves(graph) → 按 DAG wave 执行`。
 
 ---
 
@@ -269,12 +270,14 @@ Wave 1: ["marketing", "image", "website"]
 
 ### 6.2 渐进迁移路径
 
-| 阶段 | 做什么 | 改动范围 |
-|------|--------|---------|
-| **本轮** | 新建 collaboration_graph.py，纯函数骨架 | 无路由改动 |
-| 下一步 | 用 Graph 重构 `_classify_waves` | boss_router.py 内部 |
-| 再下一步 | 用 Graph 驱动整个 Boss Lite 执行 | boss_router.py |
-| 远期 | 用户自定义 DAG | 前端 + API |
+| 阶段 | 做什么 | 改动范围 | 状态 |
+|------|--------|---------|------|
+| Phase 3.1 | 新建 collaboration_graph.py，纯函数骨架 | 无路由改动 | ✅ 已完成 |
+| Phase 3.2 | 用 Graph 重构 Boss Lite 执行路径 | boss_router.py | ✅ 已完成 |
+| Phase 3.3 | 真实 API 端到端验收（5 场景） | 测试 + 文档 | ✅ 已完成 |
+| 下一步 | 用户自定义 DAG API | 前端 + API | 待定 |
+| 远期 | 前端 DAG 可视化编辑器 | 前端 | 待定 |
+| 远期 | 跨 Mission 协作 | 架构 | 待定 |
 
 ---
 
@@ -310,13 +313,13 @@ Wave 1: ["marketing", "image", "website"]
 | `topological_waves(graph)` | 拓扑排序 → wave 划分 |
 | Boss Lite 图构造函数 | `build_boss_lite_graph()` 方便测试 |
 
-### 8.3 不改的文件
+### 8.3 已改动的文件
 
-- ❌ `boss_router.py`
-- ❌ `collaboration_executor.py`
-- ❌ `collaboration_planner.py`
-- ❌ 前端代码
-- ❌ 任何路由/API
+- ✅ `boss_router.py` — Boss Lite 执行路径改为 Graph 驱动
+- ✅ `tests/test_boss_lite_graph.py` — 新增 Boss Lite Graph 集成测试
+- ❌ `collaboration_executor.py` — 未改
+- ❌ `collaboration_planner.py` — 未改
+- ❌ 前端代码 — 未改
 
 ---
 
@@ -326,18 +329,8 @@ Wave 1: ["marketing", "image", "website"]
 # 1. 后端导入验证
 python -c "import backend.app; print('ok')"
 
-# 2. Collaboration Graph 自检
-python -c "
-from backend.services.collaboration_graph import (
-    CollaborationNode, CollaborationEdge, CollaborationGraph,
-    validate_graph, topological_waves, build_boss_lite_graph,
-)
-graph = build_boss_lite_graph()
-result = validate_graph(graph)
-print('valid:', result.valid)
-waves = topological_waves(graph)
-print('waves:', waves)
-"
+# 2. Collaboration Graph + Boss Lite Graph 测试
+pytest tests/test_collaboration_graph.py tests/test_boss_lite_graph.py -q
 
 # 3. 前端构建
 cd frontend-new && npm run build
@@ -345,4 +338,117 @@ cd frontend-new && npm run build
 
 ---
 
-*由 AI Company OS Phase 3 P0 生成 · 2026-07-07*
+## 十、Boss Lite 已接入 CollaborationGraph
+
+### 10.1 改动说明
+
+`backend/routers/boss_router.py` 的 Boss Lite 执行路径已从硬编码 wave 改为 Graph 驱动：
+
+**改动前（硬编码）：**
+```python
+_WAVE1_AGENTS = {"research", "data"}
+_WAVE2_AGENTS = {"marketing", "image", "website"}
+HANDOFF_SOURCES = {"marketing": ["research", "data"], ...}
+```
+
+**改动后（Graph 驱动）：**
+```python
+graph = build_boss_lite_graph(agents=selected_agents)
+waves = topological_waves(graph)
+# 按 wave 顺序执行，handoff_sources 从图上游依赖动态计算
+```
+
+### 10.2 当前默认 DAG
+
+```
+research ──→ marketing
+research ──→ image
+research ──→ website
+data     ──→ marketing
+data     ──→ image
+data     ──→ website
+```
+
+拓扑排序结果：
+- Wave 0: `research`, `data`（无上游依赖，并行执行）
+- Wave 1: `marketing`, `image`, `website`（依赖 wave 0 输出）
+
+### 10.3 Partial Agents 自动裁剪
+
+当用户指定部分 agents 时，图自动裁剪：
+
+| agents 参数 | 实际图 | waves |
+|-------------|--------|-------|
+| `None`（默认 5 个） | 完整图 | `[research, data] → [marketing, image, website]` |
+| `["research", "marketing"]` | 裁剪子图 | `[research] → [marketing]` |
+| `["data", "website"]` | 裁剪子图 | `[data] → [website]` |
+| `["marketing"]` | 单节点 | `[marketing]` |
+| `["research", "data"]` | 两独立节点 | `[research, data]` |
+
+### 10.4 handoff_sources 动态计算
+
+handoff_sources 不再硬编码，而是从图的上游依赖动态计算：
+
+```python
+upstream = graph.upstream_of(agent_id)
+agent_ho_sources = [s for s in upstream if s in results_map and results_map[s].get("ok")]
+```
+
+---
+
+## 十一、真实 API 验收结果（2026-07-07）
+
+### 11.1 验收场景
+
+| 场景 | agents | 请求目标 |
+|------|--------|---------|
+| A | 默认 5 agent | 为手工银饰新品做一次上线作战计划 |
+| B | research + marketing | 调研手工银饰市场并生成营销文案 |
+| C | data + website | 基于销售数据生成落地页方案 |
+| D | marketing only | 写一段新品上线文案 |
+| E | research + data | 做市场调研和数据分析 |
+
+### 11.2 验收结果
+
+| 场景 | ok | execution_mode | handoff_enabled | results 顺序 | handoff_sources | artifact.md |
+|------|-----|----------------|-----------------|-------------|-----------------|-------------|
+| A | ✅ | two_wave_handoff | true | research→marketing→image→data→website | marketing: [research,data], image: [research,data], website: [research,data] | ✅ 上游洞察传递正确 |
+| B | ✅ | two_wave_handoff | true | research→marketing | marketing: [research] | ✅ 无虚假 data 来源 |
+| C | ✅ | two_wave_handoff | true | data→website | website: [data] | ✅ 无虚假 research 来源 |
+| D | ✅ | parallel | false | marketing | [] | ✅ 显示"未启用上游洞察传递" |
+| E | ✅ | parallel | false | research→data | [] | ✅ 显示"未启用上游洞察传递" |
+
+### 11.3 MiniDelivery 验收
+
+| 场景 | delivery_task_id | 搜索 | 详情 | 预览 | 下载 |
+|------|-----------------|------|------|------|------|
+| A | boss_e93b0b171f6d | ✅ | ✅ | ✅ | HTTP 200 |
+| B | boss_67c66e6f483f | ✅ | ✅ | ✅ | HTTP 200 |
+| C | boss_9d4306c7533b | ✅ | ✅ | ✅ | HTTP 200 |
+| D | boss_5ef57f90ecb8 | ✅ | ✅ | ✅ | HTTP 200 |
+| E | boss_15a14c5fe291 | ✅ | ✅ | ✅ | HTTP 200 |
+
+### 11.4 关键验证点
+
+- ✅ handoff_sources 来自图上游依赖（动态计算），不是硬编码
+- ✅ partial agents 场景正确裁剪子图，不被错误标记为 two_wave_handoff
+- ✅ 单 agent（场景 D）正确标记为 parallel + handoff_enabled=false
+- ✅ 两个上游 agents（场景 E）正确标记为 parallel + handoff_enabled=false
+- ✅ artifact.md 的「上游洞察传递」章节与真实 sources/targets 一致
+- ✅ 场景 B 的 artifact.md 不错误显示 data 作为来源
+- ✅ 场景 C 的 artifact.md 不错误显示 research 作为来源
+
+---
+
+## 十二、仍未完成
+
+| 项目 | 说明 |
+|------|------|
+| 自定义 DAG API | 允许用户通过 API 定义任意 Agent 依赖关系 |
+| 前端图可视化 | 在前端展示 DAG 结构和执行状态 |
+| 跨 Mission 协作 | 不同 Mission 之间的 Agent 输出复用 |
+| CollaborationPlan 统一 | 将 CollaborationGraph 与现有 CollaborationPlan 合并 |
+
+---
+
+*由 AI Company OS Phase 3 P0 生成 · 2026-07-07 · 最后更新：Boss Lite 接入 + 真实 API 验收*
