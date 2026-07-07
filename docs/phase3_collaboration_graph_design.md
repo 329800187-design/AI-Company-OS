@@ -642,11 +642,39 @@ Boss 页面 Graph Templates 面板新增「创建模板」按钮和表单：
 | 项目 | 说明 |
 |------|------|
 | 前端 DAG 编辑器 | 从只读 GraphPreview 升级为可配置 nodes/edges |
-| 模板更新 / 克隆 | update / clone template |
+| 模板更新 | PUT /boss/graph/templates/{id}，前端编辑模式 |
 | 跨 Mission 协作 | 不同 Mission 之间的 Agent 输出复用 |
 | CollaborationPlan 统一 | 将 CollaborationGraph 与现有 CollaborationPlan 合并 |
 | 多用户权限 | 模板隔离、权限控制 |
 
 ---
 
-*由 AI Company OS Phase 3 P0 生成 · 2026-07-08 · 最后更新：Graph Template 创建 UI（Phase 3.8）*
+## 十八、模板克隆 UI（Phase 3.9）
+
+### 18.1 概述
+
+Phase 3.9 实现了「克隆模板」功能：用户点击已有模板的「克隆」按钮后，创建表单自动展开并填入该模板的全部内容，name 自动追加「副本」后缀。用户修改后点击「保存模板」即可生成新模板。
+
+### 18.2 实现方式
+
+- **纯前端实现**，无需新增后端 API
+- 克隆 = 将已有模板数据填入 `createDraft` → 展开创建表单 → 用户保存时调用现有 `POST /boss/graph/templates`
+- 不保留原 `template_id`，保存时由后端生成新 ID
+- nodes / edges 做浅拷贝，避免引用污染
+
+### 18.3 交互流程
+
+1. 用户在模板卡片点击「克隆」
+2. 创建表单展开，name 变为 `${原名称} 副本`
+3. description、goal_hint、nodes、edges 原样填入
+4. 用户可自由修改
+5. 点击「保存模板」→ 调用 `createBossGraphTemplate()` → 刷新列表
+6. 原模板不受影响
+
+### 18.4 模板更新（仍未实现）
+
+模板更新需要后端新增 `PUT /boss/graph/templates/{template_id}`，前端增加「编辑」按钮和 edit 模式。当前版本未实现。
+
+---
+
+*由 AI Company OS Phase 3 P0 生成 · 2026-07-08 · 最后更新：模板克隆 UI（Phase 3.9）*

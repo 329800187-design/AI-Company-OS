@@ -27,6 +27,7 @@ import {
   BookOpen,
   Trash2,
   GitBranch,
+  Copy,
 } from "lucide-react"
 import { api } from "@/api/client"
 import { Badge } from "@/components/ui/badge"
@@ -1018,6 +1019,19 @@ export default function BossPage() {
     } finally {
       setCreateSubmitting(false)
     }
+  }
+
+  // 克隆模板：将已有模板内容填入创建表单
+  const cloneGraphTemplate = (tpl: GraphTemplate) => {
+    setCreateDraft({
+      name: `${tpl.name} 副本`,
+      description: tpl.description,
+      goal_hint: tpl.goal_hint,
+      nodes: tpl.nodes.map((n) => ({ ...n })),
+      edges: tpl.edges.map((e) => ({ ...e })),
+    })
+    setCreateFormError(null)
+    setShowCreateForm(true)
   }
 
   useEffect(() => {
@@ -2029,6 +2043,15 @@ export default function BossPage() {
                             <Play className="h-3 w-3" />
                           )}
                           {isExecuting ? "执行中..." : "按模板执行"}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => cloneGraphTemplate(tpl)}
+                          className="gap-1 text-xs text-[#6B6B6B] hover:text-[#0B0B0B]"
+                        >
+                          <Copy className="h-3 w-3" />
+                          克隆
                         </Button>
                         <Button
                           variant="ghost"
