@@ -5,6 +5,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from backend.app import app
@@ -190,8 +191,8 @@ class TestResearchExecuteEndpoint:
         has_framework_note = any("框架" in l or "联网" in l for l in limitations)
         assert has_framework_note, "limitations 应包含框架型调研声明"
 
-    def test_execute_research_sources_is_empty_array(self):
-        """sources 在无联网能力时应为空数组"""
+    def test_execute_research_sources_is_populated(self):
+        """sources 在联网搜索可用时应包含搜索结果"""
         resp = client.post("/agents/research/execute", json={
             "task_id": "",
             "goal": "帮我为手工耳环做一份竞品调研简报",
@@ -204,6 +205,8 @@ class TestResearchExecuteEndpoint:
         sources = so.get("sources", None)
         assert sources is not None, "sources 字段必须存在"
         assert isinstance(sources, list), "sources 应为数组"
+        # mock provider 应返回模拟搜索结果
+        assert len(sources) > 0, "sources 应包含搜索结果（mock provider）"
 
 
 class TestResearchGovernanceGuard:
@@ -304,6 +307,105 @@ class TestResearchAgentUnit:
         topic = ResearchAgent._extract_topic("帮我为手工耳环做一份竞品调研简报")
         assert len(topic) > 0
         assert topic != "未指定"
+
+
+class TestResearchAgentSearchIntegration:
+    """Research Agent 联网搜索单元测试"""
+
+    def test_do_web_search_returns_results(self):
+        """_do_web_search 应返回搜索结果列表"""
+        from agents.research_agent.agent import ResearchAgent
+        results = ResearchAgent._do_web_search("手工耳环市场分析")
+        assert isinstance(results, list)
+        assert len(results) > 0
+        assert "title" in results[0]
+        assert "url" in results[0]
+
+    def test_do_web_search_empty_query(self):
+        """空查询应返回空列表"""
+        from agents.research_agent.agent import ResearchAgent
+        results = ResearchAgent._do_web_search("")
+        assert results == []
+
+    def test_build_search_context_with_results(self):
+        """_build_search_context 应构建可读的搜索上下文"""
+        from agents.research_agent.agent import ResearchAgent
+        mock_results = [
+            {"title": "测试报告", "url": "https://example.com", "snippet": "摘要内容", "source": "example.com"},
+        ]
+        context = ResearchAgent._build_search_context(mock_results)
+        assert "联网搜索结果" in context
+        assert "测试报告" in context
+        assert "https://example.com" in context
+        assert "摘要内容" in context
+
+    def test_build_search_context_empty_results(self):
+        """空搜索结果应返回无结果提示"""
+        from agents.research_agent.agent import ResearchAgent
+        context = ResearchAgent._build_search_context([])
+        assert "无可用搜索结果" in context
+
+    def test_format_sources_with_results(self):
+        """_format_sources 应格式化为标题+URL列表"""
+        from agents.research_agent.agent import ResearchAgent
+        mock_results = [
+            {"title": "报告A", "url": "https://a.com"},
+            {"title": "报告B", "url": "https://b.com"},
+        ]
+        sources = ResearchAgent._format_sources(mock_results)
+        assert len(sources) == 2
+        assert "报告A" in sources[0]
+        assert "https://a.com" in sources[0]
+
+    def test_format_sources_empty(self):
+        """空结果应返回空列表"""
+        from agents.research_agent.agent import ResearchAgent
+        assert ResearchAgent._format_sources([]) == []
+
+    def test_fallback_includes_search_sources(self):
+        """模板 fallback 应包含搜索结果 sources"""
+        from agents.research_agent.agent import ResearchAgent
+        agent = ResearchAgent(api_key="")
+        mock_search = [
+            {"title": "搜索结果1", "url": "https://example.com/1", "snippet": "摘要"},
+        ]
+        with patch.object(agent, "call_ai", return_value={"ok": False, "error": "No provider"}):
+            with patch.object(agent, "_do_web_search", return_value=mock_search):
+                result = agent.run({
+                    "task_id": "test_search",
+                    "goal": "手工耳环市场分析",
+                    "task_type": "research_brief",
+                })
+        assert result["ok"] is True
+        data = result["data"]
+        assert len(data["sources"]) > 0
+        assert "搜索结果1" in data["sources"][0]
+
+    def test_run_injects_search_context_to_llm(self):
+        """run 方法应将搜索上下文注入 LLM prompt"""
+        from agents.research_agent.agent import ResearchAgent
+        agent = ResearchAgent(api_key="fake_key")
+        mock_search = [
+            {"title": "市场报告", "url": "https://report.com", "snippet": "市场数据"},
+        ]
+        # mock call_ai 捕获传入的 system prompt
+        captured_prompt = []
+        def mock_call_ai(**kwargs):
+            captured_prompt.append(kwargs.get("system", ""))
+            return {"ok": False, "error": "mock"}
+
+        with patch.object(agent, "call_ai", side_effect=mock_call_ai):
+            with patch.object(agent, "_do_web_search", return_value=mock_search):
+                agent.run({
+                    "task_id": "test_inject",
+                    "goal": "手工耳环市场分析",
+                    "task_type": "research_brief",
+                })
+
+        # 验证搜索上下文被注入到 system prompt
+        assert len(captured_prompt) > 0
+        assert "联网搜索结果" in captured_prompt[0]
+        assert "市场报告" in captured_prompt[0]
 
 
 if __name__ == "__main__":

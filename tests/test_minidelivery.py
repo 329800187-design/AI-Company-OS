@@ -1261,6 +1261,47 @@ class TestSaveFromAgent:
         assert "市场调研" in md
         assert "竞品分析" in md
 
+    def test_render_research_with_sources(self):
+        """research 渲染应展示 sources 信息来源"""
+        result = self._make_result("research")
+        result["structured_output"] = {
+            "research_question": "手工耳环市场分析",
+            "market_summary": "市场规模约 50 亿",
+            "key_findings": ["发现1", "发现2"],
+            "competitors": [],
+            "opportunities": ["机会1"],
+            "risks": ["风险1"],
+            "recommended_actions": ["建议1"],
+            "limitations": ["框架型调研"],
+            "sources": [
+                "2025 手工饰品市场报告 — https://example.com/report1",
+                "竞品分析数据 — https://example.com/report2",
+            ],
+        }
+        md = _render_research(result, "手工耳环市场调研")
+        assert "信息来源" in md
+        assert "2025 手工饰品市场报告" in md
+        assert "https://example.com/report1" in md
+        assert "竞品分析数据" in md
+        assert "https://example.com/report2" in md
+
+    def test_render_research_sources_empty(self):
+        """sources 为空时不展示信息来源章节"""
+        result = self._make_result("research")
+        result["structured_output"] = {
+            "research_question": "测试",
+            "market_summary": "概况",
+            "key_findings": [],
+            "competitors": [],
+            "opportunities": [],
+            "risks": [],
+            "recommended_actions": [],
+            "limitations": [],
+            "sources": [],
+        }
+        md = _render_research(result, "测试调研")
+        assert "信息来源" not in md
+
     def test_render_website(self):
         result = self._make_result("website")
         result["structured_output"] = {

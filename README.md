@@ -2,7 +2,7 @@
 
 **版本 1.5.0**
 
-## 最新状态（2026-07-07）
+## 最新状态（2026-07-08）
 
 ### 第一阶段：业务部门 MVP 闭环 ✅ 已完成
 
@@ -15,6 +15,19 @@
 当前推荐入口：**http://localhost:5173/app?page=boss**
 
 当前分支：`codex/current-progress-20260705`
+
+### 第四阶段：真实能力接入 🔄 进行中
+
+Phase 4.1 已完成 Research Agent 联网搜索 MVP：
+
+- 新增 `backend/services/web_search_service.py`，提供可替换搜索服务层。
+- `Research Agent` 执行前会调用搜索服务，并把搜索结果注入 LLM prompt。
+- `structured_output.sources` 会保留搜索来源，MiniDelivery 的 `artifact.md` 会展示「信息来源」。
+- 默认无 API key 时使用 `MockSearchProvider`，方便本地开发和测试。
+- 支持通过环境变量切换真实 provider：
+  - `WEB_SEARCH_PROVIDER=auto|mock|serpapi|bing`
+  - `SERPAPI_API_KEY=...`
+  - `BING_SEARCH_API_KEY=...`
 
 Boss Lite 已完成能力：
 
@@ -46,6 +59,7 @@ cd frontend-new && npm run build              # ✅ 通过
 - `docs/phase2_boss_lite_acceptance.md` — 第二阶段 Boss Lite 验收清单
 - `docs/phase1_acceptance_checklist.md` — 第一阶段验收清单
 - `docs/phase3_collaboration_graph_design.md` — 第三阶段 CollaborationGraph 设计 + 验收
+- `docs/phase4_research_web_search.md` — 第四阶段 Research 联网搜索 MVP 验收
 - `docs/business_pages_user_guide.md` — 业务页面使用说明
 - `docs/project_progress_snapshot_2026-07-06.md` — 详细进度快照
 - `docs/VISION.md` — 项目愿景
@@ -127,7 +141,7 @@ cd frontend-new && npm run build              # ✅ 通过
 
 1. **前端 DAG 编辑器（P1）** — 从表单编辑升级为图形化配置 nodes/edges
 2. ~~**模板更新（P1）**~~ ✅ 已完成 — PUT API + 前端编辑模式
-3. **OpenClaw 联网调研（P1）** — Research Agent 接入实时搜索
+3. ~~**Research 联网搜索 MVP（P1）**~~ ✅ 已完成 — Research Agent 已接入可替换 Web Search Service；无 API key 时 fallback 到 mock provider
 4. **真实数据源接入（P1）** — Data Agent 接入真实数据库/API
 5. **真实图片生成（P2）** — Image Agent 接入图片生成 API
 6. **PDF 导出（P2）** — 作战报告一键导出 PDF 格式
@@ -136,7 +150,7 @@ cd frontend-new && npm run build              # ✅ 通过
 当前边界：
 
 - 不做真实图片生成（Image Agent 产出提示词框架）。
-- 不把爬虫/OpenClaw 接进 Research。
+- Research 已接入可替换 Web Search Service；当前不做浏览器爬虫/OpenClaw 深度抓取。
 - 不让 Governance 接管普通业务 Agent 的生产链路。
 - 不把 template fallback 伪装成真实 LLM 产出。
 

@@ -1,5 +1,5 @@
 """
-Research Agent — 文本调研框架智能体
+Research Agent — 文本调研框架智能体（支持联网搜索）
 
 能力：
 1. research_brief: 结构化调研简报（市场/竞品/机会/风险）
@@ -7,30 +7,39 @@ Research Agent — 文本调研框架智能体
 3. competitor_analysis: 竞品分析框架
 
 执行路径：
-  1. 有 API key/provider → 调用真实 LLM（通过 BrainManager）
-  2. LLM 返回有效 JSON → 规范化 structured_output
-  3. 无 key / 调用失败 / 无效 JSON → 模板 fallback
+  1. 调用 WebSearchService 获取实时搜索结果（如有配置）
+  2. 有 API key/provider → 调用真实 LLM（通过 BrainManager），注入搜索结果
+  3. LLM 返回有效 JSON → 规范化 structured_output，保留 sources
+  4. 无 key / 调用失败 / 无效 JSON → 模板 fallback（仍注入 sources）
 
-注意：本 Agent 不具备联网抓取能力。
-产出为基于用户输入的调研框架 + LLM 分析，非实时联网调研数据。
+搜索服务：
+  - 通过 backend.services.web_search_service 获取联网数据
+  - 无 API key 时自动降级为 mock provider（sources 仍会填充模拟数据）
+  - sources 字段始终保留，确保 artifact.md 可展示信息来源
 """
 import json
+import logging
 import re
 import uuid
 from typing import Any, Dict, List, Optional
 
 from agents.base_agent import BaseAgent
 
+logger = logging.getLogger(__name__)
+
 
 # ── System Prompts ────────────────────────────────────────
 
-RESEARCH_BRIEF_PROMPT = """你是一位资深市场调研分析师。根据用户的调研需求，生成结构化的调研简报。
+RESEARCH_BRIEF_PROMPT = """你是一位资深市场调研分析师。根据用户的调研需求和提供的搜索结果，生成结构化的调研简报。
 
 要求：
+- 优先基于提供的搜索结果进行分析
 - 分析市场概况、竞争格局、机会与风险
 - 给出可执行的建议
 - 明确标注信息局限性
 - 保持客观、专业
+
+{search_context}
 
 输出格式（JSON）：
 {
@@ -48,11 +57,13 @@ RESEARCH_BRIEF_PROMPT = """你是一位资深市场调研分析师。根据用�
 }
 
 注意：
-- sources 数组在无联网能力时为空，这是正常的
+- sources 数组应包含本次调研参考的信息来源（标题+URL）
 - limitations 必须包含"本简报为框架型调研，非联网实时数据"说明
 - 只输出 JSON，不要其他文字。"""
 
-MARKET_RESEARCH_PROMPT = """你是一位市场研究专家。根据用户需求生成市场调研框架。
+MARKET_RESEARCH_PROMPT = """你是一位市场研究专家。根据用户需求和提供的搜索结果生成市场调研框架。
+
+{search_context}
 
 输出格式（JSON）：
 {
@@ -67,9 +78,11 @@ MARKET_RESEARCH_PROMPT = """你是一位市场研究专家。根据用户需求�
   "sources": []
 }
 
-只输出 JSON，不要其他文字。"""
+注意：sources 应包含参考的信息来源。只输出 JSON，不要其他文字。"""
 
-COMPETITOR_ANALYSIS_PROMPT = """你是一位竞品分析专家。根据用户需求生成竞品分析框架。
+COMPETITOR_ANALYSIS_PROMPT = """你是一位竞品分析专家。根据用户需求和提供的搜索结果生成竞品分析框架。
+
+{search_context}
 
 输出格式（JSON）：
 {
@@ -86,7 +99,7 @@ COMPETITOR_ANALYSIS_PROMPT = """你是一位竞品分析专家。根据用户需
   "sources": []
 }
 
-只输出 JSON，不要其他文字。"""
+注意：sources 应包含参考的信息来源。只输出 JSON，不要其他文字。"""
 
 
 class ResearchAgent(BaseAgent):
@@ -133,12 +146,21 @@ class ResearchAgent(BaseAgent):
                 meta={"fallback": True},
             )
 
+        # ── 联网搜索 ────────────────────────────────────
+        search_results = self._do_web_search(prompt)
+        search_context = self._build_search_context(search_results)
+
         sys_prompt = self.PROMPTS.get(task_type, RESEARCH_BRIEF_PROMPT)
+        # 注入搜索上下文到 prompt 模板
+        sys_prompt = sys_prompt.replace("{search_context}", search_context)
 
         # ── 尝试真实 LLM ────────────────────────────────────
         llm_result = self._try_llm(sys_prompt, prompt, task_type)
         if llm_result is not None:
             enriched = self._enrich_result(llm_result, prompt)
+            # 确保 sources 包含搜索结果（LLM 可能未完整返回）
+            if not enriched.get("sources") and search_results:
+                enriched["sources"] = self._format_sources(search_results)
             enriched["content_type"] = task_type
             return self.ok(
                 task_id,
@@ -148,11 +170,12 @@ class ResearchAgent(BaseAgent):
                     "fallback": False,
                     "model": getattr(self, "model", ""),
                     "source": "llm",
+                    "search_provider": self._get_search_provider_name(),
                 },
             )
 
-        # ── 模板 fallback ────────────────────────────────────
-        return self._rule_fallback(task_id, task_type, prompt)
+        # ── 模板 fallback（仍注入搜索结果）────────────────────
+        return self._rule_fallback(task_id, task_type, prompt, search_results)
 
     # ── LLM 调用（复用 BrainManager）───────────────────────
 
@@ -243,11 +266,72 @@ class ResearchAgent(BaseAgent):
                     pass
         return None
 
+    # ── 联网搜索 ──────────────────────────────────────────
+
+    @staticmethod
+    def _do_web_search(query: str, max_results: int = 5) -> List[dict]:
+        """调用 WebSearchService 获取搜索结果"""
+        try:
+            from backend.services.web_search_service import search_web
+            return search_web(query, max_results=max_results)
+        except Exception as e:
+            logger.warning("[Research Agent] Web search failed: %s", e)
+            return []
+
+    @staticmethod
+    def _build_search_context(search_results: List[dict]) -> str:
+        """将搜索结果构建为 LLM prompt 上下文"""
+        if not search_results:
+            return "【联网搜索结果】：无可用搜索结果，请基于你的知识进行分析。"
+
+        lines = ["【联网搜索结果】：以下是实时搜索到的相关信息，请优先基于这些数据进行分析：", ""]
+        for i, r in enumerate(search_results, 1):
+            title = r.get("title", "未知标题")
+            url = r.get("url", "")
+            snippet = r.get("snippet", "")
+            source = r.get("source", "")
+            lines.append(f"{i}. {title}")
+            if url:
+                lines.append(f"   链接: {url}")
+            if snippet:
+                lines.append(f"   摘要: {snippet}")
+            if source:
+                lines.append(f"   来源: {source}")
+            lines.append("")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_sources(search_results: List[dict]) -> List[str]:
+        """将搜索结果格式化为 sources 列表"""
+        sources = []
+        for r in search_results:
+            title = r.get("title", "")
+            url = r.get("url", "")
+            if title and url:
+                sources.append(f"{title} — {url}")
+            elif url:
+                sources.append(url)
+            elif title:
+                sources.append(title)
+        return sources
+
+    @staticmethod
+    def _get_search_provider_name() -> str:
+        """获取当前搜索 provider 名称（用于 metadata）"""
+        try:
+            from backend.services.web_search_service import get_provider_info
+            info = get_provider_info()
+            return info.get("provider", "unknown")
+        except Exception:
+            return "unavailable"
+
     # ── 规则降级 ──────────────────────────────────────────
 
-    def _rule_fallback(self, task_id: str, task_type: str, prompt: str) -> Dict:
-        """无 AI API 时的规则降级 — 生成调研框架"""
+    def _rule_fallback(self, task_id: str, task_type: str, prompt: str,
+                       search_results: Optional[List[dict]] = None) -> Dict:
+        """无 AI API 时的规则降级 — 生成调研框架（含搜索结果 sources）"""
         topic = self._extract_topic(prompt)
+        sources = self._format_sources(search_results) if search_results else []
 
         result_data = {
             "research_question": prompt,
@@ -283,7 +367,7 @@ class ResearchAgent(BaseAgent):
                 "未调用 AI，内容为模板占位",
                 "如需真实联网调研，需集成 browser agent",
             ],
-            "sources": [],
+            "sources": sources,
             "content_type": task_type,
         }
 
@@ -295,6 +379,8 @@ class ResearchAgent(BaseAgent):
                 "fallback": True,
                 "fallback_reason": "无可用 LLM provider 或 API key，使用模板占位内容",
                 "source": "template",
+                "search_provider": self._get_search_provider_name(),
+                "has_search_results": len(sources) > 0,
             },
         )
         result["warnings"] = [
