@@ -72,6 +72,18 @@ Boss Lite 已完成能力：
 
 已验证 task_id 示例：`boss_91329f9f810d`、`boss_9c21dac31fae`、`boss_932d0b352f0e`、`boss_c7dba8f25408`、`boss_27654a577ba5`、`boss_b8241c004c4d`、`boss_0fbb4623b07b`、`boss_d93dae73ab76`
 
+### 第五阶段：产品化收口 ✅ 已完成
+
+Phase 5 聚焦产品化、运维增强和验收工具，不新增业务能力：
+
+- ✅ **Phase 5.1 PDF 导出**：`pdf_service.py` Markdown → PDF 引擎（reportlab + CJK），`GET /minidelivery/tasks/{task_id}/pdf`，前端详情页一键下载。
+- ✅ **Phase 5.2 Mission 对比**：`POST /minidelivery/tasks/compare` 两个任务结构化对比，前端 Boss 历史工作台集成。
+- ✅ **Phase 5.3 Provider Health 面板**：`GET /config/providers/health` 返回 search/image provider 状态，前端 Settings 页展示。
+- ⚠️ **Phase 5.4 真实 Provider E2E 验收**：`scripts/verify_real_providers.py` 自动检测 API Key，有 key 跑真实调用，没 key 跳过。
+- ✅ **Phase 5.5 本地部署体检**：`scripts/healthcheck_local.py` 一次性检查后端 + 前端 + 交付物 + PDF + provider 状态。
+
+详细验收文档：`docs/phase5_productization_acceptance.md`
+
 最近验证：
 
 ```bash
@@ -88,6 +100,7 @@ cd frontend-new && npm run build              # ✅ 通过
 - `docs/phase4_data_source_mvp.md` — 第四阶段 Data Agent 真实数据源 MVP 验收
 - `docs/phase4_image_generation_provider.md` — 第四阶段 Image Generation Provider 骨架验收
 - `docs/phase4_real_capabilities_acceptance.md` — 第四阶段真实能力接入最终验收文档
+- `docs/phase5_productization_acceptance.md` — 第五阶段产品化收口验收文档
 - `docs/business_pages_user_guide.md` — 业务页面使用说明
 - `docs/project_progress_snapshot_2026-07-06.md` — 详细进度快照
 - `docs/VISION.md` — 项目愿景
@@ -128,7 +141,7 @@ cd frontend-new && npm run build              # ✅ 通过
 
 当前项目已推进到：
 
-> 第四阶段真实能力接入核心闭环完成，三条主线（Research Web Search / Data Real Data Source / Image Generation Provider）均已交付
+> 第五阶段产品化收口已完成，系统已具备导出、对比、监控、验收脚本和本地部署体检能力
 
 已经完成：
 
@@ -147,7 +160,7 @@ cd frontend-new && npm run build              # ✅ 通过
   - Delivery 搜索/预览/详情/下载已验证。
   - **Boss Lite 历史工作台**：搜索/排序/加载更多/隐藏/恢复/复制目标/复用目标/查看交付物/复盘 Badge。
 
-- **第三阶段（CollaborationGraph）** 🔄 进行中
+- **第三阶段（CollaborationGraph）** ✅ 已完成
   - ✅ `collaboration_graph.py` 通用 DAG 数据结构 + 拓扑排序（wave 划分）。
   - ✅ Boss Lite 执行路径已从硬编码 wave 重构为 Graph 驱动（`build_boss_lite_graph → topological_waves`）。
   - ✅ 支持 partial agents 自动裁剪子图，handoff_sources 从图上游依赖动态计算。
@@ -161,7 +174,7 @@ cd frontend-new && npm run build              # ✅ 通过
   - ✅ Graph Template 克隆 UI：点击「克隆」自动填入创建表单，name 追加「副本」，保存为新模板。
   - ✅ Graph Template 更新：`PUT /boss/graph/templates/{id}` 更新已有模板，前端编辑模式，保留 created_at。
   - Graph Template 闭环：创建 → 列表 → 编辑 → 克隆 → 删除 → 按模板执行 → 结果可视化。
-  - 待做：跨 Mission 协作、图编辑器、多用户权限、版本历史。
+  - Graph Template 核心闭环已完成；跨 Mission 协作、图编辑器、多用户权限、版本历史留给 Phase 6。
 
 - **第四阶段（真实能力接入）** ✅ 核心闭环完成
   - ✅ **Phase 4.1 Research Web Search**：`web_search_service.py` 可替换搜索服务层，Mock / SerpAPI / Bing 三 provider。
@@ -174,23 +187,30 @@ cd frontend-new && npm run build              # ✅ 通过
   - ✅ 前端 Research / Data / Image 页面均已适配新能力展示。
   - ✅ MiniDelivery artifact 展示：sources / 数据来源 / 生成图片。
 
+- **第五阶段（产品化收口）** ✅ 已完成
+  - ✅ **Phase 5.1 PDF 导出**：Markdown → PDF（reportlab + CJK），前端详情页一键下载。
+  - ✅ **Phase 5.2 Mission 对比**：两个任务结构化对比，前端 Boss 历史工作台集成。
+  - ✅ **Phase 5.3 Provider Health 面板**：search/image provider 状态可视化，前端 Settings 页集成。
+  - ⚠️ **Phase 5.4 E2E 验收脚本**：`verify_real_providers.py`，有 key 跑真实调用，没 key 跳过。
+  - ✅ **Phase 5.5 本地体检脚本**：`healthcheck_local.py`，无需任何 key 即可运行。
+  - ✅ **Phase 5.6 产品化收口文档**：验收文档 + README 更新。
+
 ## 下一步计划
 
-第一阶段、第二阶段 Boss Lite 已完成，第三阶段 CollaborationGraph 已接入 Boss Lite，第四阶段真实能力接入核心闭环完成。下一步建议进入 **Phase 5：产品化**：
+Phase 1–5 已全部完成。下一步建议进入 **Phase 6：平台化**：
 
-1. **PDF 导出（P1）** — 作战报告一键导出 PDF 格式
-2. **历史 Mission 对比（P1）** — Boss Lite 历史记录对比分析
-3. **真实 API key 验收（P1）** — 用 SerpAPI / OpenAI key 做端到端验收
-4. **前端 DAG 编辑器（P2）** — 从表单编辑升级为图形化配置 nodes/edges
-5. **多用户权限（P2）** — 用户认证、团队协作
-6. **部署优化（P2）** — Docker 生产环境配置、CI/CD
+1. **前端 DAG 编辑器（P1）** — 从表单升级为图形化配置 nodes/edges
+2. **多用户权限（P1）** — 用户认证、团队协作
+3. **Docker 生产配置（P2）** — docker-compose.prod.yml、CI/CD
+4. **跨 Mission 协作（P2）** — 图模板跨任务数据传递
+5. **图版本历史（P2）** — Graph Template 版本管理
 
 当前边界：
 
-- Image Generation Provider 骨架已完成，真实 API key 端到端验收待做。
 - Research 已接入可替换 Web Search Service；当前不做浏览器爬虫/OpenClaw 深度抓取。
 - 不让 Governance 接管普通业务 Agent 的生产链路。
 - 不把 template fallback 伪装成真实 LLM 产出。
+- 真实 Provider（SerpAPI/Bing/OpenAI DALL-E）需配置 API Key 才能跑完整 E2E 验收。
 
 ## ✨ 核心特性
 
@@ -203,6 +223,9 @@ cd frontend-new && npm run build              # ✅ 通过
 - 📊 **数据分析** — 上传Excel/CSV，自动分析生成报告
 - 🌐 **联网搜索** — Research Agent 接入可替换 Web Search Service（SerpAPI/Bing）
 - 🖼️ **图片生成** — Image Agent 接入可替换图片生成 Provider（OpenAI DALL-E 3）
+- 📄 **PDF 导出** — 产物一键导出 PDF（reportlab + CJK 中文字体）
+- 🔍 **Mission 对比** — 两个任务结构化对比分析
+- 🩺 **部署体检** — 本地服务全量体检脚本
 
 ## 🚀 快速开始
 
