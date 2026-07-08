@@ -259,8 +259,20 @@ def execute_agent_unified(agent_id: str, task: AgentTask):
     _check_rate_limit(agent_id)
 
     from backend.services.agent_executor import execute_agent
+    import math
+
+    def _clean_nan(obj):
+        """递归清洗 NaN/Inf → None，确保 FastAPI JSONResponse 序列化安全"""
+        if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+            return None
+        if isinstance(obj, dict):
+            return {k: _clean_nan(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [_clean_nan(v) for v in obj]
+        return obj
+
     result = execute_agent(agent_id, task)
-    return result.model_dump(by_alias=False)
+    return _clean_nan(result.model_dump(by_alias=False))
 
 
 # ── 本地 Agent 发现与启用 API ──────────────────────────────────────

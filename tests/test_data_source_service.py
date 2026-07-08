@@ -342,6 +342,21 @@ def test_data_agent_with_inline_data():
     assert meta.get("data_source_type") == "inline"
 
 
+def test_data_agent_with_missing_values_is_strict_json_safe():
+    """Data Agent 输出应清洗 NaN/Inf，严格 JSON 序列化不报错"""
+    from agents.data_agent.agent import DataAgent
+    agent = DataAgent()
+    result = agent.run({
+        "task_id": "test_nan_safe_001",
+        "goal": "分析含缺失值的数据",
+        "task_type": "data_analyze",
+        "data": "name,score,bonus\nA,10,\nB,20,5\nC,,7\n",
+    })
+    assert result["ok"] is True
+    assert result.get("meta", {}).get("data_source_type") == "inline"
+    json.dumps(result, ensure_ascii=False, allow_nan=False)
+
+
 def test_data_agent_no_data():
     """Data Agent 无数据 → data_report 类型 + data_source_type=none"""
     from agents.data_agent.agent import DataAgent

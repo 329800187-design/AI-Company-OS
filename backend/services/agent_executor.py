@@ -140,6 +140,19 @@ def _map_result(agent_id: str, task_id: str, raw: dict) -> AgentRunResult:
     # 提取结构化输出 - 优先使用 data，其次 output
     structured_output = raw.get("data") or raw.get("output") or {}
 
+    # 清洗 NaN/Inf → None，确保 JSON 序列化安全
+    import math
+    def _clean_nan(obj):
+        if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+            return None
+        if isinstance(obj, dict):
+            return {k: _clean_nan(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [_clean_nan(v) for v in obj]
+        return obj
+
+    structured_output = _clean_nan(structured_output)
+
     # 提取错误信息
     error = raw.get("error")
     warnings = raw.get("warnings", [])

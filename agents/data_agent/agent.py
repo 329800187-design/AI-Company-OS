@@ -20,6 +20,7 @@ Data Agent — 数据分析智能体
 - 无真实数据文件时，LLM 产出为分析框架/建议，非真实数据计算
 """
 import json
+import math
 import os
 import re
 import uuid
@@ -27,6 +28,19 @@ from typing import Any, Dict, List, Optional
 
 from agents.base_agent import BaseAgent
 from backend.services.data_source_service import detect_and_load, DataSourceResult
+
+
+def _clean_nan(obj: Any) -> Any:
+    """递归清洗 NaN/Inf → None，确保 JSON 序列化安全"""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: _clean_nan(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_clean_nan(v) for v in obj]
+    return obj
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))), "output", "data_agent")
@@ -455,7 +469,7 @@ class DataAgent(BaseAgent):
             "columns": ds_result.columns,
             "dtypes": {k: str(v) for k, v in ds_result.df.dtypes.items()} if ds_result.df is not None else {},
             "missing": int(ds_result.df.isnull().sum().sum()) if ds_result.df is not None else 0,
-            "preview": ds_result.df.head(5).to_dict(orient="records") if ds_result.df is not None else [],
+            "preview": _clean_nan(ds_result.df.head(5).to_dict(orient="records")) if ds_result.df is not None else [],
         })
 
     def _load_data(self, task: Dict, task_id: str) -> Dict:
@@ -497,7 +511,7 @@ class DataAgent(BaseAgent):
                 "columns": list(self._df.columns),
                 "dtypes": {k: str(v) for k, v in self._df.dtypes.items()},
                 "missing": int(self._df.isnull().sum().sum()),
-                "preview": self._df.head(5).to_dict(orient="records"),
+                "preview": _clean_nan(self._df.head(5).to_dict(orient="records")),
             })
 
         except Exception as e:
@@ -509,7 +523,10 @@ class DataAgent(BaseAgent):
         if self._df is None:
             return self.fail(task_id, "请先加载数据 (data_load)")
 
-        describe = self._df.describe(include='all').to_dict() if PANDAS_AVAILABLE else {}
+        describe_raw = self._df.describe(include='all').to_dict() if PANDAS_AVAILABLE else {}
+        # 清洗 NaN/Inf → None，避免 JSON 序列化失败
+        describe = _clean_nan(describe_raw)
+
         missing = self._df.isnull().sum().to_dict() if PANDAS_AVAILABLE else {}
         nunique = {c: int(self._df[c].nunique()) for c in self._df.columns} if PANDAS_AVAILABLE else {}
 
@@ -582,11 +599,11 @@ class DataAgent(BaseAgent):
         if group_by and agg_col:
             group_cols = group_by if isinstance(group_by, list) else [group_by]
             grouped = self._df.groupby(group_cols)[agg_col].agg(agg_func)
-            result["grouped"] = grouped.to_dict()
+            result["grouped"] = _clean_nan(grouped.to_dict())
 
         numeric_cols = self._df.select_dtypes(include=['number']).columns.tolist()
         if len(numeric_cols) >= 2:
-            corr = self._df[numeric_cols].corr().to_dict()
+            corr = _clean_nan(self._df[numeric_cols].corr().to_dict())
             result["correlation"] = corr
             result["top_correlations"] = self._top_correlations(corr)
 
