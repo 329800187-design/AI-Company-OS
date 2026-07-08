@@ -315,7 +315,8 @@ def _render_image(result: Dict, goal: str, title: Optional[str] = None) -> str:
     generated_images = so.get("generated_images", [])
     if generated_images:
         lines += ["## 生成图片", ""]
-        provider = result.get("meta", {}).get("image_provider", "unknown")
+        # 兼容 meta / metadata 两种 key
+        provider = result.get("meta", {}).get("image_provider") or result.get("metadata", {}).get("image_provider", "unknown")
         lines.append(f"> Provider: {provider}")
         lines.append("")
         for img in generated_images:

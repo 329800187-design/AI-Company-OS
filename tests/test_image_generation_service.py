@@ -273,6 +273,32 @@ class TestMiniDeliveryImageArtifact:
         assert "模拟" in md
         assert "https://example.com/image1.png" in md
 
+    def test_render_image_uses_metadata_image_provider(self):
+        """_render_image 应兼容 AgentRunResult 的 metadata.image_provider"""
+        from backend.routers.minidelivery_router import _render_image
+
+        result = {
+            "structured_output": {
+                "image_prompt": "test prompt",
+                "generated_images": [
+                    {
+                        "url": "https://placehold.co/1024x1024/EEE/666.png?text=Mock",
+                        "revised_prompt": "test prompt",
+                        "size": "1024x1024",
+                        "index": 0,
+                        "is_mock": True,
+                    }
+                ],
+            },
+            "metadata": {
+                "image_provider": "mock",
+            },
+        }
+
+        md = _render_image(result, "test goal")
+        assert "Provider: mock" in md
+        assert "https://placehold.co/1024x1024/EEE/666.png?text=Mock" in md
+
     def test_render_image_without_generated_images(self):
         """测试 _render_image 不包含 generated_images 时正常渲染"""
         from backend.routers.minidelivery_router import _render_image
