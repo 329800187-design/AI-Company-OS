@@ -2083,3 +2083,222 @@ class TestGetTaskDetail:
             data = json.load(f)
         assert "created_at" in data
         assert data["created_at"]  # 非空
+
+
+# ═══════════════════════════════════════════════════════════════
+# Phase 5.1: PDF 导出测试
+# ═══════════════════════════════════════════════════════════════
+
+from backend.services.pdf_service import export_artifact_pdf, REPORTLAB_OK
+
+
+class TestPdfExportFunction:
+    """export_artifact_pdf 单元测试"""
+
+    def test_generates_pdf_file(self, tmp_path):
+        """生成 PDF 文件（reportlab 可用时）"""
+        md = "# 测试报告\n\n## 第一章\n\n这是一段中文内容。\n\n- 要点1\n- 要点2\n\n## 第二章\n\n**粗体**和*斜体*测试。"
+        with patch("backend.services.pdf_service.OUTPUT_DIR", tmp_path):
+            result_path = export_artifact_pdf("test_001", md, title="测试报告")
+
+        assert os.path.exists(result_path)
+        if REPORTLAB_OK:
+            assert result_path.endswith(".pdf")
+            assert os.path.getsize(result_path) > 500
+        else:
+            assert result_path.endswith(".html")
+
+    def test_auto_title_from_h1(self, tmp_path):
+        """未提供 title 时从首个 H1 提取"""
+        md = "# 自动标题\n\n内容"
+        with patch("backend.services.pdf_service.OUTPUT_DIR", tmp_path):
+            result_path = export_artifact_pdf("test_002", md)
+        assert os.path.exists(result_path)
+
+    def test_chinese_content(self, tmp_path):
+        """中文内容正确生成"""
+        md = "# 手工耳环推广方案\n\n## 目标人群\n\n年轻女性，热爱手工饰品。\n\n## 核心卖点\n\n- 纯手工制作\n- 独特设计\n- 材质安全"
+        with patch("backend.services.pdf_service.OUTPUT_DIR", tmp_path):
+            result_path = export_artifact_pdf("test_cn", md, title="手工耳环推广方案")
+        assert os.path.exists(result_path)
+        if REPORTLAB_OK:
+            assert os.path.getsize(result_path) > 500
+
+    def test_code_block(self, tmp_path):
+        """代码块正确渲染"""
+        md = "# 代码示例\n\n```python\nprint('hello')\n```\n\n普通段落。"
+        with patch("backend.services.pdf_service.OUTPUT_DIR", tmp_path):
+            result_path = export_artifact_pdf("test_code", md)
+        assert os.path.exists(result_path)
+
+    def test_table(self, tmp_path):
+        """表格正确渲染"""
+        md = "# 数据表\n\n| 指标 | 数值 |\n|---|---|\n| 转化率 | 5% |\n| 点击率 | 12% |"
+        with patch("backend.services.pdf_service.OUTPUT_DIR", tmp_path):
+            result_path = export_artifact_pdf("test_table", md)
+        assert os.path.exists(result_path)
+
+    def test_ordered_list(self, tmp_path):
+        """有序列表正确渲染"""
+        md = "# 步骤\n\n1. 第一步\n2. 第二步\n3. 第三步"
+        with patch("backend.services.pdf_service.OUTPUT_DIR", tmp_path):
+            result_path = export_artifact_pdf("test_ol", md)
+        assert os.path.exists(result_path)
+
+    def test_blockquote(self, tmp_path):
+        """引用块正确渲染"""
+        md = "# 引用\n\n> 这是一段引用内容\n\n普通段落。"
+        with patch("backend.services.pdf_service.OUTPUT_DIR", tmp_path):
+            result_path = export_artifact_pdf("test_bq", md)
+        assert os.path.exists(result_path)
+
+    def test_horizontal_rule(self, tmp_path):
+        """分隔线正确渲染"""
+        md = "# 上半部分\n\n内容1\n\n---\n\n# 下半部分\n\n内容2"
+        with patch("backend.services.pdf_service.OUTPUT_DIR", tmp_path):
+            result_path = export_artifact_pdf("test_hr", md)
+        assert os.path.exists(result_path)
+
+    def test_inline_formatting(self, tmp_path):
+        """行内格式（粗体、斜体、行内代码）正确渲染"""
+        md = "# 格式测试\n\n**粗体** *斜体* `代码` ***粗斜体***"
+        with patch("backend.services.pdf_service.OUTPUT_DIR", tmp_path):
+            result_path = export_artifact_pdf("test_inline", md)
+        assert os.path.exists(result_path)
+
+    def test_link_simplification(self, tmp_path):
+        """链接简化为文本"""
+        md = "# 链接\n\n访问 [Google](https://google.com) 搜索"
+        with patch("backend.services.pdf_service.OUTPUT_DIR", tmp_path):
+            result_path = export_artifact_pdf("test_link", md)
+        assert os.path.exists(result_path)
+
+    def test_empty_content(self, tmp_path):
+        """空内容不崩溃"""
+        with patch("backend.services.pdf_service.OUTPUT_DIR", tmp_path):
+            result_path = export_artifact_pdf("test_empty", "")
+        assert os.path.exists(result_path)
+
+    def test_large_markdown(self, tmp_path):
+        """大文件不崩溃"""
+        md = "# 大文件\n\n" + "\n\n".join(
+            [f"## 章节 {i}\n\n" + "这是内容。" * 50 for i in range(20)]
+        )
+        with patch("backend.services.pdf_service.OUTPUT_DIR", tmp_path):
+            result_path = export_artifact_pdf("test_large", md)
+        assert os.path.exists(result_path)
+        if REPORTLAB_OK:
+            assert os.path.getsize(result_path) > 2000
+
+
+class TestPdfExportEndpoint:
+    """GET /minidelivery/tasks/{task_id}/pdf 端点测试"""
+
+    @staticmethod
+    def _create_task(base: Path, task_id: str, goal: str, agent_id: str,
+                     md_content: str = None):
+        task_dir = base / task_id
+        task_dir.mkdir(parents=True, exist_ok=True)
+        result = {
+            "task_id": task_id,
+            "goal": goal,
+            "agent_id": agent_id,
+            "artifact_type": agent_id,
+            "source_page": "",
+            "created_at": "2026-07-09T10:00:00+00:00",
+            "ok": True,
+            "mode": "agent_save",
+            "summary": "生成完成",
+            "artifact_path": str(task_dir / "artifact.md"),
+            "result_path": str(task_dir / "result.json"),
+        }
+        (task_dir / "result.json").write_text(
+            json.dumps(result, ensure_ascii=False), encoding="utf-8"
+        )
+        if md_content is None:
+            md_content = f"# {goal}\n\n## 概述\n\n这是测试内容。\n\n- 要点1\n- 要点2"
+        (task_dir / "artifact.md").write_text(md_content, encoding="utf-8")
+
+    def test_pdf_success(self, tmp_path):
+        """成功导出 PDF"""
+        with patch("backend.routers.minidelivery_router.OUTPUT_ROOT", tmp_path):
+            self._create_task(tmp_path, "t1", "测试报告", "marketing")
+            resp = client.get("/minidelivery/tasks/t1/pdf")
+        assert resp.status_code == 200
+        if REPORTLAB_OK:
+            assert resp.headers["content-type"] == "application/pdf"
+            assert "t1.pdf" in resp.headers["content-disposition"]
+        else:
+            assert "text/html" in resp.headers["content-type"]
+
+    def test_pdf_task_not_found(self, tmp_path):
+        """task_id 不存在返回 404"""
+        with patch("backend.routers.minidelivery_router.OUTPUT_ROOT", tmp_path):
+            resp = client.get("/minidelivery/tasks/nonexistent/pdf")
+        assert resp.status_code == 404
+
+    def test_pdf_artifact_missing(self, tmp_path):
+        """artifact.md 不存在返回 404"""
+        with patch("backend.routers.minidelivery_router.OUTPUT_ROOT", tmp_path):
+            task_dir = tmp_path / "t_no_md"
+            task_dir.mkdir(parents=True, exist_ok=True)
+            (task_dir / "result.json").write_text(
+                json.dumps({"task_id": "t_no_md", "goal": "测试"}), encoding="utf-8"
+            )
+            resp = client.get("/minidelivery/tasks/t_no_md/pdf")
+        assert resp.status_code == 404
+
+    def test_pdf_path_traversal_rejected(self, tmp_path):
+        """路径穿越被拒绝"""
+        with patch("backend.routers.minidelivery_router.OUTPUT_ROOT", tmp_path):
+            resp = client.get("/minidelivery/tasks/test%20space/pdf")
+        assert resp.status_code == 400
+        assert "无效的 task_id" in resp.json()["detail"]
+
+    def test_pdf_with_chinese_content(self, tmp_path):
+        """中文内容 PDF 导出成功"""
+        md = (
+            "# 手工耳环推广方案\n\n"
+            "## 目标人群\n\n年轻女性，热爱手工饰品。\n\n"
+            "## 核心卖点\n\n"
+            "- 纯手工制作，独一无二\n"
+            "- 天然材质，安全无刺激\n"
+            "- 精美包装，送礼首选\n\n"
+            "## 推广策略\n\n"
+            "1. 小红书种草笔记\n"
+            "2. 抖音短视频展示\n"
+            "3. 微信朋友圈分享"
+        )
+        with patch("backend.routers.minidelivery_router.OUTPUT_ROOT", tmp_path):
+            self._create_task(tmp_path, "t_cn", "手工耳环推广", "marketing", md_content=md)
+            resp = client.get("/minidelivery/tasks/t_cn/pdf")
+        assert resp.status_code == 200
+
+    def test_pdf_xiaohongshu_pack_priority(self, tmp_path):
+        """优先使用 xiaohongshu_pack.md"""
+        with patch("backend.routers.minidelivery_router.OUTPUT_ROOT", tmp_path):
+            task_dir = tmp_path / "t1"
+            task_dir.mkdir(parents=True, exist_ok=True)
+            (task_dir / "xiaohongshu_pack.md").write_text("# 小红书文案\n\n优先使用此文件", encoding="utf-8")
+            (task_dir / "artifact.md").write_text("# artifact\n\n不应使用此文件", encoding="utf-8")
+            (task_dir / "result.json").write_text(
+                json.dumps({"task_id": "t1", "goal": "测试优先级", "agent_id": "marketing"}),
+                encoding="utf-8"
+            )
+            resp = client.get("/minidelivery/tasks/t1/pdf")
+        assert resp.status_code == 200
+
+    def test_pdf_does_not_break_existing_download(self, tmp_path):
+        """PDF 导出不影响现有下载接口"""
+        with patch("backend.routers.minidelivery_router.OUTPUT_ROOT", tmp_path):
+            self._create_task(tmp_path, "t1", "测试兼容", "marketing")
+            # 先调 PDF
+            pdf_resp = client.get("/minidelivery/tasks/t1/pdf")
+            assert pdf_resp.status_code == 200
+            # 再调下载
+            dl_resp = client.get("/minidelivery/tasks/t1/download")
+            assert dl_resp.status_code == 200
+            assert "text/markdown" in dl_resp.headers["content-type"]
+            # 再调预览
+            preview_resp = client.get("/minidelivery/tasks/t1/artifact")
+            assert preview_resp.status_code == 200

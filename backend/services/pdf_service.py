@@ -1,10 +1,10 @@
 """
-PDF Export Service — generate PDF from Commander sessions / research reports
+PDF Export Service — generate PDF from Commander sessions / research reports / MiniDelivery artifacts
 
 Uses: reportlab (pure Python, no system deps) — install with: pip install reportlab
 Falls back to printable HTML if reportlab not available.
 """
-import os, io, json
+import os, io, json, re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -16,8 +16,13 @@ try:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import mm
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+        HRFlowable, Preformatted, ListFlowable, ListItem,
+        KeepTogether,
+    )
     from reportlab.lib import colors
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER
     REPORTLAB_OK = True
 except ImportError:
     REPORTLAB_OK = False
@@ -115,3 +120,285 @@ def export_markdown_report(title: str, body: str, format: str = "html") -> str:
     filepath = OUTPUT_DIR / filename
     filepath.write_text(html, encoding="utf-8")
     return str(filepath)
+
+
+# ── Markdown → PDF (Phase 5.1) ─────────────────────────────────────────────
+
+def _escape_xml(text: str) -> str:
+    """Escape special XML characters for reportlab Paragraph markup."""
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def _md_inline_to_xml(text: str) -> str:
+    """Convert inline markdown (bold, italic, code, links) to reportlab XML markup."""
+    # Code spans first (no nested formatting inside)
+    text = re.sub(r'`([^`]+)`', r'<font face="Courier">\1</font>', text)
+    # Bold + italic
+    text = re.sub(r'\*\*\*(.+?)\*\*\*', r'<b><i>\1</i></b>', text)
+    # Bold
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    # Italic
+    text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
+    # Links [text](url) → text
+    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+    return text
+
+
+def _build_styles() -> dict:
+    """Build paragraph styles for markdown elements using the CJK font."""
+    base = {
+        "fontName": CJK_FONT,
+        "fontSize": 10,
+        "leading": 16,
+        "spaceAfter": 6,
+    }
+    styles = {}
+    styles["body"] = ParagraphStyle("md_body", **base)
+    styles["h1"] = ParagraphStyle("md_h1", **{**base, "fontSize": 20, "leading": 28, "spaceBefore": 12, "spaceAfter": 10})
+    styles["h2"] = ParagraphStyle("md_h2", **{**base, "fontSize": 16, "leading": 24, "spaceBefore": 10, "spaceAfter": 8})
+    styles["h3"] = ParagraphStyle("md_h3", **{**base, "fontSize": 13, "leading": 20, "spaceBefore": 8, "spaceAfter": 6})
+    styles["h4"] = ParagraphStyle("md_h4", **{**base, "fontSize": 11, "leading": 18, "spaceBefore": 6, "spaceAfter": 4})
+    styles["bullet"] = ParagraphStyle("md_bullet", **{**base, "leftIndent": 18, "bulletIndent": 6})
+    styles["numbered"] = ParagraphStyle("md_numbered", **{**base, "leftIndent": 24, "bulletIndent": 6})
+    styles["blockquote"] = ParagraphStyle("md_bq", **{
+        **base, "leftIndent": 18, "fontSize": 9, "leading": 14,
+        "textColor": colors.HexColor("#555555"),
+    })
+    styles["code"] = ParagraphStyle("md_code", **{
+        "fontName": "Courier", "fontSize": 8, "leading": 12,
+        "leftIndent": 12, "backColor": colors.HexColor("#f5f5f5"),
+        "spaceAfter": 8, "spaceBefore": 4,
+    })
+    return styles
+
+
+def _parse_markdown_to_flowables(md_text: str) -> list:
+    """Parse markdown text into a list of reportlab flowables."""
+    styles = _build_styles()
+    story = []
+    lines = md_text.split("\n")
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # Blank line → spacer
+        if not stripped:
+            story.append(Spacer(1, 4))
+            i += 1
+            continue
+
+        # Horizontal rule
+        if re.match(r'^[-*_]{3,}\s*$', stripped):
+            story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#cccccc")))
+            story.append(Spacer(1, 6))
+            i += 1
+            continue
+
+        # Headings
+        heading_match = re.match(r'^(#{1,4})\s+(.+)', stripped)
+        if heading_match:
+            level = len(heading_match.group(1))
+            text = _escape_xml(heading_match.group(2).strip())
+            text = _md_inline_to_xml(text)
+            style_key = f"h{level}"
+            story.append(Paragraph(text, styles[style_key]))
+            i += 1
+            continue
+
+        # Code block (fenced)
+        if stripped.startswith("```"):
+            code_lines = []
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                code_lines.append(lines[i])
+                i += 1
+            if i < len(lines):
+                i += 1  # skip closing ```
+            code_text = _escape_xml("\n".join(code_lines))
+            if code_text.strip():
+                story.append(Preformatted(code_text, styles["code"]))
+            continue
+
+        # Blockquote
+        if stripped.startswith(">"):
+            bq_text = re.sub(r'^>\s*', '', stripped)
+            bq_text = _escape_xml(bq_text)
+            bq_text = _md_inline_to_xml(bq_text)
+            story.append(Paragraph(bq_text, styles["blockquote"]))
+            i += 1
+            continue
+
+        # Unordered list item
+        ul_match = re.match(r'^[-*+]\s+(.+)', stripped)
+        if ul_match:
+            text = _escape_xml(ul_match.group(1))
+            text = _md_inline_to_xml(text)
+            story.append(Paragraph(f"• {text}", styles["bullet"]))
+            i += 1
+            continue
+
+        # Ordered list item
+        ol_match = re.match(r'^(\d+)[.)]\s+(.+)', stripped)
+        if ol_match:
+            num = ol_match.group(1)
+            text = _escape_xml(ol_match.group(2))
+            text = _md_inline_to_xml(text)
+            story.append(Paragraph(f"{num}. {text}", styles["numbered"]))
+            i += 1
+            continue
+
+        # Table (simple: detect | ... | rows)
+        if "|" in stripped and stripped.startswith("|"):
+            table_rows = []
+            while i < len(lines):
+                row_line = lines[i].strip()
+                if not row_line or "|" not in row_line:
+                    break
+                # Skip separator rows like |---|---|
+                if re.match(r'^\|[\s:-]+\|', row_line):
+                    i += 1
+                    continue
+                cells = [c.strip() for c in row_line.split("|")[1:-1]]
+                if cells:
+                    table_rows.append(cells)
+                i += 1
+            if table_rows:
+                # Convert to reportlab Table
+                max_cols = max(len(r) for r in table_rows)
+                for row in table_rows:
+                    while len(row) < max_cols:
+                        row.append("")
+                xml_rows = []
+                for row in table_rows:
+                    xml_rows.append([Paragraph(_md_inline_to_xml(_escape_xml(c)), styles["body"]) for c in row])
+                t = Table(xml_rows, hAlign="LEFT")
+                t.setStyle(TableStyle([
+                    ("FONTNAME", (0, 0), (-1, -1), CJK_FONT),
+                    ("FONTSIZE", (0, 0), (-1, -1), 9),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cccccc")),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f0f0f0")),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ]))
+                story.append(t)
+                story.append(Spacer(1, 8))
+            continue
+
+        # Regular paragraph — collect continuation lines
+        para_lines = [stripped]
+        i += 1
+        while i < len(lines):
+            next_stripped = lines[i].strip()
+            if not next_stripped or next_stripped.startswith("#") or next_stripped.startswith("```") \
+               or next_stripped.startswith(">") or next_stripped.startswith("|") \
+               or re.match(r'^[-*+]\s+', next_stripped) or re.match(r'^\d+[.)]\s+', next_stripped) \
+               or re.match(r'^[-*_]{3,}\s*$', next_stripped):
+                break
+            para_lines.append(next_stripped)
+            i += 1
+        text = _escape_xml(" ".join(para_lines))
+        text = _md_inline_to_xml(text)
+        story.append(Paragraph(text, styles["body"]))
+
+    return story
+
+
+def export_artifact_pdf(task_id: str, markdown_content: str, title: str = "") -> str:
+    """
+    Convert a MiniDelivery artifact markdown to PDF.
+
+    Args:
+        task_id: The task identifier (used in filename)
+        markdown_content: Raw markdown text
+        title: Optional title (extracted from first H1 if empty)
+
+    Returns:
+        Path to the generated PDF file
+    """
+    if not REPORTLAB_OK:
+        # Fallback: generate HTML instead
+        html_title = title or task_id
+        html = _html_body(html_title, f"<pre>{_escape_xml(markdown_content)}</pre>")
+        filepath = OUTPUT_DIR / f"artifact_{task_id}.html"
+        filepath.write_text(html, encoding="utf-8")
+        return str(filepath)
+
+    # Extract title from first H1 if not provided
+    if not title:
+        h1_match = re.match(r'^#\s+(.+)', markdown_content.strip())
+        title = h1_match.group(1).strip() if h1_match else task_id
+
+    pdf_path = OUTPUT_DIR / f"artifact_{task_id}.pdf"
+
+    doc = SimpleDocTemplate(
+        str(pdf_path),
+        pagesize=A4,
+        leftMargin=20 * mm,
+        rightMargin=20 * mm,
+        topMargin=20 * mm,
+        bottomMargin=20 * mm,
+    )
+
+    story = []
+
+    # Title page header
+    title_style = ParagraphStyle(
+        "pdf_title",
+        fontName=CJK_FONT,
+        fontSize=22,
+        leading=30,
+        spaceAfter=6,
+        alignment=TA_CENTER,
+    )
+    story.append(Paragraph(_escape_xml(title), title_style))
+    story.append(Spacer(1, 4))
+
+    # Metadata line
+    meta_style = ParagraphStyle(
+        "pdf_meta",
+        fontName=CJK_FONT,
+        fontSize=9,
+        leading=14,
+        textColor=colors.HexColor("#888888"),
+        alignment=TA_CENTER,
+        spaceAfter=12,
+    )
+    story.append(Paragraph(
+        f"Task: {_escape_xml(task_id)}  |  Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        meta_style,
+    ))
+    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#333333")))
+    story.append(Spacer(1, 12))
+
+    # Parse markdown content into flowables
+    md_flowables = _parse_markdown_to_flowables(markdown_content)
+    story.extend(md_flowables)
+
+    # Footer
+    story.append(Spacer(1, 24))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#cccccc")))
+    footer_style = ParagraphStyle(
+        "pdf_footer",
+        fontName=CJK_FONT,
+        fontSize=8,
+        leading=12,
+        textColor=colors.HexColor("#999999"),
+        alignment=TA_CENTER,
+    )
+    story.append(Paragraph(
+        f"AI Company OS v1.5.0 — {_escape_xml(task_id)}",
+        footer_style,
+    ))
+
+    doc.build(story)
+    return str(pdf_path)

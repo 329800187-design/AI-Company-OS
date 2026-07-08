@@ -1171,3 +1171,71 @@ def download_task_artifact(task_id: str):
             )
 
     raise HTTPException(status_code=404, detail=f"任务 {task_id} 产物文件不存在")
+
+
+# ── PDF 导出（Phase 5.1）─────────────────────────────────────
+
+@router.get("/tasks/{task_id}/pdf", summary="导出产物为 PDF",
+            description="将指定任务的 artifact.md 转换为 PDF 下载",
+            response_class=FileResponse)
+def export_task_pdf(task_id: str):
+    """将指定任务的 artifact.md 导出为 PDF 文件"""
+    from backend.services.pdf_service import export_artifact_pdf
+
+    # 防路径穿越
+    if not _validate_task_id(task_id):
+        raise HTTPException(status_code=400, detail="无效的 task_id")
+
+    task_dir = OUTPUT_ROOT / task_id
+    if not task_dir.exists():
+        raise HTTPException(status_code=404, detail=f"任务 {task_id} 不存在")
+
+    # 优先查找 xiaohongshu_pack.md，再查找 copy_pack.md，再查找 artifact.md
+    md_path = None
+    for name in ["xiaohongshu_pack.md", "copy_pack.md", "artifact.md"]:
+        candidate = task_dir / name
+        if candidate.exists():
+            md_path = candidate
+            break
+
+    if md_path is None:
+        raise HTTPException(status_code=404, detail=f"任务 {task_id} 产物文件不存在")
+
+    # 安全检查
+    resolved_path = md_path.resolve()
+    resolved_task_dir = task_dir.resolve()
+    try:
+        resolved_path.relative_to(resolved_task_dir)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="路径越权")
+
+    # 读取 markdown 内容
+    markdown_content = md_path.read_text(encoding="utf-8")
+
+    # 从 result.json 提取标题
+    title = ""
+    result_path = task_dir / "result.json"
+    if result_path.exists():
+        try:
+            with open(result_path, "r", encoding="utf-8") as f:
+                result_data = json.load(f)
+            title = result_data.get("goal", "")[:80]
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
+
+    # 生成 PDF
+    pdf_path = export_artifact_pdf(task_id, markdown_content, title=title)
+
+    # 确定 media type 和文件名
+    if pdf_path.endswith(".pdf"):
+        media_type = "application/pdf"
+        download_filename = f"{task_id}.pdf"
+    else:
+        media_type = "text/html; charset=utf-8"
+        download_filename = f"{task_id}.html"
+
+    return FileResponse(
+        path=pdf_path,
+        media_type=media_type,
+        filename=download_filename,
+    )

@@ -1071,6 +1071,12 @@ class ApiClient {
     return `${API_BASE}/minidelivery/tasks/${taskId}/download`
   }
 
+  // ── MiniDelivery PDF 导出（Phase 5.1）───────────────────────────────────
+
+  getMiniDeliveryPdfUrl(taskId: string) {
+    return `${API_BASE}/minidelivery/tasks/${taskId}/pdf`
+  }
+
   // ── Graph Template APIs ──────────────────────────────────────────────
 
   async listBossGraphTemplates() {

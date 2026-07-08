@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { motion } from "framer-motion"
 import {
-  ArrowLeft, Loader2, AlertCircle, Copy, Check, Download, FileText, Database, Bot,
+  ArrowLeft, Loader2, AlertCircle, Copy, Check, Download, FileText, Database, Bot, FileDown,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -83,6 +83,10 @@ export default function DeliveryDetail({ taskId, onBack }: DeliveryDetailProps) 
     window.open(api.getMiniDeliveryDownloadUrl(taskId), "_blank")
   }
 
+  const handlePdfDownload = () => {
+    window.open(api.getMiniDeliveryPdfUrl(taskId), "_blank")
+  }
+
   const formatDate = (iso: string) => {
     if (!iso) return "-"
     try {
@@ -134,6 +138,9 @@ export default function DeliveryDetail({ taskId, onBack }: DeliveryDetailProps) 
           </Button>
           <Button variant="outline" size="sm" onClick={handleDownload}>
             <Download className="w-4 h-4 mr-1" /> 下载
+          </Button>
+          <Button variant="outline" size="sm" onClick={handlePdfDownload}>
+            <FileDown className="w-4 h-4 mr-1" /> 导出 PDF
           </Button>
         </div>
       </div>
