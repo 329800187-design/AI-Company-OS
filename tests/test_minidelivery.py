@@ -2302,3 +2302,149 @@ class TestPdfExportEndpoint:
             # 再调预览
             preview_resp = client.get("/minidelivery/tasks/t1/artifact")
             assert preview_resp.status_code == 200
+
+
+# ── 任务对比测试 ──────────────────────────────────────────────
+
+class TestTaskCompare:
+    """POST /minidelivery/tasks/compare 测试"""
+
+    def _create_task(self, base_dir: Path, task_id: str, goal: str, agent_id: str = "boss",
+                     succeeded: int = 3, failed: int = 0, total: int = 5,
+                     duration_ms: int = 10000, handoff: bool = True,
+                     mode: str = "two_wave_handoff", has_raw: bool = True):
+        """在 base_dir 下创建一个模拟 task 目录"""
+        task_dir = base_dir / task_id
+        task_dir.mkdir(parents=True, exist_ok=True)
+        result = {
+            "task_id": task_id,
+            "goal": goal,
+            "agent_id": agent_id,
+            "artifact_type": "boss_lite",
+            "source_page": "boss",
+            "created_at": "2025-07-01T10:00:00+00:00",
+            "ok": True,
+            "mode": "boss_lite",
+            "summary": f"摘要-{task_id}",
+            "artifact_path": str(task_dir / "artifact.md"),
+            "raw_agent_result_path": str(task_dir / "raw_agent_result.json"),
+        }
+        (task_dir / "result.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+        (task_dir / "artifact.md").write_text(f"# {goal}\n\n内容", encoding="utf-8")
+
+        if has_raw:
+            raw = {
+                "succeeded": succeeded,
+                "failed": failed,
+                "total": total,
+                "total_duration_ms": duration_ms,
+                "handoff_enabled": handoff,
+                "execution_mode": mode,
+            }
+            (task_dir / "raw_agent_result.json").write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    def test_compare_success(self, tmp_path):
+        """两个不同 task 对比返回正确 diff"""
+        with patch("backend.routers.minidelivery_router.OUTPUT_ROOT", tmp_path):
+            self._create_task(tmp_path, "boss_aaa111", "目标A", succeeded=4, failed=1, duration_ms=12000)
+            self._create_task(tmp_path, "boss_bbb222", "目标B", succeeded=5, failed=0, duration_ms=8000)
+
+            resp = client.post("/minidelivery/tasks/compare", json={
+                "task_ids": ["boss_aaa111", "boss_bbb222"]
+            })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert len(data["tasks"]) == 2
+        assert data["tasks"][0]["task_id"] == "boss_aaa111"
+        assert data["tasks"][1]["task_id"] == "boss_bbb222"
+
+        diff = data["diff"]
+        assert diff["goal_changed"] is True
+        assert diff["succeeded_diff"] == 1  # 5 - 4
+        assert diff["failed_diff"] == -1  # 0 - 1
+        assert diff["total_duration_ms_diff"] == -4000  # 8000 - 12000
+        assert diff["handoff_changed"] is False
+        assert diff["execution_mode_changed"] is False
+
+    def test_compare_same_task_rejected(self, tmp_path):
+        """同一个 task 对比被拒绝"""
+        with patch("backend.routers.minidelivery_router.OUTPUT_ROOT", tmp_path):
+            self._create_task(tmp_path, "boss_aaa111", "目标A")
+            resp = client.post("/minidelivery/tasks/compare", json={
+                "task_ids": ["boss_aaa111", "boss_aaa111"]
+            })
+        assert resp.status_code == 400
+        assert "不同" in resp.json()["detail"]
+
+    def test_compare_not_found(self, tmp_path):
+        """task 不存在返回 404"""
+        with patch("backend.routers.minidelivery_router.OUTPUT_ROOT", tmp_path):
+            self._create_task(tmp_path, "boss_aaa111", "目标A")
+            resp = client.post("/minidelivery/tasks/compare", json={
+                "task_ids": ["boss_aaa111", "boss_nonexist"]
+            })
+        assert resp.status_code == 404
+
+    def test_compare_wrong_count(self, tmp_path):
+        """传 1 个或 3 个返回 400"""
+        with patch("backend.routers.minidelivery_router.OUTPUT_ROOT", tmp_path):
+            resp1 = client.post("/minidelivery/tasks/compare", json={
+                "task_ids": ["boss_aaa111"]
+            })
+            resp3 = client.post("/minidelivery/tasks/compare", json={
+                "task_ids": ["a", "b", "c"]
+            })
+        assert resp1.status_code == 400
+        assert resp3.status_code == 400
+
+    def test_compare_missing_raw_result(self, tmp_path):
+        """一个 task 没有 raw_agent_result.json，对应字段为 null"""
+        with patch("backend.routers.minidelivery_router.OUTPUT_ROOT", tmp_path):
+            self._create_task(tmp_path, "boss_aaa111", "目标A", has_raw=True)
+            self._create_task(tmp_path, "boss_bbb222", "目标B", has_raw=False)
+
+            resp = client.post("/minidelivery/tasks/compare", json={
+                "task_ids": ["boss_aaa111", "boss_bbb222"]
+            })
+        assert resp.status_code == 200
+        data = resp.json()
+        # 第一个 task 有值
+        assert data["tasks"][0]["succeeded"] == 3
+        # 第二个 task 字段为 null
+        assert data["tasks"][1]["succeeded"] is None
+        assert data["tasks"][1]["total_duration_ms"] is None
+
+    def test_compare_diff_fields(self, tmp_path):
+        """验证所有 diff 字段的计算"""
+        with patch("backend.routers.minidelivery_router.OUTPUT_ROOT", tmp_path):
+            # 使用相同 goal 和相同 summary（通过相同 task_id 前缀确保 summary 不影响）
+            self._create_task(tmp_path, "boss_aaa111", "相同目标",
+                              succeeded=3, failed=1, total=5, duration_ms=10000,
+                              handoff=True, mode="two_wave_handoff")
+            self._create_task(tmp_path, "boss_bbb222", "相同目标",
+                              succeeded=3, failed=1, total=5, duration_ms=10000,
+                              handoff=True, mode="parallel")
+
+            resp = client.post("/minidelivery/tasks/compare", json={
+                "task_ids": ["boss_aaa111", "boss_bbb222"]
+            })
+        assert resp.status_code == 200
+        diff = resp.json()["diff"]
+        assert diff["goal_changed"] is False
+        assert diff["succeeded_diff"] == 0
+        assert diff["failed_diff"] == 0
+        assert diff["total_duration_ms_diff"] == 0
+        assert diff["handoff_changed"] is False
+        assert diff["execution_mode_changed"] is True
+        assert diff["artifact_type_changed"] is False
+        # summary 因 task_id 不同而不同，这是预期的
+        assert diff["summary_changed"] is True
+
+    def test_compare_invalid_task_id(self, tmp_path):
+        """无效 task_id 返回 400"""
+        with patch("backend.routers.minidelivery_router.OUTPUT_ROOT", tmp_path):
+            resp = client.post("/minidelivery/tasks/compare", json={
+                "task_ids": ["../etc/passwd", "boss_bbb222"]
+            })
+        assert resp.status_code == 400

@@ -1077,6 +1077,46 @@ class ApiClient {
     return `${API_BASE}/minidelivery/tasks/${taskId}/pdf`
   }
 
+  // ── MiniDelivery 任务对比（Phase 5.2）─────────────────────────────────
+
+  async compareMiniDeliveryTasks(taskIds: [string, string]) {
+    return this.request<{
+      ok: boolean
+      tasks: Array<{
+        task_id: string
+        goal: string | null
+        created_at: string
+        artifact_type: string | null
+        source_page: string | null
+        agent_id: string | null
+        ok: boolean | null
+        mode: string | null
+        summary: string | null
+        succeeded: number | null
+        failed: number | null
+        total: number | null
+        total_duration_ms: number | null
+        handoff_enabled: boolean | null
+        execution_mode: string | null
+      }>
+      diff: {
+        goal_changed: boolean
+        goal_diff?: { a: string; b: string }
+        succeeded_diff: number | null
+        failed_diff: number | null
+        total_diff: number | null
+        total_duration_ms_diff: number | null
+        handoff_changed: boolean
+        execution_mode_changed: boolean
+        artifact_type_changed: boolean
+        summary_changed: boolean
+      }
+    }>("/minidelivery/tasks/compare", {
+      method: "POST",
+      body: { task_ids: taskIds },
+    })
+  }
+
   // ── Graph Template APIs ──────────────────────────────────────────────
 
   async listBossGraphTemplates() {

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import PlainTextResponse, FileResponse
 
-from backend.minidelivery.models import XHSCopyRequest, CopyPackRequest, SaveFromAgentRequest
+from backend.minidelivery.models import XHSCopyRequest, CopyPackRequest, SaveFromAgentRequest, CompareTasksRequest
 from backend.minidelivery.pipeline import run_pipeline, run_copy_pack_pipeline
 from backend.minidelivery.artifact_writer import OUTPUT_ROOT, ensure_output_dir
 
@@ -1239,3 +1239,102 @@ def export_task_pdf(task_id: str):
         media_type=media_type,
         filename=download_filename,
     )
+
+
+# ── 任务对比 ─────────────────────────────────────────────────
+
+COMPARE_FIELDS = [
+    "task_id", "goal", "created_at", "artifact_type", "source_page",
+    "agent_id", "ok", "mode", "summary",
+]
+COMPARE_RAW_FIELDS = [
+    "succeeded", "failed", "total", "total_duration_ms",
+    "handoff_enabled", "execution_mode",
+]
+
+
+def _read_task_summary(task_id: str) -> Dict[str, Any]:
+    """读取单个 task 的 result.json + raw_agent_result.json 摘要"""
+    if not _validate_task_id(task_id):
+        raise HTTPException(status_code=400, detail=f"无效的 task_id: {task_id}")
+
+    task_dir = OUTPUT_ROOT / task_id
+    result_path = task_dir / "result.json"
+    if not result_path.exists():
+        raise HTTPException(status_code=404, detail=f"任务 {task_id} 不存在")
+
+    with open(result_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    entry: Dict[str, Any] = {}
+    for key in COMPARE_FIELDS:
+        entry[key] = data.get(key)
+
+    # 数值字段兜底
+    if not entry.get("created_at"):
+        mtime = os.path.getmtime(result_path)
+        entry["created_at"] = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+
+    # 读取 raw_agent_result.json（Boss Lite/Graph 复盘字段）
+    raw_path = task_dir / "raw_agent_result.json"
+    for key in COMPARE_RAW_FIELDS:
+        entry[key] = None
+    if raw_path.exists():
+        try:
+            with open(raw_path, "r", encoding="utf-8") as rf:
+                raw = json.load(rf)
+            for key in COMPARE_RAW_FIELDS:
+                val = raw.get(key)
+                if val is not None:
+                    entry[key] = val
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+            pass
+
+    return entry
+
+
+def _compute_diff(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
+    """计算两个 task 摘要之间的结构化 diff"""
+    diff: Dict[str, Any] = {}
+
+    # goal
+    diff["goal_changed"] = a.get("goal") != b.get("goal")
+    if diff["goal_changed"]:
+        diff["goal_diff"] = {"a": a.get("goal", ""), "b": b.get("goal", "")}
+
+    # 数值差值
+    for key in ("succeeded", "failed", "total", "total_duration_ms"):
+        va = a.get(key)
+        vb = b.get(key)
+        if va is not None and vb is not None:
+            diff[f"{key}_diff"] = vb - va
+        else:
+            diff[f"{key}_diff"] = None
+
+    # 布尔/字符串 changed
+    diff["handoff_changed"] = a.get("handoff_enabled") != b.get("handoff_enabled")
+    diff["execution_mode_changed"] = a.get("execution_mode") != b.get("execution_mode")
+    diff["artifact_type_changed"] = a.get("artifact_type") != b.get("artifact_type")
+    diff["summary_changed"] = a.get("summary") != b.get("summary")
+
+    return diff
+
+
+@router.post("/tasks/compare", summary="对比两个任务",
+             description="传入恰好 2 个 task_id，返回结构化对比结果")
+def compare_tasks(request: CompareTasksRequest):
+    task_ids = request.task_ids
+    if len(task_ids) != 2:
+        raise HTTPException(status_code=400, detail="恰好需要 2 个 task_id")
+    if task_ids[0] == task_ids[1]:
+        raise HTTPException(status_code=400, detail="请选择两个不同的任务进行对比")
+
+    a = _read_task_summary(task_ids[0])
+    b = _read_task_summary(task_ids[1])
+    diff = _compute_diff(a, b)
+
+    return {
+        "ok": True,
+        "tasks": [a, b],
+        "diff": diff,
+    }

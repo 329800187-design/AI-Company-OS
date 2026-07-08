@@ -80,6 +80,11 @@ class VerificationChecks(BaseModel):
     has_supplementary_data: bool = False
 
 
+class CompareTasksRequest(BaseModel):
+    """任务对比请求"""
+    task_ids: List[str] = Field(..., description="恰好 2 个 task_id 进行对比")
+
+
 class MiniDeliveryResult(BaseModel):
     """闭环产出结构"""
     ok: bool

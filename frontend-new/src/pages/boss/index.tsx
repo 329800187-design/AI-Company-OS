@@ -28,6 +28,8 @@ import {
   Trash2,
   GitBranch,
   Copy,
+  GitCompareArrows,
+  X,
 } from "lucide-react"
 import { api } from "@/api/client"
 import { Badge } from "@/components/ui/badge"
@@ -739,6 +741,78 @@ export default function BossPage() {
     try { localStorage.removeItem(HIDDEN_KEY) } catch { /* ignore */ }
     loadLiteHistory()
   }
+
+  // ── 任务对比状态 ──────────────────────────────────────────
+  const [liteCompareSelected, setLiteCompareSelected] = useState<string[]>([])
+  const [liteCompareResult, setLiteCompareResult] = useState<{
+    ok: boolean
+    tasks: Array<{
+      task_id: string
+      goal: string | null
+      created_at: string
+      artifact_type: string | null
+      succeeded: number | null
+      failed: number | null
+      total: number | null
+      total_duration_ms: number | null
+      handoff_enabled: boolean | null
+      execution_mode: string | null
+      summary: string | null
+    }>
+    diff: {
+      goal_changed: boolean
+      goal_diff?: { a: string; b: string }
+      succeeded_diff: number | null
+      failed_diff: number | null
+      total_diff: number | null
+      total_duration_ms_diff: number | null
+      handoff_changed: boolean
+      execution_mode_changed: boolean
+      artifact_type_changed: boolean
+      summary_changed: boolean
+    }
+  } | null>(null)
+  const [liteCompareLoading, setLiteCompareLoading] = useState(false)
+  const [liteCompareError, setLiteCompareError] = useState<string | null>(null)
+
+  const toggleCompareSelect = (taskId: string) => {
+    setLiteCompareSelected((prev) => {
+      if (prev.includes(taskId)) {
+        const next = prev.filter((id) => id !== taskId)
+        if (next.length < 2) setLiteCompareResult(null)
+        return next
+      }
+      if (prev.length >= 2) return prev // 最多 2 个
+      const next = [...prev, taskId]
+      return next
+    })
+  }
+
+  const clearCompare = () => {
+    setLiteCompareSelected([])
+    setLiteCompareResult(null)
+    setLiteCompareError(null)
+  }
+
+  // 当选中 2 个时自动触发对比
+  useEffect(() => {
+    if (liteCompareSelected.length !== 2) return
+    let cancelled = false
+    const run = async () => {
+      setLiteCompareLoading(true)
+      setLiteCompareError(null)
+      try {
+        const result = await api.compareMiniDeliveryTasks(liteCompareSelected as [string, string])
+        if (!cancelled) setLiteCompareResult(result)
+      } catch (err: any) {
+        if (!cancelled) setLiteCompareError(err?.message || "对比失败")
+      } finally {
+        if (!cancelled) setLiteCompareLoading(false)
+      }
+    }
+    run()
+    return () => { cancelled = true }
+  }, [liteCompareSelected])
 
   // Graph Template state
   interface GraphTemplate {
@@ -3158,6 +3232,157 @@ export default function BossPage() {
               刷新
             </Button>
           </div>
+          {/* 对比选择提示 */}
+          {liteCompareSelected.length > 0 && (
+            <div className="mb-3 flex items-center gap-3 rounded-lg bg-[#F4F3EF] px-4 py-2.5 text-sm">
+              <GitCompareArrows className="h-4 w-4 text-[#8A8A8A]" />
+              <span className="text-[#6B6B6B]">
+                已选 {liteCompareSelected.length} / 2 条
+                {liteCompareSelected.length === 1 && "，请再选 1 条"}
+                {liteCompareLoading && " — 对比中..."}
+              </span>
+              {liteCompareError && (
+                <span className="text-red-500 text-xs">{liteCompareError}</span>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearCompare}
+                className="ml-auto gap-1 text-[#8A8A8A] hover:text-[#0B0B0B]"
+              >
+                <X className="h-3.5 w-3.5" />
+                取消
+              </Button>
+            </div>
+          )}
+          {/* 对比结果卡片 */}
+          {liteCompareResult && liteCompareResult.ok && (
+            <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50/50 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-sm font-medium text-[#0B0B0B] flex items-center gap-2">
+                  <GitCompareArrows className="h-4 w-4 text-blue-500" />
+                  任务对比结果
+                </h4>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearCompare}
+                  className="h-6 w-6 p-0 text-[#8A8A8A] hover:text-[#0B0B0B]"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+              {/* 并排 task 信息 */}
+              <div className="grid grid-cols-2 gap-4 mb-3">
+                {liteCompareResult.tasks.map((t, i) => (
+                  <div key={t.task_id} className="rounded-lg bg-white p-3 border border-[#E5E5E5]">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-mono text-[#8A8A8A] bg-[#F4F3EF] px-1.5 py-0.5 rounded">
+                        {t.task_id}
+                      </span>
+                      <span className="text-[10px] text-[#B5B5B5]">
+                        {i === 0 ? "A" : "B"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-[#0B0B0B] font-medium truncate">
+                      {t.goal?.trim() || "未命名"}
+                    </p>
+                    <p className="text-[10px] text-[#B5B5B5] mt-0.5">
+                      {t.created_at ? new Date(t.created_at).toLocaleString() : "—"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              {/* 对比指标表格 */}
+              <div className="rounded-lg bg-white border border-[#E5E5E5] overflow-hidden">
+                <table className="w-full text-xs">
+                  <tbody>
+                    {(() => {
+                      const d = liteCompareResult.diff
+                      const t = liteCompareResult.tasks
+                      const rows: Array<{ label: string; a: string; b: string; diff: string; changed: boolean }> = []
+                      // 成功率
+                      const fmtRate = (task: typeof t[0]) => {
+                        if (task.succeeded != null && task.total != null && task.total > 0) {
+                          return `${task.succeeded}/${task.total}`
+                        }
+                        return "—"
+                      }
+                      rows.push({
+                        label: "成功率",
+                        a: fmtRate(t[0]),
+                        b: fmtRate(t[1]),
+                        diff: d.succeeded_diff != null ? (d.succeeded_diff > 0 ? `+${d.succeeded_diff}` : String(d.succeeded_diff)) : "—",
+                        changed: d.succeeded_diff != null && d.succeeded_diff !== 0,
+                      })
+                      // 耗时
+                      const fmtDuration = (task: typeof t[0]) => {
+                        if (task.total_duration_ms != null && task.total_duration_ms > 0) {
+                          const s = task.total_duration_ms / 1000
+                          return s < 1 ? `${task.total_duration_ms}ms` : `${s.toFixed(1)}s`
+                        }
+                        return "—"
+                      }
+                      rows.push({
+                        label: "耗时",
+                        a: fmtDuration(t[0]),
+                        b: fmtDuration(t[1]),
+                        diff: d.total_duration_ms_diff != null ? (() => {
+                          const s = d.total_duration_ms_diff / 1000
+                          const sign = d.total_duration_ms_diff > 0 ? "+" : ""
+                          return s < 1 ? `${sign}${d.total_duration_ms_diff}ms` : `${sign}${s.toFixed(1)}s`
+                        })() : "—",
+                        changed: d.total_duration_ms_diff != null && d.total_duration_ms_diff !== 0,
+                      })
+                      // Handoff
+                      rows.push({
+                        label: "Handoff",
+                        a: t[0].handoff_enabled != null ? (t[0].handoff_enabled ? "开" : "关") : "—",
+                        b: t[1].handoff_enabled != null ? (t[1].handoff_enabled ? "开" : "关") : "—",
+                        diff: "",
+                        changed: d.handoff_changed,
+                      })
+                      // Execution Mode
+                      rows.push({
+                        label: "执行模式",
+                        a: t[0].execution_mode || "—",
+                        b: t[1].execution_mode || "—",
+                        diff: "",
+                        changed: d.execution_mode_changed,
+                      })
+                      // Goal
+                      rows.push({
+                        label: "目标",
+                        a: t[0].goal ? (t[0].goal.length > 30 ? t[0].goal.slice(0, 30) + "…" : t[0].goal) : "—",
+                        b: t[1].goal ? (t[1].goal.length > 30 ? t[1].goal.slice(0, 30) + "…" : t[1].goal) : "—",
+                        diff: "",
+                        changed: d.goal_changed,
+                      })
+                      return rows.map((row) => (
+                        <tr key={row.label} className={row.changed ? "bg-amber-50" : ""}>
+                          <td className="px-3 py-1.5 font-medium text-[#6B6B6B] w-20">{row.label}</td>
+                          <td className="px-3 py-1.5 text-[#0B0B0B]">{row.a}</td>
+                          <td className="px-3 py-1.5 text-[#0B0B0B]">{row.b}</td>
+                          <td className={cn(
+                            "px-3 py-1.5 text-right font-mono w-16",
+                            row.changed ? "text-amber-600 font-medium" : "text-[#B5B5B5]"
+                          )}>
+                            {row.diff || (row.changed ? "≠" : "=")}
+                          </td>
+                        </tr>
+                      ))
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+              {/* Summary diff */}
+              {liteCompareResult.diff.summary_changed && (
+                <p className="mt-2 text-[10px] text-amber-600">
+                  ⚠ 摘要内容不同
+                </p>
+              )}
+            </div>
+          )}
           {/* 搜索框 + 排序 */}
           {liteHistory.length > 0 && (
             <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -3201,8 +3426,25 @@ export default function BossPage() {
                 visibleLiteHistory.map((task) => (
                   <div
                     key={task.task_id}
-                    className="flex items-start justify-between gap-4 rounded-xl border border-[#E5E5E5] p-4 transition-all hover:border-[#B5B5B5] hover:bg-[#F9F9F7]"
+                    className={cn(
+                      "flex items-start justify-between gap-3 rounded-xl border p-4 transition-all hover:border-[#B5B5B5] hover:bg-[#F9F9F7]",
+                      liteCompareSelected.includes(task.task_id)
+                        ? "border-blue-400 bg-blue-50/30"
+                        : "border-[#E5E5E5]"
+                    )}
                   >
+                    {/* 对比 checkbox */}
+                    <label className="shrink-0 flex items-center pt-0.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={liteCompareSelected.includes(task.task_id)}
+                        onChange={() => toggleCompareSelect(task.task_id)}
+                        disabled={
+                          !liteCompareSelected.includes(task.task_id) && liteCompareSelected.length >= 2
+                        }
+                        className="h-4 w-4 rounded border-[#D0D0D0] text-blue-500 focus:ring-blue-400 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                      />
+                    </label>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                         <span className="text-xs font-mono text-[#8A8A8A] bg-[#F4F3EF] px-2 py-0.5 rounded">
