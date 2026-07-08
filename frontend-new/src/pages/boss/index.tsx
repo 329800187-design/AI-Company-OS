@@ -36,6 +36,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
+import { DagEditor, validateDag } from "./DagEditor"
 
 interface ModuleResult {
   module_id: string
@@ -1036,23 +1037,7 @@ export default function BossPage() {
     const errors: string[] = []
     if (!draft.name.trim() || draft.name.trim().length < 2) errors.push("模板名称不能为空且至少 2 个字符")
     if (draft.nodes.length < 1) errors.push("至少需要 1 个节点")
-    const nodeIds = new Set<string>()
-    for (let i = 0; i < draft.nodes.length; i++) {
-      const n = draft.nodes[i]
-      if (!n.id.trim()) errors.push(`节点 ${i + 1}: id 不能为空`)
-      if (!n.agent_id.trim()) errors.push(`节点 ${i + 1}: agent_id 不能为空`)
-      if (nodeIds.has(n.id.trim())) errors.push(`节点 id "${n.id.trim()}" 重复`)
-      nodeIds.add(n.id.trim())
-    }
-    const nodeIdSet = new Set(draft.nodes.map((n) => n.id.trim()))
-    for (let i = 0; i < draft.edges.length; i++) {
-      const e = draft.edges[i]
-      if (!e.from_node.trim()) errors.push(`边 ${i + 1}: from_node 不能为空`)
-      if (!e.to_node.trim()) errors.push(`边 ${i + 1}: to_node 不能为空`)
-      if (e.from_node.trim() === e.to_node.trim()) errors.push(`边 ${i + 1}: 不能自环 (${e.from_node.trim()} → ${e.to_node.trim()})`)
-      if (e.from_node.trim() && !nodeIdSet.has(e.from_node.trim())) errors.push(`边 ${i + 1}: from_node "${e.from_node.trim()}" 引用的节点不存在`)
-      if (e.to_node.trim() && !nodeIdSet.has(e.to_node.trim())) errors.push(`边 ${i + 1}: to_node "${e.to_node.trim()}" 引用的节点不存在`)
-    }
+    errors.push(...validateDag(draft.nodes, draft.edges).map((error) => error.message))
     return errors
   }
 
@@ -1909,140 +1894,16 @@ export default function BossPage() {
                 </div>
               </div>
 
-              {/* 节点编辑 */}
-              <div className="mb-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-medium text-[#8A8A8A]">节点 / Nodes</span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCreateDraft({
-                      ...createDraft,
-                      nodes: [...createDraft.nodes, { id: "", agent_id: "", task_type: "", title: "", prompt: "" }],
-                    })}
-                    className="gap-1 text-xs h-7"
-                  >
-                    <Plus className="h-3 w-3" />
-                    添加节点
-                  </Button>
-                </div>
-                <div className="space-y-2">
-                  {createDraft.nodes.map((node, ni) => (
-                    <div key={ni} className="grid gap-2 grid-cols-[1fr_1fr_1fr_1fr_1fr_auto] items-end">
-                      <div>
-                        {ni === 0 && <label className="block text-[10px] text-[#B5B5B5] mb-1">id *</label>}
-                        <input type="text" value={node.id} onChange={(e) => {
-                          const nodes = [...createDraft.nodes]; nodes[ni] = { ...nodes[ni], id: e.target.value }; setCreateDraft({ ...createDraft, nodes })
-                        }} className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1.5 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]" placeholder="id" />
-                      </div>
-                      <div>
-                        {ni === 0 && <label className="block text-[10px] text-[#B5B5B5] mb-1">agent_id *</label>}
-                        <input type="text" value={node.agent_id} onChange={(e) => {
-                          const nodes = [...createDraft.nodes]; nodes[ni] = { ...nodes[ni], agent_id: e.target.value }; setCreateDraft({ ...createDraft, nodes })
-                        }} className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1.5 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]" placeholder="agent_id" />
-                      </div>
-                      <div>
-                        {ni === 0 && <label className="block text-[10px] text-[#B5B5B5] mb-1">task_type</label>}
-                        <input type="text" value={node.task_type} onChange={(e) => {
-                          const nodes = [...createDraft.nodes]; nodes[ni] = { ...nodes[ni], task_type: e.target.value }; setCreateDraft({ ...createDraft, nodes })
-                        }} className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1.5 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]" placeholder="task_type" />
-                      </div>
-                      <div>
-                        {ni === 0 && <label className="block text-[10px] text-[#B5B5B5] mb-1">title</label>}
-                        <input type="text" value={node.title} onChange={(e) => {
-                          const nodes = [...createDraft.nodes]; nodes[ni] = { ...nodes[ni], title: e.target.value }; setCreateDraft({ ...createDraft, nodes })
-                        }} className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1.5 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]" placeholder="title" />
-                      </div>
-                      <div>
-                        {ni === 0 && <label className="block text-[10px] text-[#B5B5B5] mb-1">prompt</label>}
-                        <input type="text" value={node.prompt} onChange={(e) => {
-                          const nodes = [...createDraft.nodes]; nodes[ni] = { ...nodes[ni], prompt: e.target.value }; setCreateDraft({ ...createDraft, nodes })
-                        }} className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1.5 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]" placeholder="prompt" />
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          const nodes = createDraft.nodes.filter((_, i) => i !== ni)
-                          const removedId = createDraft.nodes[ni].id.trim()
-                          const edges = removedId
-                            ? createDraft.edges.filter((e) => e.from_node.trim() !== removedId && e.to_node.trim() !== removedId)
-                            : createDraft.edges
-                          setCreateDraft({ ...createDraft, nodes, edges })
-                        }}
-                        className="h-7 w-7 p-0 text-[#B5B5B5] hover:text-red-500"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* 边编辑 */}
-              <div className="mb-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-medium text-[#8A8A8A]">边 / Edges</span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCreateDraft({
-                      ...createDraft,
-                      edges: [...createDraft.edges, { from_node: "", to_node: "", handoff_type: "context" }],
-                    })}
-                    className="gap-1 text-xs h-7"
-                  >
-                    <Plus className="h-3 w-3" />
-                    添加边
-                  </Button>
-                </div>
-                {createDraft.edges.length === 0 ? (
-                  <p className="text-xs text-[#B5B5B5]">暂无边（节点将并行执行）</p>
-                ) : (
-                  <div className="space-y-2">
-                    {createDraft.edges.map((edge, ei) => (
-                      <div key={ei} className="grid gap-2 grid-cols-[1fr_1fr_1fr_auto] items-end">
-                        <div>
-                          {ei === 0 && <label className="block text-[10px] text-[#B5B5B5] mb-1">from_node *</label>}
-                          <input type="text" value={edge.from_node} onChange={(e) => {
-                            const edges = [...createDraft.edges]; edges[ei] = { ...edges[ei], from_node: e.target.value }; setCreateDraft({ ...createDraft, edges })
-                          }} className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1.5 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]" placeholder="from_node" />
-                        </div>
-                        <div>
-                          {ei === 0 && <label className="block text-[10px] text-[#B5B5B5] mb-1">to_node *</label>}
-                          <input type="text" value={edge.to_node} onChange={(e) => {
-                            const edges = [...createDraft.edges]; edges[ei] = { ...edges[ei], to_node: e.target.value }; setCreateDraft({ ...createDraft, edges })
-                          }} className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1.5 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]" placeholder="to_node" />
-                        </div>
-                        <div>
-                          {ei === 0 && <label className="block text-[10px] text-[#B5B5B5] mb-1">handoff_type</label>}
-                          <input type="text" value={edge.handoff_type} onChange={(e) => {
-                            const edges = [...createDraft.edges]; edges[ei] = { ...edges[ei], handoff_type: e.target.value }; setCreateDraft({ ...createDraft, edges })
-                          }} className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1.5 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]" placeholder="handoff_type" />
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            const edges = createDraft.edges.filter((_, i) => i !== ei)
-                            setCreateDraft({ ...createDraft, edges })
-                          }}
-                          className="h-7 w-7 p-0 text-[#B5B5B5] hover:text-red-500"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* 错误提示 */}
-              {createFormError && (
-                <div className="mb-3 rounded-lg border border-red/20 bg-red/5 p-3 text-xs text-red-500 whitespace-pre-line">
-                  {createFormError}
-                </div>
-              )}
+              {/* DAG 编辑器 */}
+              <DagEditor
+                draft={createDraft}
+                onChange={(draft) => {
+                  setCreateDraft(draft)
+                  setCreateFormError(null)
+                }}
+                errors={createFormError ? createFormError.split("\n") : []}
+                disabled={createSubmitting}
+              />
 
               {/* 操作按钮 */}
               <div className="flex items-center gap-2">
