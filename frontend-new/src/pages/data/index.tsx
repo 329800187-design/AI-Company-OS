@@ -2,11 +2,12 @@ import { useState } from "react"
 import { motion } from "framer-motion"
 import {
   BarChart3, Sparkles, Loader2, FileText, CheckCircle2, AlertCircle,
-  ChevronDown, RotateCcw, Copy, Check,
+  ChevronDown, RotateCcw, Copy, Check, Database, Link, FileUp, Type,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
 import { api } from "@/api/client"
 import { SaveToDeliveryButton } from "@/components/features/save-to-delivery-button"
 
@@ -209,10 +210,27 @@ function DataStructuredOutput({ output }: { output: Record<string, any> }) {
   )
 }
 
+// ── 数据源类型 ───────────────────────────────────────────────────────────────
+
+type DataSourceMode = "none" | "inline" | "file_path" | "url"
+
+const DATA_SOURCE_OPTIONS: { key: DataSourceMode; label: string; icon: typeof Database; desc: string }[] = [
+  { key: "none", label: "无数据", icon: FileText, desc: "仅生成分析框架" },
+  { key: "inline", label: "粘贴数据", icon: Type, desc: "粘贴 CSV / JSON" },
+  { key: "file_path", label: "文件路径", icon: FileUp, desc: "本地 CSV / JSON 路径" },
+  { key: "url", label: "远程 URL", icon: Link, desc: "在线 CSV / JSON 链接" },
+]
+
 // ── 主页面 ──────────────────────────────────────────────────────────────────
 
 export default function DataPage() {
   const [goal, setGoal] = useState("")
+
+  // 数据源状态
+  const [dsMode, setDsMode] = useState<DataSourceMode>("none")
+  const [inlineData, setInlineData] = useState("")
+  const [filePath, setFilePath] = useState("")
+  const [dataUrl, setDataUrl] = useState("")
 
   // Agent 执行状态
   const [isLoading, setIsLoading] = useState(false)
@@ -234,10 +252,18 @@ export default function DataPage() {
     "帮我做一份电商运营数据分析简报",
   ]
 
+  // ── 数据源是否已填 ───────────────────────────────────────────────────────
+
+  const dsReady =
+    dsMode === "none" ||
+    (dsMode === "inline" && inlineData.trim().length > 0) ||
+    (dsMode === "file_path" && filePath.trim().length > 0) ||
+    (dsMode === "url" && dataUrl.trim().length > 0)
+
   // ── Agent 优先执行 ──────────────────────────────────────────────────────
 
   const handleGenerate = async () => {
-    if (!goal.trim()) return
+    if (!goal.trim() || !dsReady) return
 
     setIsLoading(true)
     setAgentResult(null)
@@ -245,12 +271,18 @@ export default function DataPage() {
     setFallbackArtifact(null)
     setError(null)
 
+    // 构造 input：根据数据源类型放入对应字段
+    const input: Record<string, unknown> = { goal }
+    if (dsMode === "inline") input.data = inlineData.trim()
+    else if (dsMode === "file_path") input.file_path = filePath.trim()
+    else if (dsMode === "url") input.url = dataUrl.trim()
+
     try {
       const result = await api.executeAgent("data", {
         goal,
         task_type: "data_analyze",
         context: {},
-        input: { goal },
+        input,
       })
       setAgentResult(result)
     } catch (err) {
@@ -338,9 +370,9 @@ export default function DataPage() {
           <div className="text-sm">
             <p className="text-blue-400 font-medium">数据分析说明</p>
             <p className="text-[#8A8A8A] mt-1">
-              当前生成<strong>数据分析报告框架/简报</strong>，不是直接读取真实文件。
+              可以<strong>粘贴真实数据</strong>或提供<strong>文件路径 / URL</strong>，Agent 将直接读取并分析。
               <br />
-              报告包含：分析目标、数据范围假设、核心指标、趋势观察、异常点检查、业务解释、行动建议、后续需要补充的数据。
+              若不提供数据源，将生成<strong>数据分析报告框架/简报</strong>。
             </p>
           </div>
         </div>
@@ -370,9 +402,76 @@ export default function DataPage() {
           ))}
         </div>
 
+        {/* ── 数据源选择 ──────────────────────────────────────────────── */}
+        <div className="mt-5 pt-4 border-t border-[#E5E5E5]">
+          <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
+            <Database className="w-4 h-4 text-[#8A8A8A]" />
+            数据来源
+          </h4>
+
+          {/* 类型切换 */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {DATA_SOURCE_OPTIONS.map(({ key, label, icon: Icon, desc }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setDsMode(key)}
+                className={`flex flex-col items-center gap-1 p-3 rounded-xl border text-center transition-colors ${
+                  dsMode === key
+                    ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                    : "border-[#E5E5E5] text-[#8A8A8A] hover:border-[#B5B5B5] hover:text-[#333]"
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                <span className="text-xs font-medium">{label}</span>
+                <span className="text-[10px] leading-tight">{desc}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* 粘贴数据 */}
+          {dsMode === "inline" && (
+            <div className="mt-3">
+              <Textarea
+                value={inlineData}
+                onChange={(e) => setInlineData(e.target.value)}
+                placeholder={"粘贴 CSV 或 JSON 数据，例如：\nname,age,score\nAlice,25,90\nBob,30,85"}
+                className="min-h-[120px] text-sm font-mono bg-[#F4F3EF] border-[#E5E5E5] rounded-xl"
+              />
+              <p className="text-[10px] text-[#8A8A8A] mt-1">支持 CSV 格式或 JSON 数组</p>
+            </div>
+          )}
+
+          {/* 文件路径 */}
+          {dsMode === "file_path" && (
+            <div className="mt-3">
+              <Input
+                value={filePath}
+                onChange={(e) => setFilePath(e.target.value)}
+                placeholder="例如：E:\data\sales.csv 或 /home/user/data.json"
+                className="text-sm bg-[#F4F3EF] border-[#E5E5E5] rounded-xl"
+              />
+              <p className="text-[10px] text-[#8A8A8A] mt-1">服务器上的 CSV / JSON 文件绝对路径</p>
+            </div>
+          )}
+
+          {/* URL */}
+          {dsMode === "url" && (
+            <div className="mt-3">
+              <Input
+                value={dataUrl}
+                onChange={(e) => setDataUrl(e.target.value)}
+                placeholder="例如：https://example.com/data.csv"
+                className="text-sm bg-[#F4F3EF] border-[#E5E5E5] rounded-xl"
+              />
+              <p className="text-[10px] text-[#8A8A8A] mt-1">远程 CSV / JSON URL，最大 10MB</p>
+            </div>
+          )}
+        </div>
+
         <Button
           onClick={handleGenerate}
-          disabled={!goal.trim() || isLoading}
+          disabled={!goal.trim() || !dsReady || isLoading}
           className="mt-4 w-full"
         >
           {isLoading ? (
@@ -430,6 +529,21 @@ export default function DataPage() {
             )}
             {!!agentResult.metadata?.source && (
               <Badge variant="outline">来源: {String(agentResult.metadata.source)}</Badge>
+            )}
+            {/* 数据来源标识 */}
+            {agentResult.metadata?.data_source_type && agentResult.metadata.data_source_type !== "none" && (
+              <Badge variant="success" className="gap-1">
+                <Database className="w-3 h-3" />
+                真实数据 · {String(agentResult.metadata.data_source_type).toUpperCase()}
+                {typeof agentResult.metadata.sample_rows === "number" && agentResult.metadata.sample_rows > 0
+                  ? ` (${agentResult.metadata.sample_rows} 行)` : ""}
+              </Badge>
+            )}
+            {agentResult.metadata?.data_source_type === "none" && (
+              <Badge variant="outline" className="gap-1">
+                <FileText className="w-3 h-3" />
+                框架建议（无真实数据）
+              </Badge>
             )}
             {agentResult.ok && (
               <Button
@@ -514,6 +628,12 @@ export default function DataPage() {
                 <Sparkles className="w-4 h-4 text-emerald-500" />
                 <h4 className="text-sm font-medium">数据分析结果</h4>
               </div>
+              {/* 无真实数据提示 */}
+              {agentResult.metadata?.data_source_type === "none" && (
+                <div className="mb-4 p-3 rounded-lg border border-amber-200 bg-amber-50 text-xs text-amber-700">
+                  ⚠️ 当前为框架建议，未提供真实数据。如需真实分析，请在上方选择数据来源后重新提交。
+                </div>
+              )}
               <DataStructuredOutput output={agentResult.structured_output || agentResult.output} />
             </div>
           )}
@@ -633,7 +753,8 @@ export default function DataPage() {
       {!agentResult && !fallbackResult && !isLoading && (
         <div className="p-6 rounded-2xl border border-[#E5E5E5] bg-white/80 backdrop-blur-sm text-center py-12">
           <FileText className="w-12 h-12 mx-auto text-[#8A8A8A] mb-4" />
-          <p className="text-[#8A8A8A]">输入数据分析目标，生成数据分析报告框架</p>
+          <p className="text-[#8A8A8A]">输入数据分析目标，选择数据来源，生成分析报告</p>
+          <p className="text-[10px] text-[#8A8A8A] mt-1">支持粘贴 CSV/JSON、本地文件路径或远程 URL</p>
         </div>
       )}
     </div>
