@@ -311,6 +311,30 @@ def _render_image(result: Dict, goal: str, title: Optional[str] = None) -> str:
             lines.append(f"- {lim}")
         lines.append("")
 
+    # 生成的图片 (Phase 4.8)
+    generated_images = so.get("generated_images", [])
+    if generated_images:
+        lines += ["## 生成图片", ""]
+        provider = result.get("meta", {}).get("image_provider", "unknown")
+        lines.append(f"> Provider: {provider}")
+        lines.append("")
+        for img in generated_images:
+            url = img.get("url", "")
+            revised = img.get("revised_prompt", "")
+            is_mock = img.get("is_mock", False)
+            mock_tag = " (模拟)" if is_mock else ""
+            lines.append(f"### 图片 {img.get('index', 0) + 1}{mock_tag}")
+            lines.append("")
+            if url:
+                lines.append(f"![图片]({url})")
+                lines.append("")
+                lines.append(f"URL: {url}")
+                lines.append("")
+            if revised:
+                lines.append(f"修订提示词: {revised}")
+                lines.append("")
+        lines.append("")
+
     # 如果以上都没有，尝试通用 content
     if not any(so.get(k) for k in ["image_prompt", "main_prompt", "detail_prompt", "scene_prompt", "negative_prompt", "subject", "style"]):
         content = so.get("content", "")

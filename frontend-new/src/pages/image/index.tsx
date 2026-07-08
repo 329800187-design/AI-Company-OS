@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   ChevronDown,
   RotateCcw,
+  ImageIcon,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -91,6 +92,94 @@ function isAgentUnavailable(result: AgentRunResult): boolean {
     err.includes("not found") ||
     err.includes("api key") ||
     err.includes("unexpected")
+  )
+}
+
+// ── 生成图片展示组件 ────────────────────────────────────────────────
+
+interface GeneratedImage {
+  url: string
+  revised_prompt?: string
+  size?: string
+  index: number
+  is_mock?: boolean
+}
+
+function GeneratedImagesGallery({
+  images,
+  provider,
+}: {
+  images: GeneratedImage[]
+  provider?: string
+}) {
+  if (!images || images.length === 0) return null
+
+  return (
+    <div className="p-5 rounded-xl border border-[#E5E5E5] bg-white">
+      <div className="flex items-center gap-2 mb-4">
+        <ImageIcon className="w-4 h-4 text-violet-500" />
+        <h4 className="text-sm font-medium">生成图片</h4>
+        {provider && (
+          <Badge variant="secondary" className="text-xs">
+            {provider === "mock" ? "模拟生图" : provider}
+          </Badge>
+        )}
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {images.map((img, i) => (
+          <div
+            key={i}
+            className="rounded-lg border border-[#E5E5E5] overflow-hidden"
+          >
+            {img.url && (
+              <div className="relative aspect-square bg-[#F4F3EF]">
+                {img.is_mock ? (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-[#8A8A8A]">
+                    <ImageIcon className="w-12 h-12 mb-2 opacity-30" />
+                    <span className="text-xs">模拟生图</span>
+                    <span className="text-xs text-[#D4D4D4] mt-1">
+                      配置 OPENAI_API_KEY 后可生成真实图片
+                    </span>
+                  </div>
+                ) : (
+                  <img
+                    src={img.url}
+                    alt={`生成图片 ${i + 1}`}
+                    className="w-full h-full object-cover"
+                    loading="lazy"
+                  />
+                )}
+              </div>
+            )}
+            <div className="p-3 space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-[#8A8A8A]">
+                  图片 {i + 1}
+                </span>
+                {img.size && (
+                  <span className="text-xs text-[#D4D4D4]">{img.size}</span>
+                )}
+              </div>
+              {img.revised_prompt && (
+                <p className="text-xs text-[#666] line-clamp-2">
+                  {img.revised_prompt}
+                </p>
+              )}
+              {img.url && !img.is_mock && (
+                <a
+                  href={img.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-blue-500 hover:underline"
+                >
+                  查看原图 ↗
+                </a>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -286,7 +375,7 @@ export default function ImagePage() {
         <div>
           <h1 className="text-2xl font-bold">做图片</h1>
           <p className="text-[#8A8A8A]">
-            当前生成<strong>图片提示词包</strong>，不是直接生成图片
+            生成<strong>图片提示词</strong>并可选生成图片
           </p>
         </div>
       </div>
@@ -296,9 +385,10 @@ export default function ImagePage() {
         <div className="flex items-start gap-3">
           <Sparkles className="w-5 h-5 text-blue-400 mt-0.5" />
           <div>
-            <h3 className="font-medium text-blue-400">图片提示词包模式</h3>
+            <h3 className="font-medium text-blue-400">图片提示词 + 可选生图</h3>
             <p className="text-sm text-[#8A8A8A] mt-1">
-              系统将为你生成产品图片的提示词（Prompt），包含主图、细节图、场景图、风格关键词、负面提示词等。你需要配合 Midjourney / Stable Diffusion / DALL-E 等图片生成工具使用。
+              系统将为你生成产品图片的提示词（Prompt），并可选调用图片生成 API 生成图片。
+              默认使用模拟生图，配置 OPENAI_API_KEY 后可使用 DALL-E 生成真实图片。
             </p>
           </div>
         </div>
@@ -324,7 +414,7 @@ export default function ImagePage() {
           ) : (
             <Sparkles className="w-4 h-4" />
           )}
-          {isLoading ? "正在生成提示词包..." : "生成提示词包"}
+          {isLoading ? "正在生成图片..." : "生成图片"}
         </Button>
 
         {/* Example buttons */}
@@ -465,13 +555,24 @@ export default function ImagePage() {
 
           {/* Agent 成功 → 结构化展示 */}
           {agentResult.ok && Boolean(agentResult.structured_output || agentResult.output) && (
-            <div className="p-5 rounded-xl border border-[#E5E5E5] bg-white">
-              <div className="flex items-center gap-2 mb-4">
-                <Sparkles className="w-4 h-4 text-violet-500" />
-                <h4 className="text-sm font-medium">图片提示词结果</h4>
+            <>
+              {/* 生成图片展示 */}
+              <GeneratedImagesGallery
+                images={
+                  ((agentResult.structured_output || agentResult.output) as Record<string, unknown>)
+                    .generated_images as GeneratedImage[] || []
+                }
+                provider={String(agentResult.metadata?.image_provider || "")}
+              />
+
+              <div className="p-5 rounded-xl border border-[#E5E5E5] bg-white">
+                <div className="flex items-center gap-2 mb-4">
+                  <Sparkles className="w-4 h-4 text-violet-500" />
+                  <h4 className="text-sm font-medium">图片提示词结果</h4>
+                </div>
+                <StructuredOutput output={agentResult.structured_output || agentResult.output} />
               </div>
-              <StructuredOutput output={agentResult.structured_output || agentResult.output} />
-            </div>
+            </>
           )}
 
           {/* Agent 失败 → 显示错误 + fallback 按钮 */}
@@ -590,10 +691,10 @@ export default function ImagePage() {
         <div className="p-6 rounded-2xl border border-[#E5E5E5] bg-white/80 backdrop-blur-sm text-center py-12">
           <Image className="w-12 h-12 mx-auto text-[#8A8A8A] mb-4" />
           <p className="text-[#8A8A8A]">
-            输入产品描述，生成图片提示词包
+            输入产品描述，生成图片提示词和图片
           </p>
           <p className="text-xs text-[#D4D4D4] mt-2">
-            支持 Midjourney / Stable Diffusion / DALL-E 等工具
+            支持 DALL-E 等图片生成 API，配置 API Key 后可用
           </p>
         </div>
       )}
