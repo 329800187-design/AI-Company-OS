@@ -79,6 +79,52 @@ def list_providers():
     return {"providers": get_provider_info(), "current": AI_PROVIDER}
 
 
+@router.get("/providers/health", summary="获取 Search/Image Provider 健康状态")
+def providers_health():
+    """返回 Search 和 Image Provider 状态（不暴露 API Key）
+
+    用于前端 Provider 状态面板，显示：
+    - 当前使用的 provider 名称
+    - 是否为 mock 模式
+    - API key 是否已配置
+    - 各 provider 的可用性
+    """
+    from backend.services.web_search_service import get_provider_info as get_search_info
+    from backend.services.image_generation_service import get_image_provider
+
+    # Search provider
+    search_info = get_search_info()
+
+    # Image provider
+    img_provider = get_image_provider()
+    img_has_key = bool(os.getenv("OPENAI_API_KEY"))
+    img_env = os.getenv("IMAGE_PROVIDER", "auto")
+
+    return {
+        "search": {
+            "name": search_info["provider"],
+            "is_mock": "Mock" in search_info["provider"],
+            "has_api_key": search_info["has_api_key"],
+            "env_provider": search_info["env_provider"],
+            "available": True,  # mock always available
+            "providers": [
+                {"name": "serpapi", "has_key": bool(os.getenv("SERPAPI_API_KEY")), "env_var": "SERPAPI_API_KEY"},
+                {"name": "bing", "has_key": bool(os.getenv("BING_SEARCH_API_KEY")), "env_var": "BING_SEARCH_API_KEY"},
+            ],
+        },
+        "image": {
+            "name": img_provider.name,
+            "is_mock": img_provider.name == "mock",
+            "has_api_key": img_has_key,
+            "env_provider": img_env,
+            "available": True,
+            "providers": [
+                {"name": "openai", "has_key": img_has_key, "env_var": "OPENAI_API_KEY"},
+            ],
+        },
+    }
+
+
 @router.get("/status", summary="获取完整配置状态")
 def config_status():
     """获取当前系统配置（敏感信息脱敏）"""

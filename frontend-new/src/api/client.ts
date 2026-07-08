@@ -106,6 +106,27 @@ class ApiClient {
     }>("/config/providers")
   }
 
+  async getProvidersHealth() {
+    return this.request<{
+      search: {
+        name: string
+        is_mock: boolean
+        has_api_key: boolean
+        env_provider: string
+        available: boolean
+        providers: Array<{ name: string; has_key: boolean; env_var: string }>
+      }
+      image: {
+        name: string
+        is_mock: boolean
+        has_api_key: boolean
+        env_provider: string
+        available: boolean
+        providers: Array<{ name: string; has_key: boolean; env_var: string }>
+      }
+    }>("/config/providers/health")
+  }
+
   async saveConfig(config: Record<string, unknown>) {
     return this.request<{ success: boolean; message: string }>("/config/save", {
       method: "POST",

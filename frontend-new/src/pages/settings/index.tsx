@@ -16,6 +16,8 @@ import {
   XCircle,
   AlertCircle,
   Globe,
+  Search,
+  Image as ImageIcon,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -70,11 +72,27 @@ export default function SettingsPage() {
   const [currentBrain, setCurrentBrain] = useState("")
   const [switchingBrain, setSwitchingBrain] = useState("")
 
+  // Provider health state
+  interface ProviderHealthItem {
+    name: string
+    is_mock: boolean
+    has_api_key: boolean
+    env_provider: string
+    available: boolean
+    providers: Array<{ name: string; has_key: boolean; env_var: string }>
+  }
+  const [providerHealth, setProviderHealth] = useState<{
+    search: ProviderHealthItem
+    image: ProviderHealthItem
+  } | null>(null)
+  const [loadingProviders, setLoadingProviders] = useState(true)
+
   useEffect(() => {
     loadConfig()
     loadHealth()
     loadProviders()
     loadBrains()
+    loadProvidersHealth()
   }, [])
 
   const loadConfig = async () => {
@@ -108,6 +126,18 @@ export default function SettingsPage() {
       setCurrentBrain(res.current?.brain_id || "")
     } catch {
       // ignore
+    }
+  }
+
+  const loadProvidersHealth = async () => {
+    setLoadingProviders(true)
+    try {
+      const res = await api.getProvidersHealth()
+      setProviderHealth(res)
+    } catch {
+      // ignore
+    } finally {
+      setLoadingProviders(false)
     }
   }
 
@@ -259,6 +289,47 @@ export default function SettingsPage() {
     </div>
   )
 
+  const ProviderItem = ({
+    label,
+    isMock,
+    icon: Icon,
+    fixHint,
+  }: {
+    label: string
+    isMock: boolean
+    icon: React.ElementType
+    fixHint?: string
+  }) => (
+    <div className="flex items-center justify-between py-3 border-b border-border last:border-0">
+      <div className="flex items-center gap-3">
+        <div
+          className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+            !isMock ? "bg-green/10" : "bg-warning/10"
+          }`}
+        >
+          <Icon className={`w-4 h-4 ${!isMock ? "text-green" : "text-warning"}`} />
+        </div>
+        <div>
+          <span className="text-sm font-medium">{label}</span>
+          {fixHint && (
+            <p className="text-xs text-muted-foreground mt-0.5">{fixHint}</p>
+          )}
+        </div>
+      </div>
+      {isMock ? (
+        <Badge variant="warning" className="text-xs">
+          <AlertCircle className="w-3 h-3 mr-1" />
+          Mock 模式
+        </Badge>
+      ) : (
+        <Badge variant="success" className="text-xs">
+          <CheckCircle2 className="w-3 h-3 mr-1" />
+          真实 API
+        </Badge>
+      )}
+    </div>
+  )
+
   return (
     <div className="space-y-6">
       <motion.div
@@ -329,6 +400,55 @@ export default function SettingsPage() {
           <div className="mt-4 pt-3 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
             <span>系统版本</span>
             <span>{health.version}</span>
+          </div>
+        )}
+      </motion.div>
+
+      {/* Provider Status Card */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.12 }}
+        className="p-6 rounded-2xl border border-[#E5E5E5] bg-white"
+      >
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Globe className="w-5 h-5 text-[#0B0B0B]" />
+            <h3 className="font-semibold">Provider 状态</h3>
+          </div>
+          <Button variant="ghost" size="sm" onClick={loadProvidersHealth} disabled={loadingProviders}>
+            <Loader2 className={`w-3.5 h-3.5 ${loadingProviders ? "animate-spin" : ""}`} />
+            刷新
+          </Button>
+        </div>
+
+        {providerHealth ? (
+          <>
+            {/* Search Provider Section */}
+            <div className="mb-4">
+              <p className="text-xs font-medium text-[#8A8A8A] mb-2">联网搜索</p>
+              <ProviderItem
+                label={providerHealth.search.is_mock ? "Mock Search" : providerHealth.search.name === "SerpAPIProvider" ? "SerpAPI" : "Bing Search"}
+                isMock={providerHealth.search.is_mock}
+                icon={Search}
+                fixHint={!providerHealth.search.has_api_key ? "配置 SERPAPI_API_KEY 或 BING_SEARCH_API_KEY 启用真实搜索" : undefined}
+              />
+            </div>
+
+            {/* Image Provider Section */}
+            <div>
+              <p className="text-xs font-medium text-[#8A8A8A] mb-2">图片生成</p>
+              <ProviderItem
+                label={providerHealth.image.is_mock ? "Mock Image" : "OpenAI DALL-E"}
+                isMock={providerHealth.image.is_mock}
+                icon={ImageIcon}
+                fixHint={!providerHealth.image.has_api_key ? "配置 OPENAI_API_KEY 启用 DALL-E 图片生成" : undefined}
+              />
+            </div>
+          </>
+        ) : (
+          <div className="text-sm text-muted-foreground py-4 text-center">
+            加载中...
           </div>
         )}
       </motion.div>
