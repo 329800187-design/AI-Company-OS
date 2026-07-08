@@ -2,7 +2,7 @@
 
 **版本 1.5.0**
 
-## 最新状态（2026-07-08）
+## 最新状态（2026-07-09）
 
 ### 第一阶段：业务部门 MVP 闭环 ✅ 已完成
 
@@ -16,7 +16,7 @@
 
 当前分支：`codex/current-progress-20260705`
 
-### 第四阶段：真实能力接入 🔄 进行中
+### 第四阶段：真实能力接入 ✅ 核心闭环完成
 
 Phase 4.1 已完成 Research Agent 联网搜索 MVP：
 
@@ -36,6 +36,23 @@ Phase 4.4 已完成 Data Agent 真实数据源 MVP：
 - 返回 metadata 增量字段：`data_source_type`、`sample_rows`。
 - MiniDelivery 的 Data artifact 会展示「数据来源」和「样本行数」。
 - URL 数据源读取带 `timeout=15s` 和 `10MB` 响应大小限制。
+
+Phase 4.8 已完成 Image Generation Provider 骨架：
+
+- 新增 `backend/services/image_generation_service.py`，提供可替换图片生成 Provider 接口。
+- 默认使用 `MockImageProvider` 返回占位图，可通过 `OPENAI_API_KEY` 启用 `OpenAIImageProvider`（DALL-E 3）。
+- `Image Agent` 返回 `metadata.image_provider` 和 `structured_output.generated_images`。
+- MiniDelivery 的 Image artifact 会展示生成图片、provider 和 URL。
+- 前端 Image 页面展示生成图片卡片。
+
+Phase 4 能力状态：
+
+- ✅ **真实能力已验收**：CSV / JSON / inline / URL 核心数据源读取
+- ⚙️ **服务层支持**：TSV / Parquet 数据源读取
+- ⚠️ **Provider 骨架（代码就绪，真实 key 未验收）**：SerpAPI / Bing 搜索、OpenAI DALL-E 图片生成
+- 📝 **Mock 能力**：MockSearchProvider、MockImageProvider
+
+详细验收文档见：`docs/phase4_real_capabilities_acceptance.md`
 
 Boss Lite 已完成能力：
 
@@ -69,6 +86,8 @@ cd frontend-new && npm run build              # ✅ 通过
 - `docs/phase3_collaboration_graph_design.md` — 第三阶段 CollaborationGraph 设计 + 验收
 - `docs/phase4_research_web_search.md` — 第四阶段 Research 联网搜索 MVP 验收
 - `docs/phase4_data_source_mvp.md` — 第四阶段 Data Agent 真实数据源 MVP 验收
+- `docs/phase4_image_generation_provider.md` — 第四阶段 Image Generation Provider 骨架验收
+- `docs/phase4_real_capabilities_acceptance.md` — 第四阶段真实能力接入最终验收文档
 - `docs/business_pages_user_guide.md` — 业务页面使用说明
 - `docs/project_progress_snapshot_2026-07-06.md` — 详细进度快照
 - `docs/VISION.md` — 项目愿景
@@ -95,8 +114,8 @@ cd frontend-new && npm run build              # ✅ 通过
 |------|------|----------|
 | Boss Lite | 一句话指挥台 | 一句话目标 → 5 Agent 并行 → 作战报告 → 自动保存 |
 | Marketing Agent | 市场文案部 | 产出文案、品牌策略、活动方案 |
-| Image Agent | 美术总监部 | 产出图片提示词和视觉 brief |
-| Data Agent | 数据分析部 | 产出数据分析报告框架/简报 |
+| Image Agent | 美术总监部 | 产出图片提示词 + 图片生成 Provider 接口 |
+| Data Agent | 数据分析部 | 真实数据源读取 + 数据分析报告 |
 | Research Agent | 情报研究部 | 产出结构化研究简报 |
 | Website Agent | 网站策划部 | 产出落地页文案和页面方案 |
 | MiniDelivery | 后勤归档 | 保存、预览、下载交付物 |
@@ -105,11 +124,11 @@ cd frontend-new && npm run build              # ✅ 通过
 
 ## 当前进度快照
 
-最后保存时间：2026-07-07
+最后保存时间：2026-07-09
 
 当前项目已推进到：
 
-> 第三阶段 CollaborationGraph 已接入 Boss Lite，自定义 DAG API + Graph Template 前后端闭环已完成
+> 第四阶段真实能力接入核心闭环完成，三条主线（Research Web Search / Data Real Data Source / Image Generation Provider）均已交付
 
 已经完成：
 
@@ -144,21 +163,31 @@ cd frontend-new && npm run build              # ✅ 通过
   - Graph Template 闭环：创建 → 列表 → 编辑 → 克隆 → 删除 → 按模板执行 → 结果可视化。
   - 待做：跨 Mission 协作、图编辑器、多用户权限、版本历史。
 
+- **第四阶段（真实能力接入）** ✅ 核心闭环完成
+  - ✅ **Phase 4.1 Research Web Search**：`web_search_service.py` 可替换搜索服务层，Mock / SerpAPI / Bing 三 provider。
+  - ✅ **Phase 4.4 Data Real Data Source**：`data_source_service.py` 统一数据源读取，CSV / JSON / inline / URL 核心路径已验收，TSV / Parquet 服务层支持。
+  - ✅ **Phase 4.8 Image Generation Provider**：`image_generation_service.py` 图片生成 Provider 骨架，Mock / OpenAI DALL-E 3。
+  - ✅ 三条主线均采用 Provider 模式：统一接口 + 可替换实现 + mock 默认 fallback。
+  - ✅ 真实能力已验收：CSV / JSON / inline / URL 数据源读取。
+  - ⚙️ 服务层支持：TSV / Parquet 数据源读取。
+  - ⚠️ Provider 骨架（代码就绪，真实 key 未验收）：SerpAPI / Bing 搜索、OpenAI DALL-E 图片生成。
+  - ✅ 前端 Research / Data / Image 页面均已适配新能力展示。
+  - ✅ MiniDelivery artifact 展示：sources / 数据来源 / 生成图片。
+
 ## 下一步计划
 
-第一阶段、第二阶段 Boss Lite 已完成，第三阶段 CollaborationGraph 已接入 Boss Lite，并新增自定义 DAG API 与 Graph Template 创建/使用闭环。下一步可选方向：
+第一阶段、第二阶段 Boss Lite 已完成，第三阶段 CollaborationGraph 已接入 Boss Lite，第四阶段真实能力接入核心闭环完成。下一步建议进入 **Phase 5：产品化**：
 
-1. **前端 DAG 编辑器（P1）** — 从表单编辑升级为图形化配置 nodes/edges
-2. ~~**模板更新（P1）**~~ ✅ 已完成 — PUT API + 前端编辑模式
-3. ~~**Research 联网搜索 MVP（P1）**~~ ✅ 已完成 — Research Agent 已接入可替换 Web Search Service；无 API key 时 fallback 到 mock provider
-4. ~~**真实数据源接入（P1）**~~ ✅ 已完成 — Data Agent 已支持 CSV / JSON / inline / URL 数据源 MVP
-5. **真实图片生成（P2）** — Image Agent 接入图片生成 API
-6. **PDF 导出（P2）** — 作战报告一键导出 PDF 格式
-7. **历史 Mission 对比（P2）** — Boss Lite 历史记录对比分析
+1. **PDF 导出（P1）** — 作战报告一键导出 PDF 格式
+2. **历史 Mission 对比（P1）** — Boss Lite 历史记录对比分析
+3. **真实 API key 验收（P1）** — 用 SerpAPI / OpenAI key 做端到端验收
+4. **前端 DAG 编辑器（P2）** — 从表单编辑升级为图形化配置 nodes/edges
+5. **多用户权限（P2）** — 用户认证、团队协作
+6. **部署优化（P2）** — Docker 生产环境配置、CI/CD
 
 当前边界：
 
-- 不做真实图片生成（Image Agent 产出提示词框架）。
+- Image Generation Provider 骨架已完成，真实 API key 端到端验收待做。
 - Research 已接入可替换 Web Search Service；当前不做浏览器爬虫/OpenClaw 深度抓取。
 - 不让 Governance 接管普通业务 Agent 的生产链路。
 - 不把 template fallback 伪装成真实 LLM 产出。
@@ -172,6 +201,8 @@ cd frontend-new && npm run build              # ✅ 通过
 - 🔌 **多Provider支持** — DeepSeek/OpenAI/Claude 一键切换
 - 🔒 **安全可靠** — 输入验证、速率限制、敏感信息脱敏
 - 📊 **数据分析** — 上传Excel/CSV，自动分析生成报告
+- 🌐 **联网搜索** — Research Agent 接入可替换 Web Search Service（SerpAPI/Bing）
+- 🖼️ **图片生成** — Image Agent 接入可替换图片生成 Provider（OpenAI DALL-E 3）
 
 ## 🚀 快速开始
 
