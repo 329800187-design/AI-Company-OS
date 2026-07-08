@@ -29,6 +29,14 @@ Phase 4.1 已完成 Research Agent 联网搜索 MVP：
   - `SERPAPI_API_KEY=...`
   - `BING_SEARCH_API_KEY=...`
 
+Phase 4.4 已完成 Data Agent 真实数据源 MVP：
+
+- 新增 `backend/services/data_source_service.py`，统一读取 CSV / JSON / inline / URL 数据。
+- `Data Agent` 会优先检测真实数据源；有数据时走 pandas 分析路径，无数据时保持原有 LLM-first / template fallback。
+- 返回 metadata 增量字段：`data_source_type`、`sample_rows`。
+- MiniDelivery 的 Data artifact 会展示「数据来源」和「样本行数」。
+- URL 数据源读取带 `timeout=15s` 和 `10MB` 响应大小限制。
+
 Boss Lite 已完成能力：
 
 - 一句话目标输入，支持 8 个常用作战模板一键填入
@@ -60,6 +68,7 @@ cd frontend-new && npm run build              # ✅ 通过
 - `docs/phase1_acceptance_checklist.md` — 第一阶段验收清单
 - `docs/phase3_collaboration_graph_design.md` — 第三阶段 CollaborationGraph 设计 + 验收
 - `docs/phase4_research_web_search.md` — 第四阶段 Research 联网搜索 MVP 验收
+- `docs/phase4_data_source_mvp.md` — 第四阶段 Data Agent 真实数据源 MVP 验收
 - `docs/business_pages_user_guide.md` — 业务页面使用说明
 - `docs/project_progress_snapshot_2026-07-06.md` — 详细进度快照
 - `docs/VISION.md` — 项目愿景
@@ -142,7 +151,7 @@ cd frontend-new && npm run build              # ✅ 通过
 1. **前端 DAG 编辑器（P1）** — 从表单编辑升级为图形化配置 nodes/edges
 2. ~~**模板更新（P1）**~~ ✅ 已完成 — PUT API + 前端编辑模式
 3. ~~**Research 联网搜索 MVP（P1）**~~ ✅ 已完成 — Research Agent 已接入可替换 Web Search Service；无 API key 时 fallback 到 mock provider
-4. **真实数据源接入（P1）** — Data Agent 接入真实数据库/API
+4. ~~**真实数据源接入（P1）**~~ ✅ 已完成 — Data Agent 已支持 CSV / JSON / inline / URL 数据源 MVP
 5. **真实图片生成（P2）** — Image Agent 接入图片生成 API
 6. **PDF 导出（P2）** — 作战报告一键导出 PDF 格式
 7. **历史 Mission 对比（P2）** — Boss Lite 历史记录对比分析

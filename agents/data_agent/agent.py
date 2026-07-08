@@ -26,6 +26,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from agents.base_agent import BaseAgent
+from backend.services.data_source_service import detect_and_load, DataSourceResult
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))), "output", "data_agent")
@@ -139,28 +140,51 @@ class DataAgent(BaseAgent):
 
     def _smart_dispatch(self, task: Dict, task_id: str) -> Dict:
         goal = task.get("goal", task.get("prompt", ""))
-        file_path = task.get("file_path", task.get("path", ""))
 
-        # 有文件 → 加载并分析（保留原有 pandas 路径）
+        # ── Phase 4.4: 优先通过 data_source_service 检测数据源 ──
+        ds_result = detect_and_load(task)
+        if ds_result.ok and ds_result.df is not None:
+            # 成功加载真实数据 → 走 pandas 分析路径
+            self._df = ds_result.df
+            self._file_name = ds_result.file_name
+            load_result = self._load_from_ds_result(ds_result, task_id)
+            explore_result = self._explore(task, task_id)
+            if explore_result.get("ok"):
+                return self._build_analysis_result(
+                    task_id, goal, load_result, explore_result,
+                    data_source_type=ds_result.source_type,
+                    row_count=ds_result.row_count,
+                )
+            return load_result
+
+        # ── 兜底：原有 file_path / content 检测（兼容 xlsx/xls 等）──
+        file_path = task.get("file_path", task.get("path", ""))
         if file_path and os.path.exists(file_path):
             load_result = self._load_data(task, task_id)
             if load_result.get("ok"):
                 explore_result = self._explore(task, task_id)
                 if explore_result.get("ok"):
-                    return self._build_analysis_result(task_id, goal, load_result, explore_result)
+                    ext = os.path.splitext(file_path)[1].lower()
+                    ds_type = "csv" if ext == ".csv" else "json" if ext == ".json" else "file"
+                    return self._build_analysis_result(
+                        task_id, goal, load_result, explore_result,
+                        data_source_type=ds_type,
+                    )
             return load_result
 
-        # 有 content → 加载并分析（保留原有 pandas 路径）
         content = task.get("content", task.get("data", ""))
         if content:
             load_result = self._load_data(task, task_id)
             if load_result.get("ok"):
                 explore_result = self._explore(task, task_id)
                 if explore_result.get("ok"):
-                    return self._build_analysis_result(task_id, goal, load_result, explore_result)
+                    return self._build_analysis_result(
+                        task_id, goal, load_result, explore_result,
+                        data_source_type="inline",
+                    )
             return load_result
 
-        # 纯文本目标 → LLM-first 数据分析报告生成
+        # ── 纯文本目标 → LLM-first 数据分析报告生成 ──
         return self._llm_first_dispatch(task, task_id, goal)
 
     # ── LLM-first 纯文本目标 ─────────────────────────────
@@ -182,6 +206,8 @@ class DataAgent(BaseAgent):
                     "fallback": False,
                     "model": getattr(self, "model", ""),
                     "source": "llm",
+                    "data_source_type": "none",
+                    "sample_rows": 0,
                 },
             )
 
@@ -400,6 +426,8 @@ class DataAgent(BaseAgent):
                 "fallback": True,
                 "fallback_reason": "无可用 LLM provider 或 API key，使用模板占位内容",
                 "source": "template",
+                "data_source_type": "none",
+                "sample_rows": 0,
             },
         )
         result["warnings"] = [
@@ -419,6 +447,16 @@ class DataAgent(BaseAgent):
         return topic[:max_len] or "未指定"
 
     # ── 加载 ──────────────────────────────────────────
+
+    def _load_from_ds_result(self, ds_result: DataSourceResult, task_id: str) -> Dict:
+        """从 DataSourceResult 构建加载结果（与 _load_data 输出格式一致）"""
+        return self.ok(task_id, "加载完成", {
+            "shape": [ds_result.row_count, ds_result.col_count],
+            "columns": ds_result.columns,
+            "dtypes": {k: str(v) for k, v in ds_result.df.dtypes.items()} if ds_result.df is not None else {},
+            "missing": int(ds_result.df.isnull().sum().sum()) if ds_result.df is not None else 0,
+            "preview": ds_result.df.head(5).to_dict(orient="records") if ds_result.df is not None else [],
+        })
 
     def _load_data(self, task: Dict, task_id: str) -> Dict:
         file_path = task.get("file_path", task.get("path", ""))
@@ -644,7 +682,9 @@ class DataAgent(BaseAgent):
     # ── 文件加载后 → 完整分析结果 ──────────────────────────
 
     def _build_analysis_result(self, task_id: str, goal: str,
-                                load_result: Dict, explore_result: Dict) -> Dict:
+                                load_result: Dict, explore_result: Dict, *,
+                                data_source_type: str = "none",
+                                row_count: int = 0) -> Dict:
         """将加载和探索结果合并为完整分析报告"""
         load_data = load_result.get("data", {})
         explore_data = explore_result.get("data", {})
@@ -753,6 +793,8 @@ class DataAgent(BaseAgent):
                 "model": getattr(self, 'model', ''),
                 "tokens_used": 0,
                 "fallback": False,
+                "data_source_type": data_source_type,
+                "sample_rows": row_count or (shape[0] if shape else 0),
             },
         }
 

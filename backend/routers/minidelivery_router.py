@@ -324,7 +324,19 @@ def _render_image(result: Dict, goal: str, title: Optional[str] = None) -> str:
 def _render_data(result: Dict, goal: str, title: Optional[str] = None) -> str:
     """渲染 data agent 的 Markdown 交付物"""
     so = result.get("structured_output") or result.get("output") or {}
+    meta = result.get("metadata", {})
     lines = [f"# {title or '数据分析报告'}", "", f"> 目标：{goal}", ""]
+
+    # ── 数据来源信息（Phase 4.4）──
+    data_source_type = meta.get("data_source_type", "none")
+    sample_rows = meta.get("sample_rows", 0)
+    ds_label = {"csv": "CSV 文件", "json": "JSON 文件", "inline": "内联数据", "none": "无真实数据（框架建议）"}.get(data_source_type, data_source_type)
+    lines += [
+        "## 数据来源", "",
+        f"- **来源类型**: {ds_label}",
+        f"- **样本行数**: {sample_rows}" if sample_rows > 0 else "- **样本行数**: 无",
+        "",
+    ]
 
     # 分析问题
     analysis_question = so.get("analysis_question", "")
@@ -904,6 +916,7 @@ def save_from_agent(request: SaveFromAgentRequest):
     )
 
     # 写入 result.json（完整元数据）
+    result_meta = result.get("metadata", {})
     result_json = {
         "task_id": task_id,
         "goal": request.goal,
@@ -915,6 +928,8 @@ def save_from_agent(request: SaveFromAgentRequest):
         "ok": result.get("ok", False),
         "mode": "agent_save",
         "summary": result.get("summary", ""),
+        "data_source_type": result_meta.get("data_source_type", "none"),
+        "sample_rows": result_meta.get("sample_rows", 0),
         "artifact_path": str(md_path),
         "raw_agent_result_path": str(raw_path),
     }
