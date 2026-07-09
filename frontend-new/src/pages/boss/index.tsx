@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { motion } from "framer-motion"
 import {
   AlertCircle,
@@ -7,6 +7,7 @@ import {
   ClipboardList,
   Download,
   EyeOff,
+  Upload,
   FileText,
   Globe2,
   History,
@@ -36,7 +37,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
-import { DagEditor } from "./DagEditor"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { DagEditor, type GraphTemplateDraft } from "./DagEditor"
 import { validateDag } from "./dag-validation"
 
 interface ModuleResult {
@@ -624,6 +626,62 @@ function extractKeyFields(agentId: string, so: Record<string, unknown>): Array<{
   return fields
 }
 
+const DRAFT_STORAGE_KEY = "boss_graph_template_draft_v1"
+
+function validateGraphTemplateDraft(data: unknown): { valid: true; draft: GraphTemplateDraft } | { valid: false; error: string } {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return { valid: false, error: "JSON 格式错误：不是对象" }
+  }
+
+  const object = data as Record<string, unknown>
+  if (typeof object.name !== "string") return { valid: false, error: "缺少 name 字段（字符串）" }
+  if (!Array.isArray(object.nodes)) return { valid: false, error: "缺少 nodes 数组" }
+  if (!Array.isArray(object.edges)) return { valid: false, error: "缺少 edges 数组" }
+  if (object.nodes.length === 0) return { valid: false, error: "nodes 至少需要 1 个节点" }
+
+  const nodeFields = ["id", "agent_id", "task_type", "title", "prompt"] as const
+  for (let index = 0; index < object.nodes.length; index++) {
+    const node = object.nodes[index]
+    if (!node || typeof node !== "object" || Array.isArray(node)) {
+      return { valid: false, error: `节点 ${index + 1}: 格式错误` }
+    }
+    const record = node as Record<string, unknown>
+    for (const field of nodeFields) {
+      if (typeof record[field] !== "string") {
+        return { valid: false, error: `节点 ${index + 1}: ${field} 必须是字符串` }
+      }
+    }
+  }
+
+  const edgeFields = ["from_node", "to_node", "handoff_type"] as const
+  for (let index = 0; index < object.edges.length; index++) {
+    const edge = object.edges[index]
+    if (!edge || typeof edge !== "object" || Array.isArray(edge)) {
+      return { valid: false, error: `边 ${index + 1}: 格式错误` }
+    }
+    const record = edge as Record<string, unknown>
+    for (const field of edgeFields) {
+      if (typeof record[field] !== "string") {
+        return { valid: false, error: `边 ${index + 1}: ${field} 必须是字符串` }
+      }
+    }
+  }
+
+  const draft: GraphTemplateDraft = {
+    name: object.name,
+    description: typeof object.description === "string" ? object.description : "",
+    goal_hint: typeof object.goal_hint === "string" ? object.goal_hint : "",
+    nodes: object.nodes as GraphTemplateDraft["nodes"],
+    edges: object.edges as GraphTemplateDraft["edges"],
+  }
+  const dagErrors = validateDag(draft.nodes, draft.edges)
+  if (dagErrors.length > 0) {
+    return { valid: false, error: dagErrors.map((error) => error.message).join("; ") }
+  }
+
+  return { valid: true, draft }
+}
+
 export default function BossPage() {
   // Mode: "command-center" or "boss-lite"
   const [mode, setMode] = useState<"command-center" | "boss-lite">("boss-lite")
@@ -834,25 +892,6 @@ export default function BossPage() {
   const [graphTemplateResult, setGraphTemplateResult] = useState<Record<string, unknown> | null>(null)
 
   // Graph Template 创建表单状态
-  interface GraphNodeDraft {
-    id: string
-    agent_id: string
-    task_type: string
-    title: string
-    prompt: string
-  }
-  interface GraphEdgeDraft {
-    from_node: string
-    to_node: string
-    handoff_type: string
-  }
-  interface GraphTemplateDraft {
-    name: string
-    description: string
-    goal_hint: string
-    nodes: GraphNodeDraft[]
-    edges: GraphEdgeDraft[]
-  }
   const DEFAULT_DRAFT: GraphTemplateDraft = {
     name: "新品上线协作图",
     description: "research → marketing",
@@ -870,6 +909,123 @@ export default function BossPage() {
   const [createSubmitting, setCreateSubmitting] = useState(false)
   const [createFormError, setCreateFormError] = useState<string | null>(null)
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null)
+
+  // ── Draft auto-save / restore (localStorage) ────────────────
+  const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const suppressDraftSaveRef = useRef(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [pendingRestoreDraft, setPendingRestoreDraft] = useState<GraphTemplateDraft | null>(() => {
+    try {
+      const raw = localStorage.getItem(DRAFT_STORAGE_KEY)
+      if (raw) {
+        const result = validateGraphTemplateDraft(JSON.parse(raw))
+        if (result.valid) return result.draft
+        localStorage.removeItem(DRAFT_STORAGE_KEY)
+      }
+    } catch {
+      try { localStorage.removeItem(DRAFT_STORAGE_KEY) } catch { /* ignore */ }
+    }
+    return null
+  })
+  const [importError, setImportError] = useState<string | null>(null)
+
+  /** Save current draft to localStorage (debounced) */
+  const saveDraftToStorage = useCallback((draft: GraphTemplateDraft) => {
+    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current)
+    draftSaveTimerRef.current = setTimeout(() => {
+      try {
+        localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft))
+      } catch { /* quota exceeded — silently ignore */ }
+    }, 500)
+  }, [])
+
+  /** Clear saved draft from localStorage */
+  const clearDraftStorage = useCallback(() => {
+    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current)
+    try { localStorage.removeItem(DRAFT_STORAGE_KEY) } catch { /* ignore */ }
+  }, [])
+
+  /** Auto-save draft whenever createDraft changes while form is open */
+  useEffect(() => {
+    if (showCreateForm && !suppressDraftSaveRef.current) {
+      saveDraftToStorage(createDraft)
+    }
+  }, [createDraft, showCreateForm, saveDraftToStorage])
+
+  /** Restore saved draft */
+  const restoreDraft = () => {
+    if (pendingRestoreDraft) {
+      suppressDraftSaveRef.current = true
+      setCreateDraft(pendingRestoreDraft)
+      setShowCreateForm(true)
+      setEditingTemplateId(null)
+      setCreateFormError(null)
+      setPendingRestoreDraft(null)
+      // Re-enable save after the effect cycle
+      requestAnimationFrame(() => { suppressDraftSaveRef.current = false })
+    }
+  }
+
+  /** Discard saved draft */
+  const discardDraft = () => {
+    clearDraftStorage()
+    setPendingRestoreDraft(null)
+  }
+
+  /** Export current draft as JSON file download */
+  const exportDraftJson = () => {
+    const blob = new Blob([JSON.stringify(createDraft, null, 2)], { type: "application/json" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `graph-template-${createDraft.name.trim().replace(/[^a-zA-Z0-9一-鿿_-]/g, "_") || "draft"}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  /** Import JSON file via file input */
+  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImportError(null)
+    if (file.size > 1024 * 1024) {
+      setImportError("文件过大：JSON 文件不能超过 1 MB")
+      e.target.value = ""
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result as string)
+        const result = validateGraphTemplateDraft(data)
+        if (!result.valid) {
+          setImportError(result.error)
+          return
+        }
+        // Import success — enter "create" mode with imported data (no template_id)
+        suppressDraftSaveRef.current = true
+        setCreateDraft(result.draft)
+        setEditingTemplateId(null)
+        setShowCreateForm(true)
+        setCreateFormError(null)
+        saveDraftToStorage(result.draft)
+        requestAnimationFrame(() => { suppressDraftSaveRef.current = false })
+      } catch {
+        setImportError("JSON 解析失败：文件内容不是合法 JSON")
+      } finally {
+        // Reset file input so the same file can be re-selected
+        if (fileInputRef.current) fileInputRef.current.value = ""
+      }
+    }
+    reader.onerror = () => {
+      setImportError("文件读取失败")
+      if (fileInputRef.current) fileInputRef.current.value = ""
+    }
+    reader.readAsText(file)
+  }
 
   // 时间本地化：ISO → 中文本地时间
   const formatLocalTime = (iso: string): string => {
@@ -1078,6 +1234,7 @@ export default function BossPage() {
       setShowCreateForm(false)
       setCreateDraft(DEFAULT_DRAFT)
       setCreateFormError(null)
+      clearDraftStorage()
       loadGraphTemplates()
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : "保存失败"
@@ -1826,6 +1983,8 @@ export default function BossPage() {
                   if (!showCreateForm) {
                     setCreateDraft(DEFAULT_DRAFT)
                     setEditingTemplateId(null)
+                  } else {
+                    clearDraftStorage()
                   }
                 }}
                 className="gap-1 text-xs"
@@ -1833,6 +1992,22 @@ export default function BossPage() {
                 <Plus className="h-3.5 w-3.5" />
                 创建模板
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                className="gap-1 text-xs"
+              >
+                <Upload className="h-3.5 w-3.5" />
+                导入 JSON
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json,application/json"
+                onChange={handleImportFile}
+                className="hidden"
+              />
               <Button
                 variant="ghost"
                 size="sm"
@@ -1856,10 +2031,31 @@ export default function BossPage() {
             </div>
           )}
 
+          {importError && (
+            <div className="mb-4 rounded-lg border border-red/20 bg-red/5 p-3 text-sm text-red-500">
+              <div className="flex items-center gap-1.5 mb-1">
+                <AlertCircle className="h-3.5 w-3.5" />
+                <span className="font-medium">导入失败</span>
+              </div>
+              {importError}
+            </div>
+          )}
+
           {/* 创建模板表单 */}
           {showCreateForm && (
             <div className="mb-4 rounded-xl border border-[#E5E5E5] bg-[#FAFAF8] p-5">
-              <h4 className="text-sm font-medium text-[#0B0B0B] mb-4">{editingTemplateId ? "编辑 Graph Template" : "创建 Graph Template"}</h4>
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="text-sm font-medium text-[#0B0B0B]">{editingTemplateId ? "编辑 Graph Template" : "创建 Graph Template"}</h4>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={exportDraftJson}
+                  className="gap-1 text-xs text-[#6B6B6B] hover:text-[#0B0B0B]"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  导出 JSON
+                </Button>
+              </div>
 
               {/* 基础字段 */}
               <div className="grid gap-3 sm:grid-cols-3 mb-4">
@@ -1926,6 +2122,7 @@ export default function BossPage() {
                     setCreateDraft(DEFAULT_DRAFT)
                     setCreateFormError(null)
                     setEditingTemplateId(null)
+                    clearDraftStorage()
                   }}
                   className="gap-1 text-xs"
                 >
@@ -2162,6 +2359,21 @@ export default function BossPage() {
           </motion.div>
         )
       })()}
+
+      {/* Draft restore prompt */}
+      {pendingRestoreDraft && (
+        <ConfirmDialog
+          open
+          title="发现未保存草稿"
+          description={`检测到上次未完成的模板草稿「${pendingRestoreDraft.name || "未命名"}」（${pendingRestoreDraft.nodes.length} 节点，${pendingRestoreDraft.edges.length} 边）。是否恢复？`}
+          confirmLabel="恢复草稿"
+          cancelLabel="放弃"
+          variant="default"
+          onConfirm={restoreDraft}
+          onCancel={discardDraft}
+          onDismiss={() => setPendingRestoreDraft(null)}
+        />
+      )}
 
       {/* Boss Lite Progress — 轻量进度展示 */}
       {mode === "boss-lite" && isRunning && !liteResult && (

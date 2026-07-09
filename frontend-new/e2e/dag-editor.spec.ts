@@ -1,4 +1,5 @@
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test"
+import { readFileSync } from "node:fs"
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -591,5 +592,461 @@ test.describe("DAG 编辑器 — 撤销/重做与编辑安全", () => {
     await page.locator('[data-testid="undo-btn"]').click()
     await page.waitForTimeout(200)
     await expect(titleInput).toHaveValue("市场调研")
+  })
+})
+
+// ── Phase 6.5: JSON Import/Export & Draft Auto-Save ──────────
+
+const DRAFT_STORAGE_KEY = "boss_graph_template_draft_v1"
+
+const VALID_DRAFT = {
+  name: "导入测试模板",
+  description: "Playwright 导入测试",
+  goal_hint: "验证 JSON 导入功能",
+  nodes: [
+    { id: "alpha", agent_id: "research", task_type: "research_brief", title: "调研", prompt: "调研市场" },
+    { id: "beta", agent_id: "marketing", task_type: "copywriting", title: "营销", prompt: "生成方案" },
+  ],
+  edges: [{ from_node: "alpha", to_node: "beta", handoff_type: "context" }],
+}
+
+const INVALID_DAG_DRAFT = {
+  name: "自环模板",
+  description: "有自环",
+  goal_hint: "",
+  nodes: [
+    { id: "a", agent_id: "a", task_type: "", title: "A", prompt: "" },
+  ],
+  edges: [{ from_node: "a", to_node: "a", handoff_type: "context" }],
+}
+
+const CYCLE_DRAFT = {
+  name: "循环模板",
+  description: "有循环",
+  goal_hint: "",
+  nodes: [
+    { id: "x", agent_id: "x", task_type: "", title: "X", prompt: "" },
+    { id: "y", agent_id: "y", task_type: "", title: "Y", prompt: "" },
+  ],
+  edges: [
+    { from_node: "x", to_node: "y", handoff_type: "context" },
+    { from_node: "y", to_node: "x", handoff_type: "context" },
+  ],
+}
+
+function jsonUpload(data: unknown, name = "graph-template.json") {
+  return {
+    name,
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(data, null, 2), "utf-8"),
+  }
+}
+
+test.describe("Phase 6.5 — JSON 导出", () => {
+  test.beforeEach(async ({ page }) => {
+    await goToBoss(page)
+    await openCreateForm(page)
+  })
+
+  test("导出 JSON 按钮可见", async ({ page }) => {
+    await expect(page.locator("button", { hasText: "导出 JSON" })).toBeVisible()
+  })
+
+  test("导出的 JSON 包含正确字段", async ({ page }) => {
+    // Intercept the download event
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      page.locator("button", { hasText: "导出 JSON" }).click(),
+    ])
+
+    const suggestedFilename = download.suggestedFilename()
+    expect(suggestedFilename).toMatch(/^graph-template-.*\.json$/)
+
+    const path = await download.path()
+    const content = JSON.parse(readFileSync(path, "utf-8"))
+
+    // Should have the GraphTemplateDraft schema
+    expect(content).toHaveProperty("name")
+    expect(content).toHaveProperty("description")
+    expect(content).toHaveProperty("goal_hint")
+    expect(content).toHaveProperty("nodes")
+    expect(content).toHaveProperty("edges")
+    expect(Array.isArray(content.nodes)).toBe(true)
+    expect(Array.isArray(content.edges)).toBe(true)
+    // Default draft has 2 nodes
+    expect(content.nodes.length).toBe(2)
+    expect(content.edges.length).toBe(1)
+    // Verify node fields
+    expect(content.nodes[0]).toHaveProperty("id")
+    expect(content.nodes[0]).toHaveProperty("agent_id")
+    expect(content.nodes[0]).toHaveProperty("task_type")
+    expect(content.nodes[0]).toHaveProperty("title")
+    expect(content.nodes[0]).toHaveProperty("prompt")
+  })
+})
+
+test.describe("Phase 6.5 — JSON 导入", () => {
+  test.beforeEach(async ({ page }) => {
+    // Clear any saved draft first
+    await page.goto("/app?page=boss")
+    await page.evaluate((key) => localStorage.removeItem(key), DRAFT_STORAGE_KEY)
+    await page.waitForTimeout(500)
+  })
+
+  test("有效 JSON 导入成功，进入新建模式", async ({ page }) => {
+    await goToBoss(page)
+    // Dismiss any restore dialog
+    const cancelBtn = page.locator('[data-testid="confirm-dialog-cancel"]')
+    if (await cancelBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await cancelBtn.click()
+      await page.waitForTimeout(300)
+    }
+
+    // Trigger import via file input
+    const fileInput = page.locator('input[type="file"][accept=".json,application/json"]')
+    await fileInput.setInputFiles(jsonUpload(VALID_DRAFT))
+    await page.waitForTimeout(500)
+
+    // Should enter create form with imported data
+    await expect(page.getByRole("heading", { name: "创建 Graph Template" })).toBeVisible()
+    const nameInput = page.locator('input[placeholder="模板名称"]')
+    await expect(nameInput).toHaveValue("导入测试模板")
+
+    // DagEditor should show 2 nodes, 1 edge
+    await expect(page.locator("text=2 节点")).toBeVisible()
+    await expect(page.locator("text=1 边")).toBeVisible()
+
+    // Should be in "create" mode (no "更新模板" button)
+    await expect(page.locator("button", { hasText: "保存模板" })).toBeVisible()
+    await expect(page.locator("button", { hasText: "更新模板" })).not.toBeVisible()
+
+  })
+
+  test("非合法 JSON 不覆盖草稿，显示错误", async ({ page }) => {
+    await goToBoss(page)
+    const cancelBtn = page.locator('[data-testid="confirm-dialog-cancel"]')
+    if (await cancelBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await cancelBtn.click()
+      await page.waitForTimeout(300)
+    }
+
+    // Open create form first to have a draft
+    await openCreateForm(page)
+    await fillTemplateName(page, "原始草稿")
+
+    const fileInput = page.locator('input[type="file"][accept=".json,application/json"]')
+    await fileInput.setInputFiles({
+      name: "invalid.json",
+      mimeType: "application/json",
+      buffer: Buffer.from("not valid json {{{", "utf-8"),
+    })
+    await page.waitForTimeout(500)
+
+    // Should show import error
+    await expect(page.locator("text=导入失败")).toBeVisible()
+    await expect(page.locator("text=JSON 解析失败")).toBeVisible()
+
+    // Original draft should NOT be overwritten
+    const nameInput = page.locator('input[placeholder="模板名称"]')
+    await expect(nameInput).toHaveValue("原始草稿")
+
+  })
+
+  test("无效 DAG 结构被拦截（自环）", async ({ page }) => {
+    await goToBoss(page)
+    const cancelBtn = page.locator('[data-testid="confirm-dialog-cancel"]')
+    if (await cancelBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await cancelBtn.click()
+      await page.waitForTimeout(300)
+    }
+
+    const fileInput = page.locator('input[type="file"][accept=".json,application/json"]')
+    await fileInput.setInputFiles(jsonUpload(INVALID_DAG_DRAFT))
+    await page.waitForTimeout(500)
+
+    // Should show import error with self-loop message
+    await expect(page.locator("text=导入失败")).toBeVisible()
+    await expect(page.locator("text=自环")).toBeVisible()
+
+  })
+
+  test("无效 DAG 结构被拦截（循环）", async ({ page }) => {
+    await goToBoss(page)
+    const cancelBtn = page.locator('[data-testid="confirm-dialog-cancel"]')
+    if (await cancelBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await cancelBtn.click()
+      await page.waitForTimeout(300)
+    }
+
+    const fileInput = page.locator('input[type="file"][accept=".json,application/json"]')
+    await fileInput.setInputFiles(jsonUpload(CYCLE_DRAFT))
+    await page.waitForTimeout(500)
+
+    await expect(page.locator("text=导入失败")).toBeVisible()
+    await expect(page.locator("text=循环")).toBeVisible()
+
+  })
+
+  test("缺少必要字段被拦截", async ({ page }) => {
+    await goToBoss(page)
+    const cancelBtn = page.locator('[data-testid="confirm-dialog-cancel"]')
+    if (await cancelBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await cancelBtn.click()
+      await page.waitForTimeout(300)
+    }
+
+    const fileInput = page.locator('input[type="file"][accept=".json,application/json"]')
+    await fileInput.setInputFiles(jsonUpload({ name: "缺字段" }))
+    await page.waitForTimeout(500)
+
+    await expect(page.locator("text=导入失败")).toBeVisible()
+    await expect(page.locator("text=nodes")).toBeVisible()
+
+  })
+})
+
+test.describe("Phase 6.5 — 草稿自动保存与恢复", () => {
+  test.beforeEach(async ({ page }) => {
+    // Clear any saved draft
+    await page.goto("/app?page=boss")
+    await page.evaluate((key) => localStorage.removeItem(key), DRAFT_STORAGE_KEY)
+    await page.waitForTimeout(500)
+  })
+
+  test("编辑草稿后自动保存到 localStorage", async ({ page }) => {
+    await goToBoss(page)
+    const cancelBtn = page.locator('[data-testid="confirm-dialog-cancel"]')
+    if (await cancelBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await cancelBtn.click()
+      await page.waitForTimeout(300)
+    }
+
+    await openCreateForm(page)
+    await fillTemplateName(page, "自动保存测试")
+
+    // Wait for debounced save (500ms + buffer)
+    await page.waitForTimeout(1200)
+
+    // Check localStorage
+    const saved = await page.evaluate((key) => {
+      const raw = localStorage.getItem(key)
+      return raw ? JSON.parse(raw) : null
+    }, DRAFT_STORAGE_KEY)
+
+    expect(saved).not.toBeNull()
+    expect(saved.name).toBe("自动保存测试")
+    expect(saved.nodes.length).toBe(2) // default draft
+  })
+
+  test("刷新页面后提示恢复草稿", async ({ page }) => {
+    await goToBoss(page)
+    const cancelBtn = page.locator('[data-testid="confirm-dialog-cancel"]')
+    if (await cancelBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await cancelBtn.click()
+      await page.waitForTimeout(300)
+    }
+
+    await openCreateForm(page)
+    await fillTemplateName(page, "刷新恢复测试")
+    await page.waitForTimeout(1200) // wait for save
+
+    // Reload the page
+    await page.reload()
+    await page.waitForTimeout(1500)
+
+    // Should show restore dialog
+    await expect(page.locator('[data-testid="confirm-dialog"]')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator("text=发现未保存草稿")).toBeVisible()
+    await expect(page.locator("text=刷新恢复测试")).toBeVisible()
+  })
+
+  test("恢复草稿后数据正确", async ({ page }) => {
+    await goToBoss(page)
+    const cancelBtn = page.locator('[data-testid="confirm-dialog-cancel"]')
+    if (await cancelBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await cancelBtn.click()
+      await page.waitForTimeout(300)
+    }
+
+    await openCreateForm(page)
+    await fillTemplateName(page, "恢复确认测试")
+    await page.waitForTimeout(1200)
+
+    await page.reload()
+    await page.waitForTimeout(1500)
+
+    // Click restore
+    await page.locator('[data-testid="confirm-dialog-confirm"]').click()
+    await page.waitForTimeout(500)
+
+    // Form should be open with restored data
+    await expect(page.getByRole("heading", { name: "创建 Graph Template" })).toBeVisible()
+    const nameInput = page.locator('input[placeholder="模板名称"]')
+    await expect(nameInput).toHaveValue("恢复确认测试")
+    await expect(page.locator("text=2 节点")).toBeVisible()
+  })
+
+  test("放弃草稿后 localStorage 被清理", async ({ page }) => {
+    // Set a draft in localStorage directly
+    await page.goto("/app?page=boss")
+    await page.evaluate(({ key, draft }) => {
+      localStorage.setItem(key, JSON.stringify(draft))
+    }, { key: DRAFT_STORAGE_KEY, draft: VALID_DRAFT })
+    await page.waitForTimeout(300)
+
+    // Reload to trigger restore prompt
+    await page.reload()
+    await page.waitForTimeout(1500)
+
+    // Should show restore dialog
+    await expect(page.locator('[data-testid="confirm-dialog"]')).toBeVisible({ timeout: 5000 })
+
+    // Click discard
+    await page.locator('[data-testid="confirm-dialog-cancel"]').click()
+    await page.waitForTimeout(500)
+
+    // localStorage should be cleared
+    const stored = await page.evaluate((key) => localStorage.getItem(key), DRAFT_STORAGE_KEY)
+    expect(stored).toBeNull()
+  })
+
+  test("关闭恢复提示不会删除草稿", async ({ page }) => {
+    await page.evaluate(({ key, draft }) => {
+      localStorage.setItem(key, JSON.stringify(draft))
+    }, { key: DRAFT_STORAGE_KEY, draft: VALID_DRAFT })
+
+    await page.reload()
+    await expect(page.locator('[data-testid="confirm-dialog"]')).toBeVisible({ timeout: 5000 })
+    await page.keyboard.press("Escape")
+
+    await expect(page.locator('[data-testid="confirm-dialog"]')).not.toBeVisible()
+    const stored = await page.evaluate((key) => localStorage.getItem(key), DRAFT_STORAGE_KEY)
+    expect(stored).not.toBeNull()
+  })
+
+  test("损坏草稿会被清理且不会提示恢复", async ({ page }) => {
+    await page.evaluate((key) => {
+      localStorage.setItem(key, JSON.stringify({
+        name: "损坏草稿",
+        nodes: [null],
+        edges: [],
+      }))
+    }, DRAFT_STORAGE_KEY)
+
+    await page.reload()
+    await page.waitForTimeout(800)
+
+    await expect(page.locator('[data-testid="confirm-dialog"]')).not.toBeVisible()
+    const stored = await page.evaluate((key) => localStorage.getItem(key), DRAFT_STORAGE_KEY)
+    expect(stored).toBeNull()
+  })
+
+  test("保存模板成功后 localStorage 被清理", async ({ page, request }) => {
+    await goToBoss(page)
+    const cancelBtn = page.locator('[data-testid="confirm-dialog-cancel"]')
+    if (await cancelBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await cancelBtn.click()
+      await page.waitForTimeout(300)
+    }
+
+    const templateName = `DraftCleanup ${Date.now()}`
+    await openCreateForm(page)
+    await fillTemplateName(page, templateName)
+    await page.waitForTimeout(1200) // wait for auto-save
+
+    // Verify draft exists in localStorage
+    const beforeSave = await page.evaluate((key) => localStorage.getItem(key), DRAFT_STORAGE_KEY)
+    expect(beforeSave).not.toBeNull()
+
+    // Save the template
+    await page.locator("button", { hasText: "保存模板" }).click()
+    await page.waitForTimeout(2000)
+
+    // localStorage should be cleared
+    const afterSave = await page.evaluate((key) => localStorage.getItem(key), DRAFT_STORAGE_KEY)
+    expect(afterSave).toBeNull()
+
+    // Cleanup: delete the created template
+    const listResponse = await request.get("/boss/graph/templates")
+    const listBody = await listResponse.json()
+    const created = listBody.templates.find((t: { name: string }) => t.name === templateName)
+    if (created) {
+      await request.delete(`/boss/graph/templates/${created.template_id}`)
+    }
+  })
+
+  test("取消编辑后 localStorage 被清理", async ({ page }) => {
+    await goToBoss(page)
+    const cancelBtn = page.locator('[data-testid="confirm-dialog-cancel"]')
+    if (await cancelBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await cancelBtn.click()
+      await page.waitForTimeout(300)
+    }
+
+    await openCreateForm(page)
+    await fillTemplateName(page, "取消清理测试")
+    await page.waitForTimeout(1200)
+
+    // Verify draft saved
+    const before = await page.evaluate((key) => localStorage.getItem(key), DRAFT_STORAGE_KEY)
+    expect(before).not.toBeNull()
+
+    // Click cancel
+    await page.locator("button", { hasText: "取消" }).click()
+    await page.waitForTimeout(500)
+
+    // localStorage should be cleared
+    const after = await page.evaluate((key) => localStorage.getItem(key), DRAFT_STORAGE_KEY)
+    expect(after).toBeNull()
+  })
+})
+
+test.describe("Phase 6.5 — 导入后 Undo/Redo 正确 reset", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/app?page=boss")
+    await page.evaluate((key) => localStorage.removeItem(key), DRAFT_STORAGE_KEY)
+    await page.waitForTimeout(500)
+  })
+
+  test("导入后撤销回到导入前状态不可用（history reset）", async ({ page }) => {
+    await goToBoss(page)
+    const cancelBtn = page.locator('[data-testid="confirm-dialog-cancel"]')
+    if (await cancelBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await cancelBtn.click()
+      await page.waitForTimeout(300)
+    }
+
+    const fileInput = page.locator('input[type="file"][accept=".json,application/json"]')
+    await fileInput.setInputFiles(jsonUpload(VALID_DRAFT))
+    await page.waitForTimeout(500)
+
+    // Should show imported data
+    await expect(page.locator("text=2 节点")).toBeVisible()
+
+    // Undo button should be disabled (history was reset on import)
+    const undoBtn = page.locator('[data-testid="undo-btn"]')
+    await expect(undoBtn).toBeDisabled()
+
+  })
+
+  test("恢复草稿后撤销按钮正确 reset", async ({ page }) => {
+    // Set a draft directly
+    await page.goto("/app?page=boss")
+    await page.evaluate(({ key, draft }) => {
+      localStorage.setItem(key, JSON.stringify(draft))
+    }, { key: DRAFT_STORAGE_KEY, draft: VALID_DRAFT })
+    await page.waitForTimeout(300)
+
+    // Reload
+    await page.reload()
+    await page.waitForTimeout(1500)
+
+    // Restore
+    await page.locator('[data-testid="confirm-dialog-confirm"]').click()
+    await page.waitForTimeout(500)
+
+    // Undo should be disabled (fresh history)
+    const undoBtn = page.locator('[data-testid="undo-btn"]')
+    await expect(undoBtn).toBeDisabled()
   })
 })

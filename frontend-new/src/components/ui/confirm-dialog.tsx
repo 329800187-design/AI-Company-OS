@@ -11,6 +11,7 @@ interface ConfirmDialogProps {
   variant?: "danger" | "default"
   onConfirm: () => void
   onCancel: () => void
+  onDismiss?: () => void
 }
 
 /** Lightweight modal confirmation dialog with keyboard and focus management. */
@@ -23,9 +24,11 @@ export function ConfirmDialog({
   variant = "danger",
   onConfirm,
   onCancel,
+  onDismiss,
 }: ConfirmDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const cancelButtonRef = useRef<HTMLButtonElement>(null)
+  const dismiss = onDismiss ?? onCancel
 
   useEffect(() => {
     if (!open) return
@@ -35,7 +38,7 @@ export function ConfirmDialog({
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault()
-        onCancel()
+        dismiss()
       } else if (e.key === "Tab") {
         const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
           'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
@@ -60,14 +63,14 @@ export function ConfirmDialog({
         previouslyFocused.focus()
       }
     }
-  }, [open, onCancel])
+  }, [open, dismiss])
 
   if (!open) return null
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
-      onClick={onCancel}
+      onClick={dismiss}
       data-testid="confirm-dialog-backdrop"
     >
       <div
