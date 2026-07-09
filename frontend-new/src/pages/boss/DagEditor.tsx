@@ -3,6 +3,7 @@ import { Plus, Trash2, AlertCircle, ChevronDown, ChevronRight, GitBranch, Pencil
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { validateDag } from "./dag-validation"
 
 // ── Types (mirrors boss/index.tsx inline interfaces) ──────────
 
@@ -83,104 +84,15 @@ function computeWaves(nodeIds: string[], edges: GraphEdgeDraft[]): string[][] {
   return waves
 }
 
-/** DFS cycle detection — returns cycle path or null */
-function detectCycle(nodeIds: string[], edges: GraphEdgeDraft[]): string[] | null {
-  const adj = new Map<string, string[]>()
-  for (const id of nodeIds) adj.set(id, [])
-  for (const e of edges) {
-    const from = e.from_node.trim()
-    const to = e.to_node.trim()
-    if (adj.has(from)) adj.get(from)!.push(to)
-  }
+// ── Constants ─────────────────────────────────────────────────
 
-  const WHITE = 0, GRAY = 1, BLACK = 2
-  const color = new Map<string, number>()
-  const parent = new Map<string, string | null>()
-  for (const id of nodeIds) color.set(id, WHITE)
-
-  for (const id of nodeIds) {
-    if (color.get(id) === WHITE) {
-      const stack: Array<[string, Iterator<string>]> = []
-      color.set(id, GRAY)
-      parent.set(id, null)
-      stack.push([id, (adj.get(id) ?? []).values()])
-
-      while (stack.length > 0) {
-        const [u, iter] = stack[stack.length - 1]
-        const { value: v, done } = iter.next()
-        if (done) {
-          stack.pop()
-          color.set(u, BLACK)
-        } else {
-          if (color.get(v) === GRAY) {
-            // found cycle — reconstruct
-            const cycle: string[] = [v]
-            let cur: string | null = u
-            while (cur !== v && cur != null) {
-              cycle.unshift(cur)
-              cur = parent.get(cur) ?? null
-            }
-            cycle.unshift(v)
-            return cycle
-          }
-          if (color.get(v) === WHITE) {
-            color.set(v, GRAY)
-            parent.set(v, u)
-            stack.push([v, (adj.get(v) ?? []).values()])
-          }
-        }
-      }
-    }
-  }
-  return null
-}
-
-interface DagValidationError {
-  type: "cycle" | "self_loop" | "missing_node" | "duplicate_id" | "empty_id" | "empty_edge"
-  message: string
-  edgeIndex?: number
-  nodeIndex?: number
-}
-
-export function validateDag(nodes: GraphNodeDraft[], edges: GraphEdgeDraft[]): DagValidationError[] {
-  const errors: DagValidationError[] = []
-  const nodeIds = nodes.map((n) => n.id.trim())
-  const nodeIdSet = new Set(nodeIds)
-
-  // empty IDs
-  nodes.forEach((n, i) => {
-    if (!n.id.trim()) errors.push({ type: "empty_id", message: `节点 ${i + 1}: id 不能为空`, nodeIndex: i })
-    if (!n.agent_id.trim()) errors.push({ type: "empty_id", message: `节点 ${i + 1}: agent_id 不能为空`, nodeIndex: i })
-  })
-
-  // duplicate IDs
-  const seen = new Set<string>()
-  nodes.forEach((n, i) => {
-    const id = n.id.trim()
-    if (id && seen.has(id)) errors.push({ type: "duplicate_id", message: `节点 id "${id}" 重复`, nodeIndex: i })
-    if (id) seen.add(id)
-  })
-
-  // edge checks
-  edges.forEach((e, i) => {
-    const from = e.from_node.trim()
-    const to = e.to_node.trim()
-    if (!from) errors.push({ type: "empty_edge", message: `边 ${i + 1}: from_node 不能为空`, edgeIndex: i })
-    if (!to) errors.push({ type: "empty_edge", message: `边 ${i + 1}: to_node 不能为空`, edgeIndex: i })
-    if (from && to && from === to) errors.push({ type: "self_loop", message: `边 ${i + 1}: 自环 (${from} → ${to})`, edgeIndex: i })
-    if (from && !nodeIdSet.has(from)) errors.push({ type: "missing_node", message: `边 ${i + 1}: from_node "${from}" 不存在`, edgeIndex: i })
-    if (to && !nodeIdSet.has(to)) errors.push({ type: "missing_node", message: `边 ${i + 1}: to_node "${to}" 不存在`, edgeIndex: i })
-  })
-
-  // cycle detection (only if all edge refs are valid)
-  const hasEdgeErrors = errors.some((e) => e.type === "self_loop" || e.type === "missing_node")
-  if (!hasEdgeErrors && nodeIds.length > 0) {
-    const cycle = detectCycle(nodeIds, edges)
-    if (cycle) errors.push({ type: "cycle", message: `存在循环: ${cycle.join(" → ")}` })
-  }
-
-  return errors
-}
+const COMMON_AGENTS = [
+  { id: "research", label: "市场调研" },
+  { id: "marketing", label: "营销方案" },
+  { id: "image", label: "视觉方案" },
+  { id: "data", label: "数据分析" },
+  { id: "website", label: "落地页" },
+]
 
 // ── Component ─────────────────────────────────────────────────
 
@@ -411,6 +323,7 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
                           <label className="block text-[10px] text-[#B5B5B5] mb-0.5">agent_id *</label>
                           <input
                             type="text"
+                            list="dag-common-agents"
                             value={node.agent_id}
                             onChange={(e) => updateNode(ni, "agent_id", e.target.value)}
                             disabled={disabled}
@@ -522,25 +435,31 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
                       <div className="grid gap-2 sm:grid-cols-3">
                         <div>
                           <label className="block text-[10px] text-[#B5B5B5] mb-0.5">from_node *</label>
-                          <input
-                            type="text"
+                          <select
                             value={edge.from_node}
                             onChange={(e) => updateEdge(ei, "from_node", e.target.value)}
                             disabled={disabled}
                             className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5] font-mono"
-                            placeholder="from_node"
-                          />
+                          >
+                            <option value="">-- 选择节点 --</option>
+                            {nodeIds.map((id) => (
+                              <option key={id} value={id}>{id}</option>
+                            ))}
+                          </select>
                         </div>
                         <div>
                           <label className="block text-[10px] text-[#B5B5B5] mb-0.5">to_node *</label>
-                          <input
-                            type="text"
+                          <select
                             value={edge.to_node}
                             onChange={(e) => updateEdge(ei, "to_node", e.target.value)}
                             disabled={disabled}
                             className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5] font-mono"
-                            placeholder="to_node"
-                          />
+                          >
+                            <option value="">-- 选择节点 --</option>
+                            {nodeIds.map((id) => (
+                              <option key={id} value={id}>{id}</option>
+                            ))}
+                          </select>
                         </div>
                         <div>
                           <label className="block text-[10px] text-[#B5B5B5] mb-0.5">handoff_type</label>
@@ -577,6 +496,13 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
           </ul>
         </div>
       )}
+
+      {/* Shared datalist for agent_id autocomplete */}
+      <datalist id="dag-common-agents">
+        {COMMON_AGENTS.map((a) => (
+          <option key={a.id} value={a.id}>{a.label}</option>
+        ))}
+      </datalist>
     </div>
   )
 }

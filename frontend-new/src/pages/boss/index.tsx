@@ -36,7 +36,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
-import { DagEditor, validateDag } from "./DagEditor"
+import { DagEditor } from "./DagEditor"
+import { validateDag } from "./dag-validation"
 
 interface ModuleResult {
   module_id: string
