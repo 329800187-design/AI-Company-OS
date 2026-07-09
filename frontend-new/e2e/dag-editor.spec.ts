@@ -1193,3 +1193,119 @@ test.describe("Phase 6.6 — Version History & Rollback", () => {
     await expect(page.locator("text=暂无版本历史")).not.toBeVisible()
   })
 })
+
+// ── Phase 6.7: Version Metadata & Compare ────────────────────────────────
+
+test.describe("Phase 6.7 — Version Metadata & Compare", () => {
+  let createdTemplateId: string | null = null
+
+  test.afterEach(async ({ request }) => {
+    await deleteTemplateFixture(request, createdTemplateId)
+    createdTemplateId = null
+  })
+
+  test("编辑版本标签和备注", async ({ page, request }) => {
+    createdTemplateId = await createTemplateFixture(request, "元数据原始版本")
+    await updateTemplateFixture(request, createdTemplateId, {
+      name: "元数据当前版本",
+      nodes: [
+        { id: "research", agent_id: "research", title: "市场调研", prompt: "调研市场" },
+        { id: "marketing", agent_id: "marketing", title: "营销方案", prompt: "生成营销方案" },
+      ],
+      edges: [{ from_node: "research", to_node: "marketing", handoff_type: "context" }],
+    })
+    await goToBoss(page)
+
+    await page.locator("button", { hasText: "版本" }).first().click()
+    await page.locator("button", { hasText: "备注" }).first().click()
+    await page.getByTestId("version-label-input").fill("发布前备份")
+    await page.getByTestId("version-note-input").fill("确认上线前的稳定版本")
+    await page.getByTestId("version-meta-save").click()
+
+    await expect(page.getByText("发布前备份", { exact: true })).toBeVisible()
+    await expect(page.getByText("确认上线前的稳定版本", { exact: true })).toBeVisible()
+  })
+
+  test("选择两个历史版本并展示差异", async ({ page, request }) => {
+    createdTemplateId = await createTemplateFixture(request, "版本一")
+    await updateTemplateFixture(request, createdTemplateId, {
+      name: "版本二",
+      nodes: [
+        { id: "research", agent_id: "research", title: "调研二", prompt: "调研市场" },
+        { id: "marketing", agent_id: "marketing", title: "营销方案", prompt: "生成营销方案" },
+      ],
+    })
+    await updateTemplateFixture(request, createdTemplateId, {
+      name: "版本三",
+      nodes: [
+        { id: "research", agent_id: "research", title: "调研三", prompt: "调研市场" },
+        { id: "marketing", agent_id: "marketing", title: "营销方案", prompt: "生成营销方案" },
+      ],
+    })
+    await goToBoss(page)
+
+    await page.locator("button", { hasText: "版本" }).first().click()
+    await page.getByTestId("version-compare-toggle").click()
+    const versionChoices = page.locator('[data-testid^="version-compare-ver_"]')
+    await expect(versionChoices).toHaveCount(2)
+    await versionChoices.nth(0).check()
+    await versionChoices.nth(1).check()
+    await page.getByTestId("version-compare-run").click()
+
+    const result = page.getByTestId("version-compare-result")
+    await expect(result).toBeVisible()
+    await expect(result.getByText("基础字段变化", { exact: true })).toBeVisible()
+    await expect(result.getByText("节点变化", { exact: true })).toBeVisible()
+  })
+
+  test("版本与当前模板相同显示空差异", async ({ page, request }) => {
+    createdTemplateId = await createTemplateFixture(request, "完全相同版本")
+    await updateTemplateFixture(request, createdTemplateId, {
+      name: "完全相同版本",
+      description: "Playwright DAG editor fixture",
+      goal_hint: "验证 DAG 编辑器",
+      nodes: [
+        { id: "research", agent_id: "research", title: "市场调研", prompt: "调研市场" },
+        { id: "marketing", agent_id: "marketing", title: "营销方案", prompt: "生成营销方案" },
+      ],
+      edges: [{ from_node: "research", to_node: "marketing", handoff_type: "context" }],
+    })
+    await goToBoss(page)
+
+    await page.locator("button", { hasText: "版本" }).first().click()
+    await page.getByTestId("version-compare-toggle").click()
+    await page.locator('[data-testid^="version-compare-ver_"]').first().check()
+    await page.getByTestId("version-compare-current").click()
+    await page.getByTestId("version-compare-run").click()
+
+    await expect(page.getByTestId("version-compare-result")).toContainText("两个版本完全相同，无差异")
+  })
+
+  test("版本对比失败时显示面板错误", async ({ page, request }) => {
+    createdTemplateId = await createTemplateFixture(request, "对比错误版本")
+    await updateTemplateFixture(request, createdTemplateId, {
+      name: "对比错误当前",
+      nodes: [
+        { id: "research", agent_id: "research", title: "市场调研", prompt: "调研市场" },
+        { id: "marketing", agent_id: "marketing", title: "营销方案", prompt: "生成营销方案" },
+      ],
+    })
+    await goToBoss(page)
+
+    await page.locator("button", { hasText: "版本" }).first().click()
+    await page.getByTestId("version-compare-toggle").click()
+    await page.locator('[data-testid^="version-compare-ver_"]').first().check()
+    await page.getByTestId("version-compare-current").click()
+    await page.route("**/boss/graph/templates/*/versions/compare?*", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "模拟对比服务失败" }),
+      })
+    })
+    await page.getByTestId("version-compare-run").click()
+
+    await expect(page.getByText("版本操作失败", { exact: true })).toBeVisible()
+    await expect(page.getByText("关闭提示", { exact: true })).toBeVisible()
+  })
+})

@@ -1335,6 +1335,8 @@ class ApiClient {
         version_id: string
         template_id: string
         created_at: string
+        label: string
+        note: string
         name: string
         node_count: number
         edge_count: number
@@ -1396,6 +1398,59 @@ class ApiClient {
     }>(`/boss/graph/templates/${templateId}/versions/${versionId}/restore`, {
       method: "POST",
     })
+  }
+
+  // ── Phase 6.7: Version Metadata & Compare APIs ────────────
+
+  async updateBossGraphTemplateVersionMetadata(
+    templateId: string,
+    versionId: string,
+    payload: { label?: string; note?: string },
+  ) {
+    return this.request<{
+      ok: boolean
+      version: {
+        version_id: string
+        template_id: string
+        created_at: string
+        label: string
+        note: string
+        name: string
+        description: string
+        goal_hint: string
+        nodes: Array<Record<string, unknown>>
+        edges: Array<Record<string, unknown>>
+      }
+    }>(`/boss/graph/templates/${templateId}/versions/${versionId}`, {
+      method: "PATCH",
+      body: payload,
+    })
+  }
+
+  async compareBossGraphTemplateVersions(
+    templateId: string,
+    fromVersion: string,
+    toVersion: string,
+  ) {
+    const params = new URLSearchParams({ from: fromVersion, to: toVersion })
+    return this.request<{
+      ok: boolean
+      diff: {
+        from_version: string
+        to_version: string
+        field_changes: Array<{ field: string; from: string; to: string }>
+        nodes: {
+          added: Array<Record<string, unknown>>
+          removed: Array<Record<string, unknown>>
+          modified: Array<{ id: string; from: Record<string, unknown>; to: Record<string, unknown> }>
+        }
+        edges: {
+          added: Array<Record<string, unknown>>
+          removed: Array<Record<string, unknown>>
+          modified: Array<{ from_node: string; to_node: string; from: Record<string, unknown>; to: Record<string, unknown> }>
+        }
+      }
+    }>(`/boss/graph/templates/${templateId}/versions/compare?${params.toString()}`)
   }
 }
 

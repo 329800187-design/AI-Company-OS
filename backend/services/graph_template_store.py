@@ -131,6 +131,8 @@ def save_version_snapshot(
         "version_id": version_id,
         "template_id": template_id,
         "created_at": now,
+        "label": "",
+        "note": "",
         "name": template_data.get("name", ""),
         "description": template_data.get("description", ""),
         "goal_hint": template_data.get("goal_hint", ""),
@@ -172,6 +174,8 @@ def list_versions(template_id: str) -> List[Dict[str, Any]]:
                 "version_id": data.get("version_id", ""),
                 "template_id": data.get("template_id", ""),
                 "created_at": data.get("created_at", ""),
+                "label": data.get("label", ""),
+                "note": data.get("note", ""),
                 "name": data.get("name", ""),
                 "node_count": len(data.get("nodes", [])),
                 "edge_count": len(data.get("edges", [])),
@@ -219,6 +223,200 @@ def delete_versions_for_template(template_id: str) -> None:
             logger.info("Deleted versions directory for template: %s", template_id)
         except OSError as e:
             logger.error("Failed to delete versions for %s: %s", template_id, e)
+
+
+_LABEL_MAX_LENGTH = 100
+_NOTE_MAX_LENGTH = 500
+
+
+def update_version_metadata(
+    template_id: str,
+    version_id: str,
+    label: Optional[str] = None,
+    note: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """更新版本的 label/note 元数据（不可修改快照内容）。
+
+    Args:
+        template_id: 模板 ID
+        version_id: 版本 ID
+        label: 新标签（None 表示不修改）
+        note: 新备注（None 表示不修改）
+
+    Returns:
+        更新后的版本 dict，不存在返回 None
+    """
+    file_path = _version_path(template_id, version_id)
+    if file_path is None or not file_path.exists():
+        return None
+
+    try:
+        data = json.loads(file_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    if data.get("template_id") != template_id:
+        return None
+
+    if label is not None:
+        if len(label) > _LABEL_MAX_LENGTH:
+            raise ValueError(f"label 长度不能超过 {_LABEL_MAX_LENGTH} 字符")
+        data["label"] = label
+    if note is not None:
+        if len(note) > _NOTE_MAX_LENGTH:
+            raise ValueError(f"note 长度不能超过 {_NOTE_MAX_LENGTH} 字符")
+        data["note"] = note
+
+    file_path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    logger.info("Updated version metadata: %s", version_id)
+    return data
+
+
+def compare_versions(
+    template_id: str,
+    from_version_id: str,
+    to_version_id: str,
+) -> Optional[Dict[str, Any]]:
+    """对比两个版本或版本与当前模板的差异。
+
+    Args:
+        template_id: 模板 ID
+        from_version_id: 起始版本 ID
+        to_version_id: 目标版本 ID 或 "current"
+
+    Returns:
+        diff dict，不存在返回 None
+    """
+    # 获取起始版本
+    from_ver = get_version(template_id, from_version_id)
+    if from_ver is None:
+        return None
+
+    # 获取目标版本
+    if to_version_id == "current":
+        to_ver = get_template(template_id)
+        if to_ver is None:
+            return None
+    else:
+        to_ver = get_version(template_id, to_version_id)
+        if to_ver is None:
+            return None
+
+    # 基础字段 diff
+    base_fields = ["name", "description", "goal_hint"]
+    field_changes = []
+    for field in base_fields:
+        old_val = from_ver.get(field, "")
+        new_val = to_ver.get(field, "")
+        if old_val != new_val:
+            field_changes.append({
+                "field": field,
+                "from": old_val,
+                "to": new_val,
+            })
+
+    # 节点 diff（按 id 匹配）
+    def _index_nodes(items: Any) -> Optional[Dict[str, Dict[str, Any]]]:
+        if not isinstance(items, list):
+            return None
+        indexed: Dict[str, Dict[str, Any]] = {}
+        for item in items:
+            if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+                return None
+            node_id = item["id"]
+            if node_id in indexed:
+                return None
+            indexed[node_id] = item
+        return indexed
+
+    from_nodes = _index_nodes(from_ver.get("nodes", []))
+    to_nodes = _index_nodes(to_ver.get("nodes", []))
+    if from_nodes is None or to_nodes is None:
+        return None
+
+    nodes_added = []
+    nodes_removed = []
+    nodes_modified = []
+
+    for nid, node in to_nodes.items():
+        if nid not in from_nodes:
+            nodes_added.append(node)
+        elif node != from_nodes[nid]:
+            nodes_modified.append({
+                "id": nid,
+                "from": from_nodes[nid],
+                "to": node,
+            })
+
+    for nid, node in from_nodes.items():
+        if nid not in to_nodes:
+            nodes_removed.append(node)
+
+    edges_added = []
+    edges_removed = []
+    edges_modified = []
+
+    def _group_edges(
+        items: Any,
+    ) -> Optional[Dict[tuple[str, str], List[Dict[str, Any]]]]:
+        if not isinstance(items, list):
+            return None
+        grouped: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
+        for item in items:
+            if not isinstance(item, dict):
+                return None
+            from_node = item.get("from_node")
+            to_node = item.get("to_node")
+            if not isinstance(from_node, str) or not isinstance(to_node, str):
+                return None
+            grouped.setdefault((from_node, to_node), []).append(item)
+        return grouped
+
+    from_edge_groups = _group_edges(from_ver.get("edges", []))
+    to_edge_groups = _group_edges(to_ver.get("edges", []))
+    if from_edge_groups is None or to_edge_groups is None:
+        return None
+
+    for key in sorted(set(from_edge_groups) | set(to_edge_groups)):
+        old_group = list(from_edge_groups.get(key, []))
+        new_group = list(to_edge_groups.get(key, []))
+
+        unmatched_old = []
+        for edge in old_group:
+            if edge in new_group:
+                new_group.remove(edge)
+            else:
+                unmatched_old.append(edge)
+
+        paired_count = min(len(unmatched_old), len(new_group))
+        for index in range(paired_count):
+            edges_modified.append({
+                "from_node": key[0],
+                "to_node": key[1],
+                "from": unmatched_old[index],
+                "to": new_group[index],
+            })
+        edges_removed.extend(unmatched_old[paired_count:])
+        edges_added.extend(new_group[paired_count:])
+
+    return {
+        "from_version": from_version_id,
+        "to_version": to_version_id,
+        "field_changes": field_changes,
+        "nodes": {
+            "added": nodes_added,
+            "removed": nodes_removed,
+            "modified": nodes_modified,
+        },
+        "edges": {
+            "added": edges_added,
+            "removed": edges_removed,
+            "modified": edges_modified,
+        },
+    }
 
 
 def save_template(

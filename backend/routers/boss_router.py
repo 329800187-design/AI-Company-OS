@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from backend.services.boss_command_center import get_boss_command_center, MODULE_ORDER
 from backend.services.collaboration_graph import (
     build_boss_lite_graph,
@@ -346,6 +346,14 @@ class BossGraphTemplateExecuteRequest(BaseModel):
     """按模板执行请求"""
     goal: str = Field(..., min_length=2, max_length=5000, description="业务目标")
     save_to_delivery: bool = Field(default=True, description="是否自动保存到交付中心")
+
+
+class BossVersionMetadataUpdateRequest(BaseModel):
+    """更新版本元数据请求"""
+    model_config = ConfigDict(extra="forbid")
+
+    label: Optional[str] = Field(default=None, max_length=100, description="版本标签")
+    note: Optional[str] = Field(default=None, max_length=500, description="版本备注")
 
 
 # ── Boss Lite Handoff ──────────────────────────────────────
@@ -1361,6 +1369,48 @@ def list_graph_template_versions(template_id: str):
 
 
 @router.get(
+    "/graph/templates/{template_id}/versions/compare",
+    summary="版本对比",
+)
+def compare_graph_template_versions(
+    template_id: str,
+    from_version: str = Query(..., alias="from", description="起始版本 ID"),
+    to_version: str = Query(..., alias="to", description="目标版本 ID 或 current"),
+):
+    """对比两个版本或版本与当前模板的差异"""
+    from backend.services.graph_template_store import (
+        get_template,
+        compare_versions,
+        _is_valid_version_id,
+    )
+
+    template = get_template(template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail=f"模板 {template_id} 不存在")
+
+    if not from_version:
+        raise HTTPException(status_code=400, detail="缺少参数 from")
+
+    if not to_version:
+        raise HTTPException(status_code=400, detail="缺少参数 to")
+
+    if not _is_valid_version_id(from_version):
+        raise HTTPException(status_code=400, detail=f"无效的版本 ID: {from_version}")
+
+    if to_version != "current" and not _is_valid_version_id(to_version):
+        raise HTTPException(status_code=400, detail=f"无效的版本 ID: {to_version}")
+
+    if from_version == to_version:
+        raise HTTPException(status_code=400, detail="不能对比同一个版本")
+
+    diff = compare_versions(template_id, from_version, to_version)
+    if diff is None:
+        raise HTTPException(status_code=404, detail="版本不存在或不属于该模板")
+
+    return {"ok": True, "diff": diff}
+
+
+@router.get(
     "/graph/templates/{template_id}/versions/{version_id}",
     summary="获取版本详情",
 )
@@ -1444,6 +1494,44 @@ def restore_graph_template_version(template_id: str, version_id: str):
         raise HTTPException(status_code=500, detail="回滚失败")
 
     return {"ok": True, "template": restored, "restored_from_version": version_id}
+
+
+@router.patch(
+    "/graph/templates/{template_id}/versions/{version_id}",
+    summary="更新版本元数据",
+)
+def update_graph_template_version_metadata(
+    template_id: str,
+    version_id: str,
+    request: BossVersionMetadataUpdateRequest,
+):
+    """更新版本的 label/note 元数据（不可修改快照内容）"""
+    from backend.services.graph_template_store import (
+        get_template,
+        update_version_metadata,
+    )
+
+    template = get_template(template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail=f"模板 {template_id} 不存在")
+
+    if request.label is None and request.note is None:
+        raise HTTPException(status_code=400, detail="至少需要提供 label 或 note")
+
+    try:
+        updated = update_version_metadata(
+            template_id=template_id,
+            version_id=version_id,
+            label=request.label,
+            note=request.note,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"版本 {version_id} 不存在")
+
+    return {"ok": True, "version": updated}
 
 
 @router.post("/graph/templates/{template_id}/execute", summary="按 Graph Template 执行")

@@ -495,6 +495,278 @@ class TestTemplateStore:
         # 版本内容不应改变
         assert version_before["name"] == version_after["name"] == "不可变测试"
 
+    # ── Phase 6.7: Version Metadata & Compare 测试 ──────────
+
+    def test_version_snapshot_has_label_note(self):
+        """版本快照包含 label/note 字段"""
+        template = save_template(
+            name="元数据测试",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+        tid = template["template_id"]
+        update_template(template_id=tid, name="更新", nodes=self._sample_nodes(), edges=[])
+        versions = list_versions(tid)
+        vid = versions[0]["version_id"]
+        version = get_version(tid, vid)
+        assert "label" in version
+        assert "note" in version
+        assert version["label"] == ""
+        assert version["note"] == ""
+
+    def test_list_versions_includes_label_note(self):
+        """list_versions 摘要包含 label/note"""
+        template = save_template(
+            name="摘要测试",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+        tid = template["template_id"]
+        update_template(template_id=tid, name="更新", nodes=self._sample_nodes(), edges=[])
+        versions = list_versions(tid)
+        assert "label" in versions[0]
+        assert "note" in versions[0]
+
+    def test_update_version_metadata_label(self):
+        """更新版本 label"""
+        from backend.services.graph_template_store import update_version_metadata
+
+        template = save_template(name="label测试", nodes=self._sample_nodes(), edges=[])
+        tid = template["template_id"]
+        update_template(template_id=tid, name="更新", nodes=self._sample_nodes(), edges=[])
+        vid = list_versions(tid)[0]["version_id"]
+
+        result = update_version_metadata(tid, vid, label="发布前备份")
+        assert result is not None
+        assert result["label"] == "发布前备份"
+        # 验证持久化
+        version = get_version(tid, vid)
+        assert version["label"] == "发布前备份"
+
+    def test_update_version_metadata_note(self):
+        """更新版本 note"""
+        from backend.services.graph_template_store import update_version_metadata
+
+        template = save_template(name="note测试", nodes=self._sample_nodes(), edges=[])
+        tid = template["template_id"]
+        update_template(template_id=tid, name="更新", nodes=self._sample_nodes(), edges=[])
+        vid = list_versions(tid)[0]["version_id"]
+
+        result = update_version_metadata(tid, vid, note="修复了调研 prompt")
+        assert result is not None
+        assert result["note"] == "修复了调研 prompt"
+
+    def test_update_version_metadata_label_too_long(self):
+        """label 超长抛 ValueError"""
+        from backend.services.graph_template_store import update_version_metadata
+
+        template = save_template(name="超长测试", nodes=self._sample_nodes(), edges=[])
+        tid = template["template_id"]
+        update_template(template_id=tid, name="更新", nodes=self._sample_nodes(), edges=[])
+        vid = list_versions(tid)[0]["version_id"]
+
+        with pytest.raises(ValueError, match="label"):
+            update_version_metadata(tid, vid, label="x" * 101)
+
+    def test_update_version_metadata_note_too_long(self):
+        """note 超长抛 ValueError"""
+        from backend.services.graph_template_store import update_version_metadata
+
+        template = save_template(name="超长测试", nodes=self._sample_nodes(), edges=[])
+        tid = template["template_id"]
+        update_template(template_id=tid, name="更新", nodes=self._sample_nodes(), edges=[])
+        vid = list_versions(tid)[0]["version_id"]
+
+        with pytest.raises(ValueError, match="note"):
+            update_version_metadata(tid, vid, note="x" * 501)
+
+    def test_update_version_metadata_nonexistent(self):
+        """不存在的版本返回 None"""
+        from backend.services.graph_template_store import update_version_metadata
+
+        template = save_template(name="不存在测试", nodes=self._sample_nodes(), edges=[])
+        tid = template["template_id"]
+
+        result = update_version_metadata(tid, "ver_nonexistent", label="x")
+        assert result is None
+
+    def test_update_version_metadata_no_snapshot_change(self):
+        """元数据更新不改变快照内容"""
+        from backend.services.graph_template_store import update_version_metadata
+
+        template = save_template(name="不可变测试", nodes=self._sample_nodes(), edges=[])
+        tid = template["template_id"]
+        update_template(template_id=tid, name="更新", nodes=self._sample_nodes(), edges=[])
+        vid = list_versions(tid)[0]["version_id"]
+
+        version_before = get_version(tid, vid)
+        update_version_metadata(tid, vid, label="新标签", note="新备注")
+        version_after = get_version(tid, vid)
+
+        # 快照内容不变
+        assert version_before["name"] == version_after["name"]
+        assert version_before["nodes"] == version_after["nodes"]
+        assert version_before["edges"] == version_after["edges"]
+        # 元数据变了
+        assert version_after["label"] == "新标签"
+        assert version_after["note"] == "新备注"
+
+    def test_compare_versions_no_changes(self):
+        """对比两个相同版本返回空 diff"""
+        from backend.services.graph_template_store import compare_versions
+
+        template = save_template(name="对比测试", nodes=self._sample_nodes(), edges=[])
+        tid = template["template_id"]
+        update_template(template_id=tid, name="更新", nodes=self._sample_nodes(), edges=[])
+        vid = list_versions(tid)[0]["version_id"]
+
+        diff = compare_versions(tid, vid, vid)
+        # 同版本对比会抛 HTTP 400，但 store 层返回空 diff
+        # 实际上 store 层不检查同版本，直接返回结果
+        assert diff is not None
+        assert diff["field_changes"] == []
+        assert diff["nodes"]["added"] == []
+        assert diff["nodes"]["removed"] == []
+
+    def test_compare_versions_field_changes(self):
+        """对比版本检测基础字段变化"""
+        from backend.services.graph_template_store import compare_versions
+
+        template = save_template(name="V1名称", nodes=self._sample_nodes(), edges=[], description="V1描述")
+        tid = template["template_id"]
+        update_template(template_id=tid, name="V2名称", nodes=self._sample_nodes(), edges=[], description="V2描述")
+        vid = list_versions(tid)[0]["version_id"]
+
+        diff = compare_versions(tid, vid, "current")
+        assert diff is not None
+        fields = {c["field"]: c for c in diff["field_changes"]}
+        assert "name" in fields
+        assert fields["name"]["from"] == "V1名称"
+        assert fields["name"]["to"] == "V2名称"
+        assert "description" in fields
+
+    def test_compare_versions_node_changes(self):
+        """对比版本检测节点增删改"""
+        from backend.services.graph_template_store import compare_versions
+
+        template = save_template(
+            name="节点测试",
+            nodes=self._sample_nodes(),
+            edges=self._sample_edges(),
+        )
+        tid = template["template_id"]
+
+        # 更新：修改一个节点，删除一个节点，新增一个节点
+        new_nodes = [
+            {"id": "research", "agent_id": "research", "task_type": "research_brief", "title": "调研v2", "prompt": "新调研"},
+            {"id": "data", "agent_id": "data", "task_type": "analysis", "title": "数据", "prompt": "分析数据"},
+        ]
+        update_template(template_id=tid, name="节点测试", nodes=new_nodes, edges=[])
+        vid = list_versions(tid)[0]["version_id"]
+
+        diff = compare_versions(tid, vid, "current")
+        assert diff is not None
+        assert len(diff["nodes"]["added"]) == 1
+        assert diff["nodes"]["added"][0]["id"] == "data"
+        assert len(diff["nodes"]["removed"]) == 1
+        assert diff["nodes"]["removed"][0]["id"] == "marketing"
+        assert len(diff["nodes"]["modified"]) == 1
+        assert diff["nodes"]["modified"][0]["id"] == "research"
+
+    def test_compare_versions_edge_changes(self):
+        """对比版本检测边增删"""
+        from backend.services.graph_template_store import compare_versions
+
+        template = save_template(
+            name="边测试",
+            nodes=self._sample_nodes(),
+            edges=self._sample_edges(),
+        )
+        tid = template["template_id"]
+
+        # 更新：删除旧边，新增新边
+        new_edges = [{"from_node": "marketing", "to_node": "research", "handoff_type": "feedback"}]
+        update_template(template_id=tid, name="边测试", nodes=self._sample_nodes(), edges=new_edges)
+        vid = list_versions(tid)[0]["version_id"]
+
+        diff = compare_versions(tid, vid, "current")
+        assert diff is not None
+        assert len(diff["edges"]["added"]) == 1
+        assert diff["edges"]["added"][0]["from_node"] == "marketing"
+        assert len(diff["edges"]["removed"]) == 1
+        assert diff["edges"]["removed"][0]["from_node"] == "research"
+
+    def test_compare_versions_parallel_edges(self):
+        """同端点多条边不会在对比时被字典覆盖"""
+        from backend.services.graph_template_store import compare_versions
+
+        old_edges = [
+            {"from_node": "research", "to_node": "marketing", "handoff_type": "context"},
+            {"from_node": "research", "to_node": "marketing", "handoff_type": "brief"},
+        ]
+        new_edges = [
+            {"from_node": "research", "to_node": "marketing", "handoff_type": "context"},
+            {"from_node": "research", "to_node": "marketing", "handoff_type": "review"},
+        ]
+        template = save_template(
+            name="并行边",
+            nodes=self._sample_nodes(),
+            edges=old_edges,
+        )
+        tid = template["template_id"]
+        update_template(
+            template_id=tid,
+            name="并行边",
+            nodes=self._sample_nodes(),
+            edges=new_edges,
+        )
+        vid = list_versions(tid)[0]["version_id"]
+
+        diff = compare_versions(tid, vid, "current")
+        assert diff is not None
+        assert len(diff["edges"]["modified"]) == 1
+        assert diff["edges"]["added"] == []
+        assert diff["edges"]["removed"] == []
+
+    def test_compare_versions_vs_current(self):
+        """对比版本 vs current"""
+        from backend.services.graph_template_store import compare_versions
+
+        template = save_template(name="原始", nodes=self._sample_nodes(), edges=[])
+        tid = template["template_id"]
+        update_template(template_id=tid, name="当前", nodes=self._sample_nodes(), edges=[])
+        vid = list_versions(tid)[0]["version_id"]
+
+        diff = compare_versions(tid, vid, "current")
+        assert diff is not None
+        assert diff["from_version"] == vid
+        assert diff["to_version"] == "current"
+        fields = {c["field"]: c for c in diff["field_changes"]}
+        assert fields["name"]["from"] == "原始"
+        assert fields["name"]["to"] == "当前"
+
+    def test_compare_versions_nonexistent_from(self):
+        """不存在的起始版本返回 None"""
+        from backend.services.graph_template_store import compare_versions
+
+        template = save_template(name="测试", nodes=self._sample_nodes(), edges=[])
+        tid = template["template_id"]
+
+        diff = compare_versions(tid, "ver_nonexistent", "current")
+        assert diff is None
+
+    def test_compare_versions_nonexistent_to(self):
+        """不存在的目标版本返回 None"""
+        from backend.services.graph_template_store import compare_versions
+
+        template = save_template(name="测试", nodes=self._sample_nodes(), edges=[])
+        tid = template["template_id"]
+        update_template(template_id=tid, name="更新", nodes=self._sample_nodes(), edges=[])
+        vid = list_versions(tid)[0]["version_id"]
+
+        diff = compare_versions(tid, vid, "ver_nonexistent")
+        assert diff is None
+
 
 # ── API 集成测试 ──────────────────────────────────────────────
 
@@ -1091,3 +1363,386 @@ class TestGraphTemplateAPI:
         # 版本列表应返回 404（模板已不存在）
         versions_resp = client.get(f"/boss/graph/templates/{tid}/versions")
         assert versions_resp.status_code == 404
+
+    # ── Phase 6.7: Version Metadata & Compare API 测试 ──────
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_update_version_metadata_success(self, mock_guard, mock_rate):
+        """更新版本元数据成功"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "元数据测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+
+        # 创建版本
+        client.put(f"/boss/graph/templates/{tid}", json={
+            "name": "更新",
+            "nodes": _sample_api_nodes(),
+        })
+        vid = client.get(f"/boss/graph/templates/{tid}/versions").json()["versions"][0]["version_id"]
+
+        # 更新元数据
+        response = client.patch(f"/boss/graph/templates/{tid}/versions/{vid}", json={
+            "label": "发布前备份",
+            "note": "修复了调研 prompt",
+        })
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["version"]["label"] == "发布前备份"
+        assert data["version"]["note"] == "修复了调研 prompt"
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_update_version_metadata_404(self, mock_guard, mock_rate):
+        """不存在的版本返回 404"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+
+        response = client.patch(f"/boss/graph/templates/{tid}/versions/ver_nonexistent", json={
+            "label": "test",
+        })
+        assert response.status_code == 404
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_update_version_metadata_label_too_long(self, mock_guard, mock_rate):
+        """label 超长返回 422（Pydantic 校验）"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+        client.put(f"/boss/graph/templates/{tid}", json={"name": "更新", "nodes": _sample_api_nodes()})
+        vid = client.get(f"/boss/graph/templates/{tid}/versions").json()["versions"][0]["version_id"]
+
+        response = client.patch(f"/boss/graph/templates/{tid}/versions/{vid}", json={
+            "label": "x" * 101,
+        })
+        assert response.status_code == 422
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_update_version_metadata_empty_body(self, mock_guard, mock_rate):
+        """空请求体返回 400"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+        client.put(f"/boss/graph/templates/{tid}", json={"name": "更新", "nodes": _sample_api_nodes()})
+        vid = client.get(f"/boss/graph/templates/{tid}/versions").json()["versions"][0]["version_id"]
+
+        response = client.patch(f"/boss/graph/templates/{tid}/versions/{vid}", json={})
+        assert response.status_code == 400
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_update_version_metadata_rejects_snapshot_fields(self, mock_guard, mock_rate):
+        """PATCH 只允许 label/note，不能夹带快照字段"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "不可变测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+        client.put(f"/boss/graph/templates/{tid}", json={
+            "name": "更新",
+            "nodes": _sample_api_nodes(),
+        })
+        vid = client.get(f"/boss/graph/templates/{tid}/versions").json()["versions"][0]["version_id"]
+
+        response = client.patch(f"/boss/graph/templates/{tid}/versions/{vid}", json={
+            "label": "合法标签",
+            "nodes": [],
+        })
+        assert response.status_code == 422
+        version = client.get(
+            f"/boss/graph/templates/{tid}/versions/{vid}"
+        ).json()["version"]
+        assert version["label"] == ""
+        assert len(version["nodes"]) == 2
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_compare_versions_no_changes(self, mock_guard, mock_rate):
+        """版本对比无变化"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "对比测试",
+            "nodes": _sample_api_nodes(),
+            "edges": _sample_api_edges(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+
+        client.put(f"/boss/graph/templates/{tid}", json={
+            "name": "对比测试",
+            "nodes": _sample_api_nodes(),
+            "edges": _sample_api_edges(),
+        })
+        vid = client.get(f"/boss/graph/templates/{tid}/versions").json()["versions"][0]["version_id"]
+
+        response = client.get(f"/boss/graph/templates/{tid}/versions/compare?from={vid}&to=current")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["diff"]["field_changes"] == []
+        assert data["diff"]["nodes"]["added"] == []
+        assert data["diff"]["edges"]["added"] == []
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_compare_versions_field_changes(self, mock_guard, mock_rate):
+        """版本对比检测基础字段变化"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "V1",
+            "nodes": _sample_api_nodes(),
+            "edges": _sample_api_edges(),
+            "description": "描述V1",
+        })
+        tid = create_resp.json()["template"]["template_id"]
+
+        client.put(f"/boss/graph/templates/{tid}", json={
+            "name": "V2",
+            "nodes": _sample_api_nodes(),
+            "edges": _sample_api_edges(),
+            "description": "描述V2",
+        })
+        vid = client.get(f"/boss/graph/templates/{tid}/versions").json()["versions"][0]["version_id"]
+
+        response = client.get(f"/boss/graph/templates/{tid}/versions/compare?from={vid}&to=current")
+        assert response.status_code == 200
+        diff = response.json()["diff"]
+        fields = {c["field"]: c for c in diff["field_changes"]}
+        assert "name" in fields
+        assert fields["name"]["from"] == "V1"
+        assert fields["name"]["to"] == "V2"
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_compare_versions_node_changes(self, mock_guard, mock_rate):
+        """版本对比检测节点变化"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "节点对比",
+            "nodes": _sample_api_nodes(),
+            "edges": _sample_api_edges(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+
+        # 更新：修改节点 + 新增节点
+        client.put(f"/boss/graph/templates/{tid}", json={
+            "name": "节点对比",
+            "nodes": [
+                {"id": "research", "agent_id": "research", "task_type": "research_brief", "title": "调研v2", "prompt": "新调研"},
+                {"id": "marketing", "agent_id": "marketing", "task_type": "copywriting", "title": "营销", "prompt": "做营销"},
+                {"id": "data", "agent_id": "data", "task_type": "analysis", "title": "数据", "prompt": "分析"},
+            ],
+        })
+        vid = client.get(f"/boss/graph/templates/{tid}/versions").json()["versions"][0]["version_id"]
+
+        response = client.get(f"/boss/graph/templates/{tid}/versions/compare?from={vid}&to=current")
+        assert response.status_code == 200
+        diff = response.json()["diff"]
+        assert len(diff["nodes"]["added"]) == 1
+        assert diff["nodes"]["added"][0]["id"] == "data"
+        assert len(diff["nodes"]["modified"]) == 1
+        assert diff["nodes"]["modified"][0]["id"] == "research"
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_compare_versions_edge_changes(self, mock_guard, mock_rate):
+        """版本对比检测边变化"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "边对比",
+            "nodes": _sample_api_nodes(),
+            "edges": _sample_api_edges(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+
+        # 更新：替换边
+        client.put(f"/boss/graph/templates/{tid}", json={
+            "name": "边对比",
+            "nodes": _sample_api_nodes(),
+            "edges": [{"from_node": "marketing", "to_node": "research", "handoff_type": "feedback"}],
+        })
+        vid = client.get(f"/boss/graph/templates/{tid}/versions").json()["versions"][0]["version_id"]
+
+        response = client.get(f"/boss/graph/templates/{tid}/versions/compare?from={vid}&to=current")
+        assert response.status_code == 200
+        diff = response.json()["diff"]
+        assert len(diff["edges"]["added"]) == 1
+        assert len(diff["edges"]["removed"]) == 1
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_compare_versions_vs_current(self, mock_guard, mock_rate):
+        """版本 vs current 对比"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "原始",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+
+        client.put(f"/boss/graph/templates/{tid}", json={
+            "name": "当前",
+            "nodes": _sample_api_nodes(),
+        })
+        vid = client.get(f"/boss/graph/templates/{tid}/versions").json()["versions"][0]["version_id"]
+
+        response = client.get(f"/boss/graph/templates/{tid}/versions/compare?from={vid}&to=current")
+        assert response.status_code == 200
+        diff = response.json()["diff"]
+        assert diff["from_version"] == vid
+        assert diff["to_version"] == "current"
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_compare_versions_nonexistent_template_404(self, mock_guard, mock_rate):
+        """不存在模板的版本对比返回 404"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        response = client.get("/boss/graph/templates/tpl_nonexistent/versions/compare?from=ver_a&to=current")
+        assert response.status_code == 404
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_compare_versions_invalid_from_id(self, mock_guard, mock_rate):
+        """无效的 from 版本 ID 返回 400"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+
+        response = client.get(f"/boss/graph/templates/{tid}/versions/compare?from=invalid_id&to=current")
+        assert response.status_code == 400
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_compare_versions_invalid_to_id(self, mock_guard, mock_rate):
+        """无效的 to 版本 ID 返回 400"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+
+        response = client.get(f"/boss/graph/templates/{tid}/versions/compare?from=ver_aabbccddeeff&to=bad_id")
+        assert response.status_code == 400
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_compare_versions_missing_params(self, mock_guard, mock_rate):
+        """缺少参数返回 422"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+
+        # 缺少 from
+        response = client.get(f"/boss/graph/templates/{tid}/versions/compare?to=current")
+        assert response.status_code == 422
+
+        # 缺少 to
+        response = client.get(f"/boss/graph/templates/{tid}/versions/compare?from=ver_aabbccddeeff")
+        assert response.status_code == 422
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_compare_versions_same_version(self, mock_guard, mock_rate):
+        """对比同一个版本返回 400"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+        client.put(f"/boss/graph/templates/{tid}", json={"name": "更新", "nodes": _sample_api_nodes()})
+        vid = client.get(f"/boss/graph/templates/{tid}/versions").json()["versions"][0]["version_id"]
+
+        response = client.get(f"/boss/graph/templates/{tid}/versions/compare?from={vid}&to={vid}")
+        assert response.status_code == 400
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_compare_versions_cross_template_rejected(self, mock_guard, mock_rate):
+        """跨模板版本对比返回 404"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+
+        resp1 = client.post("/boss/graph/templates", json={"name": "模板A", "nodes": _sample_api_nodes()})
+        tid_a = resp1.json()["template"]["template_id"]
+        client.put(f"/boss/graph/templates/{tid_a}", json={"name": "更新A", "nodes": _sample_api_nodes()})
+
+        resp2 = client.post("/boss/graph/templates", json={"name": "模板B", "nodes": _sample_api_nodes()})
+        tid_b = resp2.json()["template"]["template_id"]
+        client.put(f"/boss/graph/templates/{tid_b}", json={"name": "更新B", "nodes": _sample_api_nodes()})
+
+        vid_a = client.get(f"/boss/graph/templates/{tid_a}/versions").json()["versions"][0]["version_id"]
+
+        # 用模板A的版本去对比模板B（from 属于 A，但 API 路由是 B）
+        response = client.get(f"/boss/graph/templates/{tid_b}/versions/compare?from={vid_a}&to=current")
+        assert response.status_code == 404

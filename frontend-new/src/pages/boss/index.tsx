@@ -31,6 +31,7 @@ import {
   GitBranch,
   Copy,
   GitCompareArrows,
+  Pencil,
   X,
 } from "lucide-react"
 import { api } from "@/api/client"
@@ -936,6 +937,8 @@ export default function BossPage() {
     version_id: string
     template_id: string
     created_at: string
+    label: string
+    note: string
     name: string
     node_count: number
     edge_count: number
@@ -946,6 +949,21 @@ export default function BossPage() {
   const [rollbackConfirmVersionId, setRollbackConfirmVersionId] = useState<string | null>(null)
   const [rollbackLoading, setRollbackLoading] = useState(false)
   const [versionError, setVersionError] = useState<string | null>(null)
+
+  // ── Phase 6.7: Version metadata edit state ────────────────
+  const [editingVersionMeta, setEditingVersionMeta] = useState<{
+    versionId: string
+    label: string
+    note: string
+  } | null>(null)
+  const [versionMetaSaving, setVersionMetaSaving] = useState(false)
+
+  // ── Phase 6.7: Version compare state ──────────────────────
+  const [compareMode, setCompareMode] = useState(false)
+  const [compareFrom, setCompareFrom] = useState<string | null>(null)
+  const [compareTo, setCompareTo] = useState<string | null>(null)
+  const [compareResult, setCompareResult] = useState<Record<string, unknown> | null>(null)
+  const [compareLoading, setCompareLoading] = useState(false)
 
   /** Save current draft to localStorage (debounced) */
   const saveDraftToStorage = useCallback((draft: GraphTemplateDraft) => {
@@ -1214,6 +1232,11 @@ export default function BossPage() {
     setVersionListLoading(true)
     setVersionDetail(null)
     setVersionError(null)
+    setEditingVersionMeta(null)
+    setCompareMode(false)
+    setCompareFrom(null)
+    setCompareTo(null)
+    setCompareResult(null)
     try {
       const data = await api.listBossGraphTemplateVersions(templateId)
       setVersionList(data.versions || [])
@@ -1270,6 +1293,52 @@ export default function BossPage() {
       setVersionError(errorMsg)
     } finally {
       setRollbackLoading(false)
+    }
+  }
+
+  // ── Phase 6.7: Version metadata edit ─────────────────────
+
+  const saveVersionMetadata = async () => {
+    if (!versionListTemplateId || !editingVersionMeta || versionMetaSaving) return
+    setVersionMetaSaving(true)
+    setVersionError(null)
+    try {
+      await api.updateBossGraphTemplateVersionMetadata(
+        versionListTemplateId,
+        editingVersionMeta.versionId,
+        { label: editingVersionMeta.label, note: editingVersionMeta.note },
+      )
+      setEditingVersionMeta(null)
+      await loadVersionList(versionListTemplateId)
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "保存元数据失败"
+      console.error("Save version metadata failed:", error)
+      setVersionError(errorMsg)
+    } finally {
+      setVersionMetaSaving(false)
+    }
+  }
+
+  // ── Phase 6.7: Version compare ───────────────────────────
+
+  const runVersionCompare = async () => {
+    if (!versionListTemplateId || !compareFrom || !compareTo || compareLoading) return
+    setCompareLoading(true)
+    setVersionError(null)
+    setCompareResult(null)
+    try {
+      const data = await api.compareBossGraphTemplateVersions(
+        versionListTemplateId,
+        compareFrom,
+        compareTo,
+      )
+      setCompareResult(data.diff as unknown as Record<string, unknown>)
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "版本对比失败"
+      console.error("Version compare failed:", error)
+      setVersionError(errorMsg)
+    } finally {
+      setCompareLoading(false)
     }
   }
 
@@ -2359,6 +2428,11 @@ export default function BossPage() {
                 setVersionList(null)
                 setVersionDetail(null)
                 setVersionError(null)
+                setCompareMode(false)
+                setCompareFrom(null)
+                setCompareTo(null)
+                setCompareResult(null)
+                setEditingVersionMeta(null)
               }}
               className="gap-1 text-xs text-[#8A8A8A] hover:text-[#0B0B0B]"
             >
@@ -2373,9 +2447,20 @@ export default function BossPage() {
             </div>
           ) : versionError ? (
             <div className="rounded-xl border border-red/20 bg-red/5 p-4 text-sm text-red-500">
-              <div className="mb-1 flex items-center gap-1.5 font-medium">
-                <AlertCircle className="h-3.5 w-3.5" />
-                版本操作失败
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 font-medium">
+                  <AlertCircle className="h-3.5 w-3.5" />
+                  版本操作失败
+                </div>
+                <Button
+                  data-testid="version-error-dismiss"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setVersionError(null)}
+                  className="h-6 px-2 text-xs text-red-500"
+                >
+                  关闭提示
+                </Button>
               </div>
               <p className="text-xs">{versionError}</p>
             </div>
@@ -2385,18 +2470,92 @@ export default function BossPage() {
             </div>
           ) : versionList && (
             <div className="space-y-2">
+              {/* Compare mode toggle */}
+              <div className="flex items-center gap-2 mb-2">
+                <Button
+                  data-testid="version-compare-toggle"
+                  variant={compareMode ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => {
+                    setCompareMode(!compareMode)
+                    setCompareFrom(null)
+                    setCompareTo(null)
+                    setCompareResult(null)
+                  }}
+                  className="gap-1 text-xs"
+                >
+                  <GitCompareArrows className="h-3 w-3" />
+                  {compareMode ? "退出对比" : "版本对比"}
+                </Button>
+                {compareMode && compareFrom && compareTo && (
+                  <Button
+                    data-testid="version-compare-run"
+                    variant="default"
+                    size="sm"
+                    onClick={runVersionCompare}
+                    disabled={compareLoading}
+                    className="gap-1 text-xs"
+                  >
+                    {compareLoading ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <GitCompareArrows className="h-3 w-3" />
+                    )}
+                    执行对比
+                  </Button>
+                )}
+                {compareMode && (
+                  <span className="text-[11px] text-[#8A8A8A]">
+                    选择两个版本，或选一个版本再选「当前模板」
+                  </span>
+                )}
+              </div>
+
               {versionList.map((v) => (
                 <div
                   key={v.version_id}
-                  className="flex items-center justify-between rounded-lg border border-[#F0F0EC] p-3 hover:bg-[#F9F9F7] transition-all"
+                  className={cn(
+                    "flex items-center justify-between rounded-lg border p-3 hover:bg-[#F9F9F7] transition-all",
+                    compareMode && (compareFrom === v.version_id || compareTo === v.version_id)
+                      ? "border-primary bg-primary/5"
+                      : "border-[#F0F0EC]",
+                  )}
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 mb-1">
+                      {compareMode && (
+                        <input
+                          data-testid={`version-compare-${v.version_id}`}
+                          type="checkbox"
+                          checked={compareFrom === v.version_id || compareTo === v.version_id}
+                          aria-label={`选择版本 ${v.label || v.version_id}`}
+                          onChange={() => {
+                            setCompareResult(null)
+                            if (compareFrom === v.version_id) {
+                              setCompareFrom(null)
+                            } else if (compareTo === v.version_id) {
+                              setCompareTo(null)
+                            } else if (!compareFrom) {
+                              setCompareFrom(v.version_id)
+                            } else if (!compareTo) {
+                              setCompareTo(v.version_id)
+                            }
+                          }}
+                          className="h-3.5 w-3.5 rounded border-[#D8D8D2]"
+                        />
+                      )}
                       <span className="text-[10px] font-mono text-[#B5B5B5] bg-[#F4F3EF] px-1.5 py-0.5 rounded">
                         {v.version_id}
                       </span>
-                      <span className="text-xs text-[#6B6B6B]">{v.name}</span>
+                      {v.label ? (
+                        <span className="text-xs font-medium text-[#0B0B0B]">{v.label}</span>
+                      ) : (
+                        <span className="text-xs text-[#6B6B6B]">{v.name}</span>
+                      )}
                     </div>
+                    {v.note && (
+                      <p className="text-[11px] text-[#8A8A8A] mb-1 truncate max-w-md">{v.note}</p>
+                    )}
                     <div className="flex items-center gap-3 text-[11px] text-[#B5B5B5]">
                       <span>{formatLocalTime(v.created_at)}</span>
                       <span>{v.node_count} 节点</span>
@@ -2404,30 +2563,277 @@ export default function BossPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => loadVersionDetail(versionListTemplateId, v.version_id)}
-                      disabled={versionDetailLoading}
-                      className="gap-1 text-xs text-[#6B6B6B] hover:text-[#0B0B0B]"
-                    >
-                      <Eye className="h-3 w-3" />
-                      查看
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setRollbackConfirmVersionId(v.version_id)}
-                      className="gap-1 text-xs"
-                    >
-                      <RotateCcw className="h-3 w-3" />
-                      回滚
-                    </Button>
+                    {!compareMode && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setEditingVersionMeta({ versionId: v.version_id, label: v.label || "", note: v.note || "" })}
+                          className="gap-1 text-xs text-[#8A8A8A] hover:text-[#0B0B0B]"
+                        >
+                          <Pencil className="h-3 w-3" />
+                          备注
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => loadVersionDetail(versionListTemplateId, v.version_id)}
+                          disabled={versionDetailLoading}
+                          className="gap-1 text-xs text-[#6B6B6B] hover:text-[#0B0B0B]"
+                        >
+                          <Eye className="h-3 w-3" />
+                          查看
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setRollbackConfirmVersionId(v.version_id)}
+                          className="gap-1 text-xs"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          回滚
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </div>
               ))}
+
+              {/* Compare with current template option */}
+              {compareMode && (
+                <button
+                  data-testid="version-compare-current"
+                  type="button"
+                  disabled={!compareFrom}
+                  aria-pressed={compareTo === "current"}
+                  className={cn(
+                    "flex w-full items-center justify-between rounded-lg border border-dashed p-3 text-left transition-all hover:bg-[#F9F9F7] disabled:cursor-not-allowed disabled:opacity-50",
+                    compareTo === "current" ? "border-primary bg-primary/5" : "border-[#D8D8D2]",
+                  )}
+                  onClick={() => {
+                    setCompareResult(null)
+                    if (compareTo === "current") {
+                      setCompareTo(null)
+                    } else {
+                      setCompareTo("current")
+                    }
+                  }}
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "h-3.5 w-3.5 rounded border border-[#D8D8D2]",
+                        compareTo === "current" && "border-primary bg-primary",
+                      )}
+                    />
+                    <span className="text-xs text-[#6B6B6B]">当前模板（最新状态）</span>
+                  </div>
+                </button>
+              )}
             </div>
           )}
+
+          {/* Version metadata edit dialog */}
+          {editingVersionMeta && (
+            <div data-testid="version-meta-editor" className="mt-4 rounded-lg border border-[#E5E5E5] p-4 bg-[#FAFAF8]">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-medium text-[#0B0B0B]">
+                  编辑版本备注 / {editingVersionMeta.versionId}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEditingVersionMeta(null)}
+                  aria-label="关闭版本备注编辑"
+                  className="h-6 w-6 p-0"
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-[11px] text-[#8A8A8A] mb-1 block">标签（可选，最多 100 字符）</label>
+                  <input
+                    data-testid="version-label-input"
+                    type="text"
+                    value={editingVersionMeta.label}
+                    onChange={(e) => setEditingVersionMeta({ ...editingVersionMeta, label: e.target.value })}
+                    maxLength={100}
+                    placeholder="如：发布前备份"
+                    className="w-full rounded-md border border-[#E5E5E5] px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-[#8A8A8A] mb-1 block">备注（可选，最多 500 字符）</label>
+                  <textarea
+                    data-testid="version-note-input"
+                    value={editingVersionMeta.note}
+                    onChange={(e) => setEditingVersionMeta({ ...editingVersionMeta, note: e.target.value })}
+                    maxLength={500}
+                    rows={3}
+                    placeholder="记录这次版本变更的原因或要点"
+                    className="w-full rounded-md border border-[#E5E5E5] px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+                  />
+                </div>
+                <div className="flex items-center gap-2 justify-end">
+                  <Button
+                    data-testid="version-meta-cancel"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setEditingVersionMeta(null)}
+                    className="text-xs"
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    data-testid="version-meta-save"
+                    variant="default"
+                    size="sm"
+                    onClick={saveVersionMetadata}
+                    disabled={versionMetaSaving}
+                    className="gap-1 text-xs"
+                  >
+                    {versionMetaSaving && <Loader2 className="h-3 w-3 animate-spin" />}
+                    保存
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Compare result panel */}
+          {compareResult && (() => {
+            const diff = compareResult as {
+              from_version: string
+              to_version: string
+              field_changes: Array<{ field: string; from: string; to: string }>
+              nodes: {
+                added: Array<Record<string, unknown>>
+                removed: Array<Record<string, unknown>>
+                modified: Array<{ id: string; from: Record<string, unknown>; to: Record<string, unknown> }>
+              }
+              edges: {
+                added: Array<Record<string, unknown>>
+                removed: Array<Record<string, unknown>>
+                modified: Array<{ from_node: string; to_node: string; from: Record<string, unknown>; to: Record<string, unknown> }>
+              }
+            }
+            const totalChanges = diff.field_changes.length +
+              diff.nodes.added.length + diff.nodes.removed.length + diff.nodes.modified.length +
+              diff.edges.added.length + diff.edges.removed.length + diff.edges.modified.length
+            return (
+              <div data-testid="version-compare-result" className="mt-4 rounded-lg border border-[#E5E5E5] p-4 bg-[#FAFAF8]">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-medium text-[#0B0B0B]">
+                    对比结果: {diff.from_version} → {diff.to_version}
+                    <span className="ml-2 text-[#8A8A8A]">共 {totalChanges} 处变化</span>
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setCompareResult(null)}
+                    aria-label="关闭版本对比结果"
+                    className="h-6 w-6 p-0"
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                </div>
+
+                {totalChanges === 0 ? (
+                  <div className="text-xs text-[#8A8A8A] text-center py-4">两个版本完全相同，无差异</div>
+                ) : (
+                  <div className="space-y-4">
+                    {/* Field changes */}
+                    {diff.field_changes.length > 0 && (
+                      <div>
+                        <h5 className="text-[11px] font-medium text-[#6B6B6B] mb-2">基础字段变化</h5>
+                        <div className="space-y-1.5">
+                          {diff.field_changes.map((c, i) => (
+                            <div key={i} className="flex items-start gap-2 text-[11px]">
+                              <span className="font-mono text-[#8A8A8A] min-w-[80px]">{c.field}</span>
+                              <span className="text-red-500 line-through flex-1">{c.from || "(空)"}</span>
+                              <span className="text-green-600 flex-1">{c.to || "(空)"}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Node changes */}
+                    {(diff.nodes.added.length > 0 || diff.nodes.removed.length > 0 || diff.nodes.modified.length > 0) && (
+                      <div>
+                        <h5 className="text-[11px] font-medium text-[#6B6B6B] mb-2">节点变化</h5>
+                        <div className="space-y-1">
+                          {diff.nodes.added.map((n, i) => (
+                            <div key={`add-${i}`} className="flex items-center gap-2 text-[11px]">
+                              <span className="text-green-600 font-medium">+ 新增</span>
+                              <span className="font-mono">{n.id as string}</span>
+                              <span className="text-[#8A8A8A]">{n.title as string || n.agent_id as string}</span>
+                            </div>
+                          ))}
+                          {diff.nodes.removed.map((n, i) => (
+                            <div key={`rm-${i}`} className="flex items-center gap-2 text-[11px]">
+                              <span className="text-red-500 font-medium">- 删除</span>
+                              <span className="font-mono">{n.id as string}</span>
+                              <span className="text-[#8A8A8A]">{n.title as string || n.agent_id as string}</span>
+                            </div>
+                          ))}
+                          {diff.nodes.modified.map((m, i) => (
+                            <div key={`mod-${i}`} className="text-[11px]">
+                              <div className="flex items-center gap-2">
+                                <span className="text-amber-600 font-medium">~ 修改</span>
+                                <span className="font-mono">{m.id}</span>
+                              </div>
+                              <div className="ml-6 text-[10px] text-[#8A8A8A]">
+                                {Object.keys(m.to).filter(k => JSON.stringify(m.from[k]) !== JSON.stringify(m.to[k])).map(k => (
+                                  <div key={k}>{k}: <span className="text-red-500 line-through">{JSON.stringify(m.from[k])}</span> → <span className="text-green-600">{JSON.stringify(m.to[k])}</span></div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Edge changes */}
+                    {(diff.edges.added.length > 0 || diff.edges.removed.length > 0 || diff.edges.modified.length > 0) && (
+                      <div>
+                        <h5 className="text-[11px] font-medium text-[#6B6B6B] mb-2">边变化</h5>
+                        <div className="space-y-1">
+                          {diff.edges.added.map((e, i) => (
+                            <div key={`add-${i}`} className="flex items-center gap-2 text-[11px]">
+                              <span className="text-green-600 font-medium">+ 新增</span>
+                              <span className="font-mono">{e.from_node as string}→{e.to_node as string}</span>
+                            </div>
+                          ))}
+                          {diff.edges.removed.map((e, i) => (
+                            <div key={`rm-${i}`} className="flex items-center gap-2 text-[11px]">
+                              <span className="text-red-500 font-medium">- 删除</span>
+                              <span className="font-mono">{e.from_node as string}→{e.to_node as string}</span>
+                            </div>
+                          ))}
+                          {diff.edges.modified.map((m, i) => (
+                            <div key={`mod-${i}`} className="text-[11px]">
+                              <div className="flex items-center gap-2">
+                                <span className="text-amber-600 font-medium">~ 修改</span>
+                                <span className="font-mono">{m.from_node}→{m.to_node}</span>
+                              </div>
+                              <div className="ml-6 text-[10px] text-[#8A8A8A]">
+                                {Object.keys(m.to).filter(k => JSON.stringify(m.from[k]) !== JSON.stringify(m.to[k])).map(k => (
+                                  <div key={k}>{k}: <span className="text-red-500 line-through">{JSON.stringify(m.from[k])}</span> → <span className="text-green-600">{JSON.stringify(m.to[k])}</span></div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })()}
 
           {/* Version detail preview */}
           {versionDetail && (
