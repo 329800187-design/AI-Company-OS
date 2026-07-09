@@ -241,20 +241,17 @@ test.describe("DAG 编辑器 — 校验拦截", () => {
   })
 
   test("缺失节点引用被前端拦截", async ({ page }) => {
-    // First, add a node "alpha" to make the node list non-empty
-    await addNode(page)
-    await expandNode(page, 2)
-    await fillNodeField(page, 2, "node_id", "alpha")
-    await fillNodeField(page, 2, "agent_id", "alpha")
+    const edgeSection = page.locator('h5', { hasText: '边 / Edges' }).locator('..').locator('[class*="space-y"]').locator('> div').first()
+    await edgeSection.locator('[class*="select-none"]').click()
+    const fromSelect = edgeSection.locator("select").first()
+    await fromSelect.evaluate((select) => {
+      const option = document.createElement("option")
+      option.value = "missing-node"
+      option.textContent = "missing-node"
+      select.appendChild(option)
+    })
+    await fromSelect.selectOption("missing-node")
 
-    // Now add an edge and try to reference a non-existent node
-    // We need to use the API approach since selects only show existing nodes
-    // Instead, let's test by changing a node ID after edge references it
-    // Change "research" node ID to "renamed"
-    await expandNode(page, 0)
-    await fillNodeField(page, 0, "node_id", "renamed")
-
-    // The existing edge from_node="research" now references a non-existent node
     await expect(page.locator('text=不存在')).toBeVisible({ timeout: 3000 })
   })
 
@@ -304,6 +301,9 @@ test.describe("DAG 编辑器 — 删除节点自动清理边", () => {
     // Default: 2 nodes (research, marketing), 1 edge (research -> marketing)
     await expect(page.locator("text=2 节点")).toBeVisible()
     await expect(page.locator("text=1 边")).toBeVisible()
+
+    // Accept the confirm dialog (added in Phase 6.3)
+    page.on("dialog", (dialog) => dialog.accept())
 
     // Delete the first node (research) - click the trash icon in the node header
     const nodeSection = page.locator('h5', { hasText: '节点 / Nodes' }).locator('..').locator('[class*="space-y"]').locator('> div').first()
@@ -366,5 +366,113 @@ test.describe("DAG 编辑器 — from/to 下拉选择", () => {
     expect(optionTexts).toContain("-- 选择节点 --")
     expect(optionTexts).toContain("research")
     expect(optionTexts).toContain("marketing")
+  })
+})
+
+// ── Undo / Redo & Edit Safety ──────────────────────────────
+
+test.describe("DAG 编辑器 — 撤销/重做与编辑安全", () => {
+  test.beforeEach(async ({ page }) => {
+    await goToBoss(page)
+    await openCreateForm(page)
+  })
+
+  test("撤销：添加节点后撤销，回到 2 节点", async ({ page }) => {
+    await expect(page.locator("text=2 节点")).toBeVisible()
+
+    await addNode(page)
+    await expect(page.locator("text=3 节点")).toBeVisible()
+
+    // Click undo button
+    await page.locator('[data-testid="undo-btn"]').click()
+    await page.waitForTimeout(200)
+
+    await expect(page.locator("text=2 节点")).toBeVisible()
+  })
+
+  test("重做：添加 → 撤销 → 重做，回到 3 节点", async ({ page }) => {
+    await addNode(page)
+    await expect(page.locator("text=3 节点")).toBeVisible()
+
+    await page.locator('[data-testid="undo-btn"]').click()
+    await page.waitForTimeout(200)
+    await expect(page.locator("text=2 节点")).toBeVisible()
+
+    await page.locator('[data-testid="redo-btn"]').click()
+    await page.waitForTimeout(200)
+    await expect(page.locator("text=3 节点")).toBeVisible()
+  })
+
+  test("重命名节点 ID 自动同步关联边", async ({ page }) => {
+    // Default: research -> marketing edge
+    // Expand first node (research) and rename to "research2"
+    // Use fill() directly (not clear+fill) so the onChange gets oldId="research" properly
+    await expandNode(page, 0)
+    await page.locator('[data-testid="node-id-input-0"]').fill("research2")
+    await page.waitForTimeout(300)
+
+    // Verify edge header shows "research2→marketing" (not "research→marketing")
+    const edgeHeader = page.locator('h5', { hasText: '边 / Edges' }).locator('..').locator('[class*="space-y"]').locator('> div').first().locator('[class*="font-mono"]')
+    await expect(edgeHeader).toContainText("research2")
+
+    // No validation errors about missing node
+    await expect(page.locator("text=不存在")).not.toBeVisible()
+  })
+
+  test("清空后重新输入 ID 仍会同步关联边", async ({ page }) => {
+    await expandNode(page, 0)
+    const input = page.locator('[data-testid="node-id-input-0"]')
+    await input.clear()
+    await input.fill("research2")
+    await page.waitForTimeout(300)
+
+    const edgeHeader = page.locator('h5', { hasText: '边 / Edges' }).locator('..').locator('[class*="space-y"]').locator('> div').first().locator('[class*="font-mono"]')
+    await expect(edgeHeader).toContainText("research2")
+    await expect(page.locator("text=不存在")).not.toBeVisible()
+  })
+
+  test("重复 ID 的逐字输入不会污染关联边", async ({ page }) => {
+    await expandNode(page, 0)
+    const input = page.locator('[data-testid="node-id-input-0"]')
+    await input.press("Control+A")
+    await input.type("marketing")
+    await page.waitForTimeout(300)
+
+    const edgeHeader = page.locator('h5', { hasText: '边 / Edges' }).locator('..').locator('[class*="space-y"]').locator('> div').first().locator('[class*="font-mono"]')
+    await expect(edgeHeader).toContainText("research")
+    await expect(edgeHeader).not.toContainText("marketin→")
+    await expect(page.locator("text=重复")).toBeVisible()
+  })
+
+  test("删除节点 — 确认后节点和关联边被移除", async ({ page }) => {
+    // Default: 2 nodes, 1 edge
+    await expect(page.locator("text=2 节点")).toBeVisible()
+    await expect(page.locator("text=1 边")).toBeVisible()
+
+    // Accept the confirm dialog
+    page.on("dialog", (dialog) => dialog.accept())
+
+    const nodeSection = page.locator('h5', { hasText: '节点 / Nodes' }).locator('..').locator('[class*="space-y"]').locator('> div').first()
+    await nodeSection.locator('button:has(svg)').last().click()
+    await page.waitForTimeout(300)
+
+    await expect(page.locator("text=1 节点")).toBeVisible()
+    await expect(page.locator("text=0 边")).toBeVisible()
+  })
+
+  test("删除节点 — 取消后数据不变", async ({ page }) => {
+    await expect(page.locator("text=2 节点")).toBeVisible()
+    await expect(page.locator("text=1 边")).toBeVisible()
+
+    // Dismiss the confirm dialog
+    page.on("dialog", (dialog) => dialog.dismiss())
+
+    const nodeSection = page.locator('h5', { hasText: '节点 / Nodes' }).locator('..').locator('[class*="space-y"]').locator('> div').first()
+    await nodeSection.locator('button:has(svg)').last().click()
+    await page.waitForTimeout(300)
+
+    // Data should be unchanged
+    await expect(page.locator("text=2 节点")).toBeVisible()
+    await expect(page.locator("text=1 边")).toBeVisible()
   })
 })

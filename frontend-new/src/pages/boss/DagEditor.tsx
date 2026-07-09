@@ -1,9 +1,10 @@
-import { useState } from "react"
-import { Plus, Trash2, AlertCircle, ChevronDown, ChevronRight, GitBranch, Pencil } from "lucide-react"
+import { useState, useEffect, useRef } from "react"
+import { Plus, Trash2, AlertCircle, ChevronDown, ChevronRight, GitBranch, Pencil, Undo2, Redo2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { validateDag } from "./dag-validation"
+import { useDagHistory } from "@/hooks/useDagHistory"
 
 // ── Types (mirrors boss/index.tsx inline interfaces) ──────────
 
@@ -21,7 +22,7 @@ interface GraphEdgeDraft {
   handoff_type: string
 }
 
-interface GraphTemplateDraft {
+export interface GraphTemplateDraft {
   name: string
   description: string
   goal_hint: string
@@ -99,34 +100,120 @@ const COMMON_AGENTS = [
 export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps) {
   const [editingNodeId, setEditingNodeId] = useState<number | null>(null)
   const [editingEdgeIdx, setEditingEdgeIdx] = useState<number | null>(null)
+  const renameSessionsRef = useRef(new Map<number, { originId: string; lastSyncedId: string }>())
 
-  const nodeIds = Array.from(new Set(draft.nodes.map((n) => n.id.trim()).filter(Boolean)))
-  const waves = computeWaves(nodeIds, draft.edges.filter((e) => e.from_node.trim() && e.to_node.trim()))
-  const dagErrors = validateDag(draft.nodes, draft.edges)
+  // ── Undo/Redo history ──
+  const history = useDagHistory<GraphTemplateDraft>(draft, onChange)
+  const draftRef = useRef(draft)
+
+  // Sync external draft changes (template switch / clone) into history
+  useEffect(() => {
+    const curr = JSON.stringify(draft)
+    const prev = JSON.stringify(draftRef.current)
+    const internal = JSON.stringify(history.state)
+    if (curr !== internal && curr !== prev) {
+      renameSessionsRef.current.clear()
+      history.reset(draft)
+    }
+    draftRef.current = draft
+  }, [draft, history])
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (disabled) return
+      // Ignore when focus is inside an input/textarea/select
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return
+
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+        e.preventDefault()
+        renameSessionsRef.current.clear()
+        history.undo()
+      } else if (
+        (e.ctrlKey || e.metaKey) && e.key === "y" ||
+        (e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "Z"
+      ) {
+        e.preventDefault()
+        renameSessionsRef.current.clear()
+        history.redo()
+      }
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [disabled, history])
+
+  // Use history.state as the working draft
+  const currentDraft = history.state
+
+  const nodeIds = Array.from(new Set(currentDraft.nodes.map((n) => n.id.trim()).filter(Boolean)))
+  const waves = computeWaves(nodeIds, currentDraft.edges.filter((e) => e.from_node.trim() && e.to_node.trim()))
+  const dagErrors = validateDag(currentDraft.nodes, currentDraft.edges)
   const errorMessages = Array.from(new Set([...dagErrors.map((error) => error.message), ...errors]))
 
   // ── Node operations ──
 
   const updateNode = (index: number, field: keyof GraphNodeDraft, value: string) => {
-    const nodes = [...draft.nodes]
+    const nodes = [...currentDraft.nodes]
+
+    if (field === "id") {
+      const oldId = nodes[index].id.trim()
+      const newId = value.trim()
+      const session = renameSessionsRef.current.get(index) ?? {
+        originId: oldId,
+        lastSyncedId: oldId,
+      }
+      renameSessionsRef.current.set(index, session)
+      const otherIds = nodes
+        .filter((_, i) => i !== index)
+        .map((n) => n.id.trim())
+        .filter(Boolean)
+
+      const targetId = newId && !otherIds.includes(newId) ? newId : session.originId
+      const edges = session.lastSyncedId
+        ? currentDraft.edges.map((edge) => ({
+            ...edge,
+            from_node: edge.from_node.trim() === session.lastSyncedId ? targetId : edge.from_node,
+            to_node: edge.to_node.trim() === session.lastSyncedId ? targetId : edge.to_node,
+          }))
+        : currentDraft.edges
+      session.lastSyncedId = targetId
+      nodes[index] = { ...nodes[index], [field]: value }
+      history.set({ ...currentDraft, nodes, edges })
+      return
+    }
+
     nodes[index] = { ...nodes[index], [field]: value }
-    onChange({ ...draft, nodes })
+    history.set({ ...currentDraft, nodes })
   }
 
   const addNode = () => {
-    onChange({
-      ...draft,
-      nodes: [...draft.nodes, { id: "", agent_id: "", task_type: "", title: "", prompt: "" }],
+    history.set({
+      ...currentDraft,
+      nodes: [...currentDraft.nodes, { id: "", agent_id: "", task_type: "", title: "", prompt: "" }],
     })
   }
 
   const removeNode = (index: number) => {
-    const removedId = draft.nodes[index].id.trim()
-    const nodes = draft.nodes.filter((_, i) => i !== index)
-    const edges = removedId
-      ? draft.edges.filter((e) => e.from_node.trim() !== removedId && e.to_node.trim() !== removedId)
-      : draft.edges
-    onChange({ ...draft, nodes, edges })
+    const node = currentDraft.nodes[index]
+    const nodeId = node.id.trim()
+    const linkedEdgeCount = nodeId
+      ? currentDraft.edges.filter((e) => e.from_node.trim() === nodeId || e.to_node.trim() === nodeId).length
+      : 0
+
+    const label = node.title.trim() || nodeId || `#${index + 1}`
+    const msg = linkedEdgeCount > 0
+      ? `确认删除节点 ${label}？关联的 ${linkedEdgeCount} 条边也将被移除。`
+      : `确认删除节点 ${label}？`
+
+    if (!window.confirm(msg)) return
+
+    const nodes = currentDraft.nodes.filter((_, i) => i !== index)
+    const edges = nodeId
+      ? currentDraft.edges.filter((e) => e.from_node.trim() !== nodeId && e.to_node.trim() !== nodeId)
+      : currentDraft.edges
+    history.set({ ...currentDraft, nodes, edges })
+    renameSessionsRef.current.clear()
     if (editingNodeId === index) setEditingNodeId(null)
     else if (editingNodeId !== null && editingNodeId > index) setEditingNodeId(editingNodeId - 1)
   }
@@ -134,22 +221,32 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
   // ── Edge operations ──
 
   const updateEdge = (index: number, field: keyof GraphEdgeDraft, value: string) => {
-    const edges = [...draft.edges]
+    const edges = [...currentDraft.edges]
     edges[index] = { ...edges[index], [field]: value }
-    onChange({ ...draft, edges })
+    history.set({ ...currentDraft, edges })
   }
 
   const addEdge = () => {
-    onChange({
-      ...draft,
-      edges: [...draft.edges, { from_node: "", to_node: "", handoff_type: "context" }],
+    history.set({
+      ...currentDraft,
+      edges: [...currentDraft.edges, { from_node: "", to_node: "", handoff_type: "context" }],
     })
   }
 
   const removeEdge = (index: number) => {
-    onChange({ ...draft, edges: draft.edges.filter((_, i) => i !== index) })
+    history.set({ ...currentDraft, edges: currentDraft.edges.filter((_, i) => i !== index) })
     if (editingEdgeIdx === index) setEditingEdgeIdx(null)
     else if (editingEdgeIdx !== null && editingEdgeIdx > index) setEditingEdgeIdx(editingEdgeIdx - 1)
+  }
+
+  const undo = () => {
+    renameSessionsRef.current.clear()
+    history.undo()
+  }
+
+  const redo = () => {
+    renameSessionsRef.current.clear()
+    history.redo()
   }
 
   // ── Error helpers ──
@@ -162,8 +259,8 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
       <div className="flex items-center gap-2 mb-4">
         <GitBranch className="h-4 w-4 text-[#8A8A8A]" />
         <h4 className="text-sm font-medium text-[#0B0B0B]">DAG 编辑器</h4>
-        <Badge variant="outline">{draft.nodes.length} 节点</Badge>
-        <Badge variant="outline">{draft.edges.length} 边</Badge>
+        <Badge variant="outline">{currentDraft.nodes.length} 节点</Badge>
+        <Badge variant="outline">{currentDraft.edges.length} 边</Badge>
       </div>
 
       {/* ── Wave Preview ── */}
@@ -176,8 +273,8 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
                 <div className="text-[10px] font-medium text-[#B5B5B5] mb-1.5">Wave {wi + 1}</div>
                 <div className="flex flex-wrap gap-1.5">
                   {wave.map((nodeId) => {
-                    const node = draft.nodes.find((n) => n.id.trim() === nodeId)
-                    const hasError = node && draft.nodes.indexOf(node) !== -1 && nodeErrorSet.has(draft.nodes.indexOf(node))
+                    const node = currentDraft.nodes.find((n) => n.id.trim() === nodeId)
+                    const hasError = node && currentDraft.nodes.indexOf(node) !== -1 && nodeErrorSet.has(currentDraft.nodes.indexOf(node))
                     return (
                       <span
                         key={nodeId}
@@ -197,9 +294,9 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
             ))}
           </div>
           {/* Edges in preview */}
-          {draft.edges.some((e) => e.from_node.trim() && e.to_node.trim()) && (
+          {currentDraft.edges.some((e) => e.from_node.trim() && e.to_node.trim()) && (
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {draft.edges.map((e, i) => {
+              {currentDraft.edges.map((e, i) => {
                 if (!e.from_node.trim() || !e.to_node.trim()) return null
                 const hasError = edgeErrorSet.has(i)
                 return (
@@ -248,21 +345,46 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
           <Plus className="h-3 w-3" />
           添加边
         </Button>
+        <div className="ml-auto flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={undo}
+            disabled={disabled || !history.canUndo}
+            title="撤销 (Ctrl+Z)"
+            data-testid="undo-btn"
+            className="h-7 w-7 p-0"
+          >
+            <Undo2 className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={redo}
+            disabled={disabled || !history.canRedo}
+            title="重做 (Ctrl+Y)"
+            data-testid="redo-btn"
+            className="h-7 w-7 p-0"
+          >
+            <Redo2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
       </div>
 
       {/* ── Node list ── */}
       <div className="mb-4">
         <h5 className="text-xs font-medium text-[#8A8A8A] mb-2">节点 / Nodes</h5>
-        {draft.nodes.length === 0 ? (
+        {currentDraft.nodes.length === 0 ? (
           <p className="text-xs text-[#B5B5B5]">暂无节点，点击「添加节点」开始。</p>
         ) : (
           <div className="space-y-1.5">
-            {draft.nodes.map((node, ni) => {
+            {currentDraft.nodes.map((node, ni) => {
               const isEditing = editingNodeId === ni
               const hasError = nodeErrorSet.has(ni)
               return (
                 <div
                   key={ni}
+                  data-testid={`node-card-${ni}`}
                   className={cn(
                     "rounded-lg border transition-all",
                     hasError ? "border-red/30 bg-red/5" : "border-[#E5E5E5] bg-white",
@@ -297,6 +419,7 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
                         size="sm"
                         onClick={(e) => { e.stopPropagation(); removeNode(ni) }}
                         disabled={disabled}
+                        data-testid={`delete-node-${ni}`}
                         className="h-6 w-6 p-0 text-[#B5B5B5] hover:text-red-500"
                       >
                         <Trash2 className="h-3 w-3" />
@@ -315,6 +438,7 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
                             value={node.id}
                             onChange={(e) => updateNode(ni, "id", e.target.value)}
                             disabled={disabled}
+                            data-testid={`node-id-input-${ni}`}
                             className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5] font-mono"
                             placeholder="node_id"
                           />
@@ -377,11 +501,11 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
       {/* ── Edge list ── */}
       <div className="mb-4">
         <h5 className="text-xs font-medium text-[#8A8A8A] mb-2">边 / Edges</h5>
-        {draft.edges.length === 0 ? (
+        {currentDraft.edges.length === 0 ? (
           <p className="text-xs text-[#B5B5B5]">暂无边（节点将并行执行）</p>
         ) : (
           <div className="space-y-1.5">
-            {draft.edges.map((edge, ei) => {
+            {currentDraft.edges.map((edge, ei) => {
               const isEditing = editingEdgeIdx === ei
               const hasError = edgeErrorSet.has(ei)
               const from = edge.from_node.trim()
