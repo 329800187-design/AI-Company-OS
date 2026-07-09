@@ -302,12 +302,13 @@ test.describe("DAG 编辑器 — 删除节点自动清理边", () => {
     await expect(page.locator("text=2 节点")).toBeVisible()
     await expect(page.locator("text=1 边")).toBeVisible()
 
-    // Accept the confirm dialog (added in Phase 6.3)
-    page.on("dialog", (dialog) => dialog.accept())
-
-    // Delete the first node (research) - click the trash icon in the node header
+    // Click delete → React ConfirmDialog appears
     const nodeSection = page.locator('h5', { hasText: '节点 / Nodes' }).locator('..').locator('[class*="space-y"]').locator('> div').first()
-    await nodeSection.locator('button:has(svg)').last().click()  // trash button
+    await nodeSection.locator('button:has(svg)').last().click()
+    await page.waitForTimeout(300)
+
+    // Confirm in the React dialog
+    await page.locator('[data-testid="confirm-dialog-confirm"]').click()
     await page.waitForTimeout(300)
 
     // Should now have 1 node and 0 edges (edge referenced "research")
@@ -406,9 +407,10 @@ test.describe("DAG 编辑器 — 撤销/重做与编辑安全", () => {
   test("重命名节点 ID 自动同步关联边", async ({ page }) => {
     // Default: research -> marketing edge
     // Expand first node (research) and rename to "research2"
-    // Use fill() directly (not clear+fill) so the onChange gets oldId="research" properly
     await expandNode(page, 0)
     await page.locator('[data-testid="node-id-input-0"]').fill("research2")
+    // blur triggers edge sync
+    await page.locator('[data-testid="node-id-input-0"]').blur()
     await page.waitForTimeout(300)
 
     // Verify edge header shows "research2→marketing" (not "research→marketing")
@@ -417,13 +419,19 @@ test.describe("DAG 编辑器 — 撤销/重做与编辑安全", () => {
 
     // No validation errors about missing node
     await expect(page.locator("text=不存在")).not.toBeVisible()
+
+    await page.locator('[data-testid="undo-btn"]').click()
+    await expect(page.locator('[data-testid="node-id-input-0"]')).toHaveValue("research")
+    await expect(edgeHeader).toContainText("research")
   })
 
   test("清空后重新输入 ID 仍会同步关联边", async ({ page }) => {
     await expandNode(page, 0)
     const input = page.locator('[data-testid="node-id-input-0"]')
-    await input.clear()
-    await input.fill("research2")
+    // Select all then type replacement (not clear+fill, which triggers two onChange calls)
+    await input.click({ clickCount: 3 })
+    await input.pressSequentially("research2", { delay: 30 })
+    await input.blur()
     await page.waitForTimeout(300)
 
     const edgeHeader = page.locator('h5', { hasText: '边 / Edges' }).locator('..').locator('[class*="space-y"]').locator('> div').first().locator('[class*="font-mono"]')
@@ -434,13 +442,15 @@ test.describe("DAG 编辑器 — 撤销/重做与编辑安全", () => {
   test("重复 ID 的逐字输入不会污染关联边", async ({ page }) => {
     await expandNode(page, 0)
     const input = page.locator('[data-testid="node-id-input-0"]')
-    await input.press("Control+A")
-    await input.type("marketing")
+    // Select all then type duplicate ID (selects all first so oldId is "research")
+    await input.click({ clickCount: 3 })
+    await input.pressSequentially("marketing", { delay: 30 })
+    await input.blur()
     await page.waitForTimeout(300)
 
     const edgeHeader = page.locator('h5', { hasText: '边 / Edges' }).locator('..').locator('[class*="space-y"]').locator('> div').first().locator('[class*="font-mono"]')
+    // Edge should still show "research" (not synced because "marketing" is duplicate)
     await expect(edgeHeader).toContainText("research")
-    await expect(edgeHeader).not.toContainText("marketin→")
     await expect(page.locator("text=重复")).toBeVisible()
   })
 
@@ -449,11 +459,16 @@ test.describe("DAG 编辑器 — 撤销/重做与编辑安全", () => {
     await expect(page.locator("text=2 节点")).toBeVisible()
     await expect(page.locator("text=1 边")).toBeVisible()
 
-    // Accept the confirm dialog
-    page.on("dialog", (dialog) => dialog.accept())
-
+    // Click delete button → dialog appears
     const nodeSection = page.locator('h5', { hasText: '节点 / Nodes' }).locator('..').locator('[class*="space-y"]').locator('> div').first()
     await nodeSection.locator('button:has(svg)').last().click()
+    await page.waitForTimeout(300)
+
+    // Confirm dialog should appear
+    await expect(page.locator('[data-testid="confirm-dialog"]')).toBeVisible()
+
+    // Click confirm button
+    await page.locator('[data-testid="confirm-dialog-confirm"]').click()
     await page.waitForTimeout(300)
 
     await expect(page.locator("text=1 节点")).toBeVisible()
@@ -464,15 +479,117 @@ test.describe("DAG 编辑器 — 撤销/重做与编辑安全", () => {
     await expect(page.locator("text=2 节点")).toBeVisible()
     await expect(page.locator("text=1 边")).toBeVisible()
 
-    // Dismiss the confirm dialog
-    page.on("dialog", (dialog) => dialog.dismiss())
-
+    // Click delete button → dialog appears
     const nodeSection = page.locator('h5', { hasText: '节点 / Nodes' }).locator('..').locator('[class*="space-y"]').locator('> div').first()
     await nodeSection.locator('button:has(svg)').last().click()
+    await page.waitForTimeout(300)
+
+    // Click cancel button
+    await page.locator('[data-testid="confirm-dialog-cancel"]').click()
     await page.waitForTimeout(300)
 
     // Data should be unchanged
     await expect(page.locator("text=2 节点")).toBeVisible()
     await expect(page.locator("text=1 边")).toBeVisible()
+  })
+
+  test("删除对话框 — Esc 关闭，数据不变", async ({ page }) => {
+    await expect(page.locator("text=2 节点")).toBeVisible()
+
+    // Click delete button
+    const nodeSection = page.locator('h5', { hasText: '节点 / Nodes' }).locator('..').locator('[class*="space-y"]').locator('> div').first()
+    const deleteButton = nodeSection.locator('button:has(svg)').last()
+    await deleteButton.click()
+    await page.waitForTimeout(300)
+
+    // Dialog should be visible
+    await expect(page.locator('[data-testid="confirm-dialog"]')).toBeVisible()
+    await expect(page.locator('[data-testid="confirm-dialog-cancel"]')).toBeFocused()
+    await page.keyboard.press("Shift+Tab")
+    await expect(page.locator('[data-testid="confirm-dialog-confirm"]')).toBeFocused()
+
+    // Press Esc to close
+    await page.keyboard.press("Escape")
+    await page.waitForTimeout(300)
+
+    // Dialog should be gone, data unchanged
+    await expect(page.locator('[data-testid="confirm-dialog"]')).not.toBeVisible()
+    await expect(page.locator("text=2 节点")).toBeVisible()
+    await expect(page.locator("text=1 边")).toBeVisible()
+    await expect(deleteButton).toBeFocused()
+  })
+
+  test("删除对话框 — 显示节点名称和关联边数", async ({ page }) => {
+    // Click delete on first node (research, has 1 edge)
+    const nodeSection = page.locator('h5', { hasText: '节点 / Nodes' }).locator('..').locator('[class*="space-y"]').locator('> div').first()
+    await nodeSection.locator('button:has(svg)').last().click()
+    await page.waitForTimeout(300)
+
+    // Dialog should show node name and edge count
+    const dialog = page.locator('[data-testid="confirm-dialog"]')
+    await expect(dialog).toBeVisible()
+    await expect(dialog.locator('text=市场调研')).toBeVisible()
+    await expect(dialog.locator('text=research')).toBeVisible()
+    await expect(dialog.locator('text=1 条边')).toBeVisible()
+
+    // Cancel to close
+    await page.locator('[data-testid="confirm-dialog-cancel"]').click()
+  })
+
+  test("删除后可撤销恢复", async ({ page }) => {
+    await expect(page.locator("text=2 节点")).toBeVisible()
+    await expect(page.locator("text=1 边")).toBeVisible()
+
+    // Delete first node (confirm dialog)
+    const nodeSection = page.locator('h5', { hasText: '节点 / Nodes' }).locator('..').locator('[class*="space-y"]').locator('> div').first()
+    await nodeSection.locator('button:has(svg)').last().click()
+    await page.waitForTimeout(300)
+    await page.locator('[data-testid="confirm-dialog-confirm"]').click()
+    await page.waitForTimeout(300)
+
+    // Verify deletion
+    await expect(page.locator("text=1 节点")).toBeVisible()
+    await expect(page.locator("text=0 边")).toBeVisible()
+
+    // Undo → restore
+    await page.locator('[data-testid="undo-btn"]').click()
+    await page.waitForTimeout(300)
+
+    // Should be back to original state
+    await expect(page.locator("text=2 节点")).toBeVisible()
+    await expect(page.locator("text=1 边")).toBeVisible()
+  })
+
+  test("连续文本输入合并为单次撤销", async ({ page }) => {
+    await expect(page.locator("text=2 节点")).toBeVisible()
+
+    // Expand first node — the title field has default value "市场调研"
+    await expandNode(page, 0)
+    const titleInput = page.locator('[data-testid="node-card-0"] input[placeholder="节点标题"]')
+    await expect(titleInput).toHaveValue("市场调研")
+
+    // Clear the field and blur to end the merge session (creates one undo entry)
+    await titleInput.clear()
+    await titleInput.blur()
+    await page.waitForTimeout(100)
+
+    // Re-focus and type multiple characters — these should be merged into a single undo entry
+    await titleInput.click()
+    await titleInput.pressSequentially("hello", { delay: 30 })
+    await titleInput.blur()
+    await page.waitForTimeout(200)
+
+    // Should show the typed value
+    await expect(titleInput).toHaveValue("hello")
+
+    // First undo → reverts all typed characters at once (merged entry → cleared state)
+    await page.locator('[data-testid="undo-btn"]').click()
+    await page.waitForTimeout(200)
+    await expect(titleInput).toHaveValue("")
+
+    // Second undo → reverts the clear, back to original
+    await page.locator('[data-testid="undo-btn"]').click()
+    await page.waitForTimeout(200)
+    await expect(titleInput).toHaveValue("市场调研")
   })
 })

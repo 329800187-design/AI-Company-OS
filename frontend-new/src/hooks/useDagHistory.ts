@@ -3,6 +3,7 @@ import { useCallback, useState } from "react"
 /**
  * Generic undo/redo history hook.
  * Manages past/present/future stacks with a configurable limit.
+ * Supports `replace` for merging consecutive edits into one undo entry.
  */
 
 interface HistoryState<T> {
@@ -14,6 +15,7 @@ interface HistoryState<T> {
 interface UseHistoryReturn<T> {
   state: T
   set: (next: T) => void
+  replace: (next: T) => void
   undo: () => void
   redo: () => void
   canUndo: boolean
@@ -32,12 +34,25 @@ export function useDagHistory<T>(initialState: T, onChange?: (state: T) => void)
 
   const state = history.present
 
+  /** Push current state to past, set next as present. Clears future. */
   const set = useCallback(
     (next: T) => {
       setHistory((prev) => ({
         past: [...prev.past.slice(-(MAX_HISTORY - 1)), prev.present],
         present: next,
         future: [],
+      }))
+      onChange?.(next)
+    },
+    [onChange],
+  )
+
+  /** Replace the current present WITHOUT pushing to past. Used for merging consecutive edits. */
+  const replace = useCallback(
+    (next: T) => {
+      setHistory((prev) => ({
+        ...prev,
+        present: next,
       }))
       onChange?.(next)
     },
@@ -77,6 +92,7 @@ export function useDagHistory<T>(initialState: T, onChange?: (state: T) => void)
   return {
     state,
     set,
+    replace,
     undo,
     redo,
     canUndo: history.past.length > 0,

@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { Plus, Trash2, AlertCircle, ChevronDown, ChevronRight, GitBranch, Pencil, Undo2, Redo2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { cn } from "@/lib/utils"
 import { validateDag } from "./dag-validation"
 import { useDagHistory } from "@/hooks/useDagHistory"
@@ -35,6 +36,23 @@ export interface DagEditorProps {
   onChange: (draft: GraphTemplateDraft) => void
   errors: string[]
   disabled?: boolean
+}
+
+// ── Merge session tracking ───────────────────────────────────
+
+interface MergeSession {
+  nodeIndex: number
+  field: keyof GraphNodeDraft
+  /** Snapshot of the node's ID when the merge session started (for atomic edge sync) */
+  originalNodeId?: string
+}
+
+// ── Delete confirmation state ────────────────────────────────
+
+interface DeleteTarget {
+  index: number
+  label: string
+  edgeCount: number
 }
 
 // ── DAG utilities ─────────────────────────────────────────────
@@ -100,11 +118,37 @@ const COMMON_AGENTS = [
 export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps) {
   const [editingNodeId, setEditingNodeId] = useState<number | null>(null)
   const [editingEdgeIdx, setEditingEdgeIdx] = useState<number | null>(null)
-  const renameSessionsRef = useRef(new Map<number, { originId: string; lastSyncedId: string }>())
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null)
 
   // ── Undo/Redo history ──
   const history = useDagHistory<GraphTemplateDraft>(draft, onChange)
   const draftRef = useRef(draft)
+
+  // ── Merge session for consecutive text inputs ──
+  const mergeSessionRef = useRef<MergeSession | null>(null)
+
+  /** End the current merge session (next edit creates a new undo entry) */
+  const endMergeSession = useCallback(() => {
+    mergeSessionRef.current = null
+  }, [])
+
+  /** Write a draft change — uses replace() during merge session, set() otherwise */
+  const commitDraft = useCallback(
+    (next: GraphTemplateDraft, session: MergeSession | null) => {
+      if (session && mergeSessionRef.current &&
+          mergeSessionRef.current.nodeIndex === session.nodeIndex &&
+          mergeSessionRef.current.field === session.field) {
+        // Same field, same node → merge (replace current present without pushing to past)
+        history.replace(next)
+      } else {
+        // New field or structural change → push to history (creates an undo checkpoint)
+        // If this is a merge session start, we push the current state so undo can revert to it
+        mergeSessionRef.current = session
+        history.set(next)
+      }
+    },
+    [history],
+  )
 
   // Sync external draft changes (template switch / clone) into history
   useEffect(() => {
@@ -112,11 +156,11 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
     const prev = JSON.stringify(draftRef.current)
     const internal = JSON.stringify(history.state)
     if (curr !== internal && curr !== prev) {
-      renameSessionsRef.current.clear()
+      endMergeSession()
       history.reset(draft)
     }
     draftRef.current = draft
-  }, [draft, history])
+  }, [draft, history, endMergeSession])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -128,20 +172,20 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
 
       if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
         e.preventDefault()
-        renameSessionsRef.current.clear()
+        endMergeSession()
         history.undo()
       } else if (
         (e.ctrlKey || e.metaKey) && e.key === "y" ||
         (e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "Z"
       ) {
         e.preventDefault()
-        renameSessionsRef.current.clear()
+        endMergeSession()
         history.redo()
       }
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
-  }, [disabled, history])
+  }, [disabled, history, endMergeSession])
 
   // Use history.state as the working draft
   const currentDraft = history.state
@@ -155,67 +199,78 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
 
   const updateNode = (index: number, field: keyof GraphNodeDraft, value: string) => {
     const nodes = [...currentDraft.nodes]
-
-    if (field === "id") {
-      const oldId = nodes[index].id.trim()
-      const newId = value.trim()
-      const session = renameSessionsRef.current.get(index) ?? {
-        originId: oldId,
-        lastSyncedId: oldId,
-      }
-      renameSessionsRef.current.set(index, session)
-      const otherIds = nodes
-        .filter((_, i) => i !== index)
-        .map((n) => n.id.trim())
-        .filter(Boolean)
-
-      const targetId = newId && !otherIds.includes(newId) ? newId : session.originId
-      const edges = session.lastSyncedId
-        ? currentDraft.edges.map((edge) => ({
-            ...edge,
-            from_node: edge.from_node.trim() === session.lastSyncedId ? targetId : edge.from_node,
-            to_node: edge.to_node.trim() === session.lastSyncedId ? targetId : edge.to_node,
-          }))
-        : currentDraft.edges
-      session.lastSyncedId = targetId
-      nodes[index] = { ...nodes[index], [field]: value }
-      history.set({ ...currentDraft, nodes, edges })
-      return
-    }
-
     nodes[index] = { ...nodes[index], [field]: value }
-    history.set({ ...currentDraft, nodes })
+
+    // For ID field, capture the original ID when starting a new merge session
+    if (field === "id") {
+      const existingSession = mergeSessionRef.current
+      const isNewSession = !existingSession || existingSession.nodeIndex !== index || existingSession.field !== "id"
+      const session: MergeSession = {
+        nodeIndex: index,
+        field: "id",
+        originalNodeId: isNewSession ? currentDraft.nodes[index].id.trim() : existingSession?.originalNodeId,
+      }
+      commitDraft({ ...currentDraft, nodes }, session)
+    } else {
+      commitDraft({ ...currentDraft, nodes }, { nodeIndex: index, field })
+    }
+  }
+
+  /** On blur of node ID field: sync edge references if valid (atomic history entry) */
+  const handleNodeIdBlur = (index: number) => {
+    const originalId = mergeSessionRef.current?.originalNodeId ?? draft.nodes[index].id.trim()
+    endMergeSession()
+    const newId = currentDraft.nodes[index].id.trim()
+    const otherIds = currentDraft.nodes
+      .filter((_, i) => i !== index)
+      .map((n) => n.id.trim())
+      .filter(Boolean)
+
+    // Only sync if the ID actually changed, new ID is valid, and not a duplicate
+    if (newId && newId !== originalId && !otherIds.includes(newId)) {
+      const edges = currentDraft.edges.map((e) => ({
+        ...e,
+        from_node: e.from_node.trim() === originalId ? newId : e.from_node,
+        to_node: e.to_node.trim() === originalId ? newId : e.to_node,
+      }))
+      // This replaces the last history entry (the merge session's final state)
+      // with one that also includes the edge sync — single atomic undo entry
+      history.replace({ ...currentDraft, edges })
+    }
   }
 
   const addNode = () => {
+    endMergeSession()
     history.set({
       ...currentDraft,
       nodes: [...currentDraft.nodes, { id: "", agent_id: "", task_type: "", title: "", prompt: "" }],
     })
   }
 
-  const removeNode = (index: number) => {
+  const removeNodeConfirmed = () => {
+    if (!deleteTarget) return
+    const { index } = deleteTarget
     const node = currentDraft.nodes[index]
     const nodeId = node.id.trim()
-    const linkedEdgeCount = nodeId
-      ? currentDraft.edges.filter((e) => e.from_node.trim() === nodeId || e.to_node.trim() === nodeId).length
-      : 0
-
-    const label = node.title.trim() || nodeId || `#${index + 1}`
-    const msg = linkedEdgeCount > 0
-      ? `确认删除节点 ${label}？关联的 ${linkedEdgeCount} 条边也将被移除。`
-      : `确认删除节点 ${label}？`
-
-    if (!window.confirm(msg)) return
-
     const nodes = currentDraft.nodes.filter((_, i) => i !== index)
     const edges = nodeId
       ? currentDraft.edges.filter((e) => e.from_node.trim() !== nodeId && e.to_node.trim() !== nodeId)
       : currentDraft.edges
+    endMergeSession()
     history.set({ ...currentDraft, nodes, edges })
-    renameSessionsRef.current.clear()
+    setDeleteTarget(null)
     if (editingNodeId === index) setEditingNodeId(null)
     else if (editingNodeId !== null && editingNodeId > index) setEditingNodeId(editingNodeId - 1)
+  }
+
+  const requestDeleteNode = (index: number) => {
+    const node = currentDraft.nodes[index]
+    const nodeId = node.id.trim()
+    const edgeCount = nodeId
+      ? currentDraft.edges.filter((e) => e.from_node.trim() === nodeId || e.to_node.trim() === nodeId).length
+      : 0
+    const label = node.title.trim() || nodeId || `#${index + 1}`
+    setDeleteTarget({ index, label, edgeCount })
   }
 
   // ── Edge operations ──
@@ -223,10 +278,12 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
   const updateEdge = (index: number, field: keyof GraphEdgeDraft, value: string) => {
     const edges = [...currentDraft.edges]
     edges[index] = { ...edges[index], [field]: value }
+    endMergeSession()
     history.set({ ...currentDraft, edges })
   }
 
   const addEdge = () => {
+    endMergeSession()
     history.set({
       ...currentDraft,
       edges: [...currentDraft.edges, { from_node: "", to_node: "", handoff_type: "context" }],
@@ -234,19 +291,10 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
   }
 
   const removeEdge = (index: number) => {
+    endMergeSession()
     history.set({ ...currentDraft, edges: currentDraft.edges.filter((_, i) => i !== index) })
     if (editingEdgeIdx === index) setEditingEdgeIdx(null)
     else if (editingEdgeIdx !== null && editingEdgeIdx > index) setEditingEdgeIdx(editingEdgeIdx - 1)
-  }
-
-  const undo = () => {
-    renameSessionsRef.current.clear()
-    history.undo()
-  }
-
-  const redo = () => {
-    renameSessionsRef.current.clear()
-    history.redo()
   }
 
   // ── Error helpers ──
@@ -349,7 +397,7 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
           <Button
             variant="ghost"
             size="sm"
-            onClick={undo}
+            onClick={() => { endMergeSession(); history.undo() }}
             disabled={disabled || !history.canUndo}
             title="撤销 (Ctrl+Z)"
             data-testid="undo-btn"
@@ -360,7 +408,7 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
           <Button
             variant="ghost"
             size="sm"
-            onClick={redo}
+            onClick={() => { endMergeSession(); history.redo() }}
             disabled={disabled || !history.canRedo}
             title="重做 (Ctrl+Y)"
             data-testid="redo-btn"
@@ -417,7 +465,7 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={(e) => { e.stopPropagation(); removeNode(ni) }}
+                        onClick={(e) => { e.stopPropagation(); requestDeleteNode(ni) }}
                         disabled={disabled}
                         data-testid={`delete-node-${ni}`}
                         className="h-6 w-6 p-0 text-[#B5B5B5] hover:text-red-500"
@@ -437,6 +485,7 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
                             type="text"
                             value={node.id}
                             onChange={(e) => updateNode(ni, "id", e.target.value)}
+                            onBlur={() => handleNodeIdBlur(ni)}
                             disabled={disabled}
                             data-testid={`node-id-input-${ni}`}
                             className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5] font-mono"
@@ -450,6 +499,7 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
                             list="dag-common-agents"
                             value={node.agent_id}
                             onChange={(e) => updateNode(ni, "agent_id", e.target.value)}
+                            onBlur={endMergeSession}
                             disabled={disabled}
                             className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5] font-mono"
                             placeholder="agent_id"
@@ -461,6 +511,7 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
                             type="text"
                             value={node.task_type}
                             onChange={(e) => updateNode(ni, "task_type", e.target.value)}
+                            onBlur={endMergeSession}
                             disabled={disabled}
                             className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]"
                             placeholder="general"
@@ -472,6 +523,7 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
                             type="text"
                             value={node.title}
                             onChange={(e) => updateNode(ni, "title", e.target.value)}
+                            onBlur={endMergeSession}
                             disabled={disabled}
                             className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5]"
                             placeholder="节点标题"
@@ -482,6 +534,7 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
                           <textarea
                             value={node.prompt}
                             onChange={(e) => updateNode(ni, "prompt", e.target.value)}
+                            onBlur={endMergeSession}
                             disabled={disabled}
                             rows={2}
                             className="w-full rounded border border-[#E5E5E5] bg-white px-2 py-1 text-xs text-[#0B0B0B] focus:outline-none focus:border-[#B5B5B5] resize-none"
@@ -627,6 +680,24 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
           <option key={a.id} value={a.id}>{a.label}</option>
         ))}
       </datalist>
+
+      {/* ── Delete confirmation dialog ── */}
+      {deleteTarget && (
+        <ConfirmDialog
+          open
+          title={`删除节点 ${deleteTarget.label}`}
+          description={
+            deleteTarget.edgeCount > 0
+              ? `节点 ID: ${currentDraft.nodes[deleteTarget.index]?.id.trim() || "(空)"}\n关联的 ${deleteTarget.edgeCount} 条边也将被移除。删除后可撤销恢复。`
+              : `节点 ID: ${currentDraft.nodes[deleteTarget.index]?.id.trim() || "(空)"}\n删除后可撤销恢复。`
+          }
+          confirmLabel="删除"
+          cancelLabel="取消"
+          variant="danger"
+          onConfirm={removeNodeConfirmed}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
     </div>
   )
 }
