@@ -21,6 +21,10 @@ from backend.services.graph_template_store import (
     list_templates,
     delete_template,
     update_template,
+    save_version_snapshot,
+    list_versions,
+    get_version,
+    delete_versions_for_template,
 )
 
 
@@ -38,6 +42,13 @@ class TestTemplateStore:
         monkeypatch.setattr(
             "backend.services.graph_template_store.DEFAULT_TEMPLATES_DIR",
             self.tmp_dir,
+        )
+        # Phase 6.6: 版本目录也需要隔离
+        self.versions_dir = tmp_path / "graph_template_versions"
+        self.versions_dir.mkdir()
+        monkeypatch.setattr(
+            "backend.services.graph_template_store.DEFAULT_VERSIONS_DIR",
+            self.versions_dir,
         )
 
     def _sample_nodes(self):
@@ -265,6 +276,225 @@ class TestTemplateStore:
         )
         assert result is None
 
+    # ── Phase 6.6: Version History 测试 ─────────────────────
+
+    def test_update_creates_version_snapshot(self):
+        """更新模板时自动保存旧版本快照"""
+        template = save_template(
+            name="原始名称",
+            nodes=self._sample_nodes(),
+            edges=self._sample_edges(),
+        )
+        tid = template["template_id"]
+
+        update_template(
+            template_id=tid,
+            name="更新后名称",
+            nodes=self._sample_nodes(),
+            edges=self._sample_edges(),
+        )
+
+        versions = list_versions(tid)
+        assert len(versions) == 1
+        assert versions[0]["name"] == "原始名称"
+        assert versions[0]["template_id"] == tid
+
+    def test_version_id_format(self):
+        """版本 ID 符合 ver_ 格式"""
+        template = save_template(
+            name="版本ID测试",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+        update_template(
+            template_id=template["template_id"],
+            name="更新",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+        versions = list_versions(template["template_id"])
+        assert len(versions) == 1
+        assert versions[0]["version_id"].startswith("ver_")
+        import re
+        assert re.fullmatch(r"ver_[0-9a-f]{12}", versions[0]["version_id"])
+
+    def test_version_file_content(self):
+        """版本文件包含所有必需字段"""
+        template = save_template(
+            name="内容测试",
+            nodes=self._sample_nodes(),
+            edges=self._sample_edges(),
+            description="描述",
+            goal_hint="目标",
+        )
+        update_template(
+            template_id=template["template_id"],
+            name="更新",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+        versions = list_versions(template["template_id"])
+        vid = versions[0]["version_id"]
+        version = get_version(template["template_id"], vid)
+
+        assert version is not None
+        assert version["version_id"] == vid
+        assert version["template_id"] == template["template_id"]
+        assert "created_at" in version
+        assert version["name"] == "内容测试"
+        assert version["description"] == "描述"
+        assert version["goal_hint"] == "目标"
+        assert len(version["nodes"]) == 2
+        assert len(version["edges"]) == 1
+
+    def test_list_versions(self):
+        """多次更新后列出版本，按 created_at 降序"""
+        template = save_template(
+            name="V1",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+        tid = template["template_id"]
+
+        import time
+        for i in range(3):
+            time.sleep(0.01)
+            update_template(
+                template_id=tid,
+                name=f"V{i + 2}",
+                nodes=self._sample_nodes(),
+                edges=[],
+            )
+
+        versions = list_versions(tid)
+        assert len(versions) == 3
+        # 降序：最新的在前（版本快照保存的是更新前的状态）
+        assert versions[0]["name"] == "V3"
+        assert versions[1]["name"] == "V2"
+        assert versions[2]["name"] == "V1"
+
+    def test_list_versions_empty(self):
+        """未更新过的模板版本列表为空"""
+        template = save_template(
+            name="无版本",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+        versions_dir = self.versions_dir / template["template_id"]
+        assert not versions_dir.exists()
+        assert list_versions(template["template_id"]) == []
+        assert not versions_dir.exists()
+
+    def test_get_version(self):
+        """可按 ID 获取特定版本"""
+        template = save_template(
+            name="原始",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+        tid = template["template_id"]
+        update_template(
+            template_id=tid,
+            name="更新",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+        versions = list_versions(tid)
+        vid = versions[0]["version_id"]
+
+        version = get_version(tid, vid)
+        assert version is not None
+        assert version["version_id"] == vid
+        assert version["name"] == "原始"
+
+    def test_get_nonexistent_version_returns_none(self):
+        """不存在的版本返回 None"""
+        template = save_template(
+            name="测试",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+        assert get_version(template["template_id"], "ver_nonexistent") is None
+
+    def test_max_version_trim(self):
+        """超过 20 个版本时裁剪最旧的"""
+        template = save_template(
+            name="裁剪测试",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+        tid = template["template_id"]
+
+        import time
+        for i in range(25):
+            time.sleep(0.01)
+            update_template(
+                template_id=tid,
+                name=f"V{i + 2}",
+                nodes=self._sample_nodes(),
+                edges=[],
+            )
+
+        versions = list_versions(tid)
+        assert len(versions) == 20
+        assert versions[0]["name"] == "V25"
+        assert versions[-1]["name"] == "V6"
+
+    def test_delete_template_cleans_up_versions(self):
+        """删除模板时同步清理版本目录"""
+        template = save_template(
+            name="待删除",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+        tid = template["template_id"]
+        update_template(
+            template_id=tid,
+            name="更新",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+
+        # 确认版本存在
+        assert len(list_versions(tid)) == 1
+
+        # 删除模板
+        delete_template(tid)
+
+        # 版本目录应不存在
+        versions_dir = self.versions_dir / tid
+        assert not versions_dir.exists()
+
+    def test_version_immutable(self):
+        """版本快照内容不会随后续更新而改变"""
+        template = save_template(
+            name="不可变测试",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+        tid = template["template_id"]
+
+        update_template(
+            template_id=tid,
+            name="更新1",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+        versions1 = list_versions(tid)
+        vid = versions1[0]["version_id"]
+        version_before = get_version(tid, vid)
+
+        update_template(
+            template_id=tid,
+            name="更新2",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+        version_after = get_version(tid, vid)
+
+        # 版本内容不应改变
+        assert version_before["name"] == version_after["name"] == "不可变测试"
+
 
 # ── API 集成测试 ──────────────────────────────────────────────
 
@@ -320,6 +550,13 @@ class TestGraphTemplateAPI:
         monkeypatch.setattr(
             "backend.services.graph_template_store.DEFAULT_TEMPLATES_DIR",
             self.tmp_dir,
+        )
+        # Phase 6.6: 版本目录也需要隔离
+        self.versions_dir = tmp_path / "graph_template_versions"
+        self.versions_dir.mkdir()
+        monkeypatch.setattr(
+            "backend.services.graph_template_store.DEFAULT_VERSIONS_DIR",
+            self.versions_dir,
         )
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
@@ -606,3 +843,251 @@ class TestGraphTemplateAPI:
             "edges": [{"from_node": "a", "to_node": "x"}],
         })
         assert response.status_code == 400
+
+    # ── Phase 6.6: Version History API 测试 ─────────────────
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_list_versions_empty(self, mock_guard, mock_rate):
+        """新模板版本列表为空"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "无版本",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+
+        response = client.get(f"/boss/graph/templates/{tid}/versions")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["total"] == 0
+        assert data["versions"] == []
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_update_auto_creates_version(self, mock_guard, mock_rate):
+        """PUT 更新自动创建版本快照"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "原始名称",
+            "nodes": _sample_api_nodes(),
+            "edges": _sample_api_edges(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+
+        # 更新
+        client.put(f"/boss/graph/templates/{tid}", json={
+            "name": "更新后名称",
+            "nodes": _sample_api_nodes(),
+        })
+
+        # 版本列表应有 1 条
+        response = client.get(f"/boss/graph/templates/{tid}/versions")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 1
+        assert data["versions"][0]["name"] == "原始名称"
+        assert data["versions"][0]["node_count"] == 2
+        assert data["versions"][0]["edge_count"] == 1
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_get_version_detail(self, mock_guard, mock_rate):
+        """获取版本详情"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "详情测试",
+            "nodes": _sample_api_nodes(),
+            "edges": _sample_api_edges(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+
+        client.put(f"/boss/graph/templates/{tid}", json={
+            "name": "更新后",
+            "nodes": _sample_api_nodes(),
+        })
+
+        # 获取版本列表
+        versions_resp = client.get(f"/boss/graph/templates/{tid}/versions")
+        vid = versions_resp.json()["versions"][0]["version_id"]
+
+        # 获取版本详情
+        response = client.get(f"/boss/graph/templates/{tid}/versions/{vid}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["version"]["version_id"] == vid
+        assert data["version"]["name"] == "详情测试"
+        assert len(data["version"]["nodes"]) == 2
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_get_version_nonexistent_404(self, mock_guard, mock_rate):
+        """不存在的版本返回 404"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+
+        response = client.get(f"/boss/graph/templates/{tid}/versions/ver_nonexistent")
+        assert response.status_code == 404
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_restore_version(self, mock_guard, mock_rate):
+        """回滚到旧版本"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "原始版本",
+            "nodes": _sample_api_nodes(),
+            "edges": _sample_api_edges(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+
+        # 更新
+        client.put(f"/boss/graph/templates/{tid}", json={
+            "name": "更新后版本",
+            "nodes": _sample_api_nodes(),
+        })
+
+        # 获取版本 ID
+        versions_resp = client.get(f"/boss/graph/templates/{tid}/versions")
+        vid = versions_resp.json()["versions"][0]["version_id"]
+
+        # 回滚
+        response = client.post(f"/boss/graph/templates/{tid}/versions/{vid}/restore")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["template"]["name"] == "原始版本"
+        assert data["restored_from_version"] == vid
+
+        # 版本列表应有 2 条（原始 + 更新后）
+        versions_resp2 = client.get(f"/boss/graph/templates/{tid}/versions")
+        assert versions_resp2.json()["total"] == 2
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_restore_nonexistent_version_404(self, mock_guard, mock_rate):
+        """回滚不存在的版本返回 404"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+
+        response = client.post(f"/boss/graph/templates/{tid}/versions/ver_nonexistent/restore")
+        assert response.status_code == 404
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_restore_rejects_corrupt_version(self, mock_guard, mock_rate):
+        """损坏的版本快照不能回滚，也不会额外保存当前版本"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "原始版本",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+        client.put(f"/boss/graph/templates/{tid}", json={
+            "name": "当前版本",
+            "nodes": _sample_api_nodes(),
+        })
+
+        versions_resp = client.get(f"/boss/graph/templates/{tid}/versions")
+        vid = versions_resp.json()["versions"][0]["version_id"]
+        version_path = self.versions_dir / tid / f"{vid}.json"
+        version_data = json.loads(version_path.read_text(encoding="utf-8"))
+        version_data["nodes"] = []
+        version_path.write_text(
+            json.dumps(version_data, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        response = client.post(f"/boss/graph/templates/{tid}/versions/{vid}/restore")
+        assert response.status_code == 409
+        current = client.get(f"/boss/graph/templates/{tid}").json()["template"]
+        assert current["name"] == "当前版本"
+        assert client.get(f"/boss/graph/templates/{tid}/versions").json()["total"] == 1
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_restore_nonexistent_template_404(self, mock_guard, mock_rate):
+        """回滚不存在的模板返回 404"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        response = client.post("/boss/graph/templates/tpl_nonexistent/versions/ver_xxx/restore")
+        assert response.status_code == 404
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_list_versions_nonexistent_template_404(self, mock_guard, mock_rate):
+        """列出不存在模板的版本返回 404"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        response = client.get("/boss/graph/templates/tpl_nonexistent/versions")
+        assert response.status_code == 404
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_delete_template_removes_versions(self, mock_guard, mock_rate):
+        """删除模板时同步清理版本"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+
+        create_resp = client.post("/boss/graph/templates", json={
+            "name": "待删除",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = create_resp.json()["template"]["template_id"]
+
+        # 创建一个版本
+        client.put(f"/boss/graph/templates/{tid}", json={
+            "name": "更新",
+            "nodes": _sample_api_nodes(),
+        })
+
+        # 删除模板
+        response = client.delete(f"/boss/graph/templates/{tid}")
+        assert response.status_code == 200
+
+        # 版本列表应返回 404（模板已不存在）
+        versions_resp = client.get(f"/boss/graph/templates/{tid}/versions")
+        assert versions_resp.status_code == 404

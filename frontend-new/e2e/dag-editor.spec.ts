@@ -1050,3 +1050,146 @@ test.describe("Phase 6.5 — 导入后 Undo/Redo 正确 reset", () => {
     await expect(undoBtn).toBeDisabled()
   })
 })
+
+// ── Phase 6.6: Version History & Rollback ─────────────────────────────────
+
+async function updateTemplateFixture(
+  request: APIRequestContext,
+  templateId: string,
+  payload: { name: string; nodes: Array<Record<string, string>>; edges?: Array<Record<string, string>>; description?: string; goal_hint?: string },
+) {
+  const response = await request.put(`/boss/graph/templates/${templateId}`, { data: payload })
+  expect(response.ok()).toBeTruthy()
+}
+
+test.describe("Phase 6.6 — Version History & Rollback", () => {
+  let createdTemplateId: string | null = null
+
+  test.afterEach(async ({ request }) => {
+    await deleteTemplateFixture(request, createdTemplateId)
+    createdTemplateId = null
+  })
+
+  test("版本按钮可见，点击打开版本历史面板（空状态）", async ({ page, request }) => {
+    createdTemplateId = await createTemplateFixture(request, "版本按钮测试")
+    await goToBoss(page)
+
+    // 找到模板卡片上的「版本」按钮
+    const versionBtn = page.locator("button", { hasText: "版本" }).first()
+    await expect(versionBtn).toBeVisible()
+    await versionBtn.click()
+    await page.waitForTimeout(500)
+
+    // 应显示版本历史面板
+    await expect(page.getByRole("heading", { name: "版本历史 / 版本按钮测试" })).toBeVisible()
+    // 空状态提示
+    await expect(page.locator("text=暂无版本历史")).toBeVisible()
+  })
+
+  test("更新模板后版本历史显示一个版本", async ({ page, request }) => {
+    createdTemplateId = await createTemplateFixture(request, "V1-版本测试")
+
+    // 通过 API 更新模板（产生版本）
+    await updateTemplateFixture(request, createdTemplateId, {
+      name: "V2-版本测试",
+      nodes: [
+        { id: "research", agent_id: "research", title: "调研", prompt: "做调研" },
+        { id: "marketing", agent_id: "marketing", title: "营销", prompt: "做营销" },
+      ],
+    })
+
+    await goToBoss(page)
+
+    // 点击版本按钮
+    const versionBtn = page.locator("button", { hasText: "版本" }).first()
+    await versionBtn.click()
+    await page.waitForTimeout(500)
+
+    // 应显示 1 个版本，名称为 V1
+    await expect(page.locator("text=V1-版本测试")).toBeVisible()
+    await expect(page.getByText("2 节点", { exact: true }).last()).toBeVisible()
+  })
+
+  test("回滚到旧版本", async ({ page, request }) => {
+    createdTemplateId = await createTemplateFixture(request, "原始版本")
+
+    // 更新模板
+    await updateTemplateFixture(request, createdTemplateId, {
+      name: "更新后版本",
+      nodes: [
+        { id: "research", agent_id: "research", title: "调研", prompt: "做调研" },
+        { id: "marketing", agent_id: "marketing", title: "营销", prompt: "做营销" },
+      ],
+    })
+
+    await goToBoss(page)
+
+    // 点击版本按钮
+    const versionBtn = page.locator("button", { hasText: "版本" }).first()
+    await versionBtn.click()
+    await page.waitForTimeout(500)
+
+    // 点击回滚按钮
+    const rollbackBtn = page.locator("button", { hasText: "回滚" }).first()
+    await rollbackBtn.click()
+    await page.waitForTimeout(300)
+
+    // 确认对话框
+    await expect(page.getByRole("heading", { name: "确认回滚", exact: true })).toBeVisible()
+    await expect(page.locator("text=当前状态会自动保存为新版本")).toBeVisible()
+
+    // 确认回滚
+    await page.locator('[data-testid="confirm-dialog-confirm"]').click()
+    await page.waitForTimeout(1000)
+
+    // 模板应恢复为原始版本并进入编辑模式
+    await expect(page.getByRole("heading", { name: "编辑 Graph Template" })).toBeVisible()
+    await expect(page.locator('input[placeholder="模板名称"]')).toHaveValue("原始版本")
+  })
+
+  test("版本详情查看", async ({ page, request }) => {
+    createdTemplateId = await createTemplateFixture(request, "详情测试")
+
+    await updateTemplateFixture(request, createdTemplateId, {
+      name: "更新后",
+      nodes: [
+        { id: "research", agent_id: "research", title: "调研", prompt: "做调研" },
+        { id: "marketing", agent_id: "marketing", title: "营销", prompt: "做营销" },
+      ],
+    })
+
+    await goToBoss(page)
+
+    // 打开版本面板
+    const versionBtn = page.locator("button", { hasText: "版本" }).first()
+    await versionBtn.click()
+    await page.waitForTimeout(500)
+
+    // 点击查看按钮
+    const viewBtn = page.locator("button", { hasText: "查看" }).first()
+    await viewBtn.click()
+    await page.waitForTimeout(500)
+
+    // 应显示版本详情 JSON
+    await expect(page.locator("text=版本详情")).toBeVisible()
+    await expect(page.locator("pre")).toBeVisible()
+  })
+
+  test("版本 API 失败时在面板内显示错误", async ({ page, request }) => {
+    createdTemplateId = await createTemplateFixture(request, "版本错误测试")
+    await page.route("**/boss/graph/templates/*/versions", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "模拟版本服务失败" }),
+      })
+    })
+    await goToBoss(page)
+
+    const versionBtn = page.locator("button", { hasText: "版本" }).first()
+    await versionBtn.click()
+
+    await expect(page.locator("text=版本操作失败")).toBeVisible()
+    await expect(page.locator("text=暂无版本历史")).not.toBeVisible()
+  })
+})

@@ -1325,6 +1325,78 @@ class ApiClient {
       body: payload,
     })
   }
+
+  // ── Graph Template Version History APIs (Phase 6.6) ──────────
+
+  async listBossGraphTemplateVersions(templateId: string) {
+    return this.request<{
+      ok: boolean
+      versions: Array<{
+        version_id: string
+        template_id: string
+        created_at: string
+        name: string
+        node_count: number
+        edge_count: number
+      }>
+      total: number
+    }>(`/boss/graph/templates/${templateId}/versions`)
+  }
+
+  async getBossGraphTemplateVersion(templateId: string, versionId: string) {
+    return this.request<{
+      ok: boolean
+      version: {
+        version_id: string
+        template_id: string
+        created_at: string
+        name: string
+        description: string
+        goal_hint: string
+        nodes: Array<{
+          id: string
+          agent_id: string
+          task_type: string
+          title: string
+          prompt: string
+        }>
+        edges: Array<{
+          from_node: string
+          to_node: string
+          handoff_type: string
+        }>
+      }
+    }>(`/boss/graph/templates/${templateId}/versions/${versionId}`)
+  }
+
+  async restoreBossGraphTemplateVersion(templateId: string, versionId: string) {
+    return this.request<{
+      ok: boolean
+      template: {
+        template_id: string
+        name: string
+        description: string
+        goal_hint: string
+        nodes: Array<{
+          id: string
+          agent_id: string
+          task_type: string
+          title: string
+          prompt: string
+        }>
+        edges: Array<{
+          from_node: string
+          to_node: string
+          handoff_type: string
+        }>
+        created_at: string
+        updated_at: string
+      }
+      restored_from_version: string
+    }>(`/boss/graph/templates/${templateId}/versions/${versionId}/restore`, {
+      method: "POST",
+    })
+  }
 }
 
 export const api = new ApiClient()

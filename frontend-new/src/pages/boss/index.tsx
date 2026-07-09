@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ClipboardList,
   Download,
+  Eye,
   EyeOff,
   Upload,
   FileText,
@@ -929,6 +930,23 @@ export default function BossPage() {
   })
   const [importError, setImportError] = useState<string | null>(null)
 
+  // ── Phase 6.6: Version History state ──────────────────────
+  const [versionListTemplateId, setVersionListTemplateId] = useState<string | null>(null)
+  const [versionList, setVersionList] = useState<Array<{
+    version_id: string
+    template_id: string
+    created_at: string
+    name: string
+    node_count: number
+    edge_count: number
+  }> | null>(null)
+  const [versionListLoading, setVersionListLoading] = useState(false)
+  const [versionDetail, setVersionDetail] = useState<Record<string, unknown> | null>(null)
+  const [versionDetailLoading, setVersionDetailLoading] = useState(false)
+  const [rollbackConfirmVersionId, setRollbackConfirmVersionId] = useState<string | null>(null)
+  const [rollbackLoading, setRollbackLoading] = useState(false)
+  const [versionError, setVersionError] = useState<string | null>(null)
+
   /** Save current draft to localStorage (debounced) */
   const saveDraftToStorage = useCallback((draft: GraphTemplateDraft) => {
     if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current)
@@ -1186,6 +1204,72 @@ export default function BossPage() {
       const errorMsg = error instanceof Error ? error.message : "删除失败"
       console.error("Delete graph template failed:", error)
       alert(`删除模板失败: ${errorMsg}`)
+    }
+  }
+
+  // ── Phase 6.6: Version History functions ──────────────────
+
+  const loadVersionList = async (templateId: string) => {
+    setVersionListTemplateId(templateId)
+    setVersionListLoading(true)
+    setVersionDetail(null)
+    setVersionError(null)
+    try {
+      const data = await api.listBossGraphTemplateVersions(templateId)
+      setVersionList(data.versions || [])
+    } catch (error) {
+      console.error("Load versions failed:", error)
+      setVersionList(null)
+      setVersionError(error instanceof Error ? error.message : "版本历史加载失败")
+    } finally {
+      setVersionListLoading(false)
+    }
+  }
+
+  const loadVersionDetail = async (templateId: string, versionId: string) => {
+    setVersionDetailLoading(true)
+    setVersionError(null)
+    try {
+      const data = await api.getBossGraphTemplateVersion(templateId, versionId)
+      setVersionDetail(data.version as unknown as Record<string, unknown>)
+    } catch (error) {
+      console.error("Load version detail failed:", error)
+      setVersionDetail(null)
+      setVersionError(error instanceof Error ? error.message : "版本详情加载失败")
+    } finally {
+      setVersionDetailLoading(false)
+    }
+  }
+
+  const rollbackToVersion = async () => {
+    if (!versionListTemplateId || !rollbackConfirmVersionId || rollbackLoading) return
+    setRollbackLoading(true)
+    setVersionError(null)
+    try {
+      const data = await api.restoreBossGraphTemplateVersion(versionListTemplateId, rollbackConfirmVersionId)
+      setRollbackConfirmVersionId(null)
+      setVersionDetail(null)
+      setEditingTemplateId(data.template.template_id)
+      setCreateDraft({
+        name: data.template.name,
+        description: data.template.description,
+        goal_hint: data.template.goal_hint,
+        nodes: data.template.nodes.map((node) => ({ ...node })),
+        edges: data.template.edges.map((edge) => ({ ...edge })),
+      })
+      setCreateFormError(null)
+      setShowCreateForm(true)
+      await Promise.all([
+        loadVersionList(versionListTemplateId),
+        loadGraphTemplates(),
+      ])
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "回滚失败"
+      console.error("Rollback failed:", error)
+      setRollbackConfirmVersionId(null)
+      setVersionError(errorMsg)
+    } finally {
+      setRollbackLoading(false)
     }
   }
 
@@ -2224,6 +2308,15 @@ export default function BossPage() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          onClick={() => loadVersionList(tpl.template_id)}
+                          className="gap-1 text-xs text-[#6B6B6B] hover:text-[#0B0B0B]"
+                        >
+                          <History className="h-3 w-3" />
+                          版本
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           onClick={() => deleteGraphTemplate(tpl.template_id)}
                           className="gap-1 text-xs text-[#B5B5B5] hover:text-red-500"
                         >
@@ -2235,6 +2328,127 @@ export default function BossPage() {
                   </div>
                 )
               })}
+            </div>
+          )}
+        </motion.div>
+      )}
+
+      {/* Phase 6.6: Version History Panel */}
+      {mode === "boss-lite" && versionListTemplateId && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.15 }}
+          className="p-6 rounded-2xl border border-[#E5E5E5] bg-white mt-4"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <History className="h-4 w-4 text-[#8A8A8A]" />
+              <h3 className="text-sm font-medium text-[#0B0B0B]">
+                版本历史 / {graphTemplates.find((template) => template.template_id === versionListTemplateId)?.name || versionListTemplateId}
+              </h3>
+              {versionList && (
+                <Badge variant="secondary">{versionList.length}</Badge>
+              )}
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setVersionListTemplateId(null)
+                setVersionList(null)
+                setVersionDetail(null)
+                setVersionError(null)
+              }}
+              className="gap-1 text-xs text-[#8A8A8A] hover:text-[#0B0B0B]"
+            >
+              <X className="h-3 w-3" />
+              关闭
+            </Button>
+          </div>
+
+          {versionListLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-[#8A8A8A]" />
+            </div>
+          ) : versionError ? (
+            <div className="rounded-xl border border-red/20 bg-red/5 p-4 text-sm text-red-500">
+              <div className="mb-1 flex items-center gap-1.5 font-medium">
+                <AlertCircle className="h-3.5 w-3.5" />
+                版本操作失败
+              </div>
+              <p className="text-xs">{versionError}</p>
+            </div>
+          ) : versionList && versionList.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-[#D8D8D2] bg-[#FAFAF8] p-5 text-sm text-[#6B6B6B] text-center">
+              暂无版本历史。编辑模板后会自动保存历史版本。
+            </div>
+          ) : versionList && (
+            <div className="space-y-2">
+              {versionList.map((v) => (
+                <div
+                  key={v.version_id}
+                  className="flex items-center justify-between rounded-lg border border-[#F0F0EC] p-3 hover:bg-[#F9F9F7] transition-all"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[10px] font-mono text-[#B5B5B5] bg-[#F4F3EF] px-1.5 py-0.5 rounded">
+                        {v.version_id}
+                      </span>
+                      <span className="text-xs text-[#6B6B6B]">{v.name}</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-[11px] text-[#B5B5B5]">
+                      <span>{formatLocalTime(v.created_at)}</span>
+                      <span>{v.node_count} 节点</span>
+                      <span>{v.edge_count} 边</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => loadVersionDetail(versionListTemplateId, v.version_id)}
+                      disabled={versionDetailLoading}
+                      className="gap-1 text-xs text-[#6B6B6B] hover:text-[#0B0B0B]"
+                    >
+                      <Eye className="h-3 w-3" />
+                      查看
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setRollbackConfirmVersionId(v.version_id)}
+                      className="gap-1 text-xs"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      回滚
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Version detail preview */}
+          {versionDetail && (
+            <div className="mt-4 rounded-lg border border-[#E5E5E5] p-4 bg-[#FAFAF8]">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-medium text-[#0B0B0B]">
+                  版本详情: {(versionDetail as Record<string, unknown>).version_id as string}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setVersionDetail(null)}
+                  aria-label="关闭版本详情"
+                  className="h-6 w-6 p-0"
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              </div>
+              <pre className="text-[11px] text-[#6B6B6B] overflow-auto max-h-60 whitespace-pre-wrap">
+                {JSON.stringify(versionDetail, null, 2)}
+              </pre>
             </div>
           )}
         </motion.div>
@@ -2372,6 +2586,27 @@ export default function BossPage() {
           onConfirm={restoreDraft}
           onCancel={discardDraft}
           onDismiss={() => setPendingRestoreDraft(null)}
+        />
+      )}
+
+      {/* Phase 6.6: Rollback confirm dialog */}
+      {rollbackConfirmVersionId && (
+        <ConfirmDialog
+          open
+          title="确认回滚"
+          description={`将模板恢复到版本 ${rollbackConfirmVersionId} 的状态。\n当前状态会自动保存为新版本，不会丢失数据。`}
+          confirmLabel={rollbackLoading ? "回滚中..." : "确认回滚"}
+          cancelLabel="取消"
+          variant="default"
+          onConfirm={rollbackToVersion}
+          onCancel={() => {
+            if (!rollbackLoading) setRollbackConfirmVersionId(null)
+          }}
+          onDismiss={() => {
+            if (!rollbackLoading) setRollbackConfirmVersionId(null)
+          }}
+          confirmDisabled={rollbackLoading}
+          cancelDisabled={rollbackLoading}
         />
       )}
 

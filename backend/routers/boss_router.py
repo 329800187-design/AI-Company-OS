@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from backend.services.boss_command_center import get_boss_command_center, MODULE_ORDER
 from backend.services.collaboration_graph import (
     build_boss_lite_graph,
@@ -1342,6 +1342,108 @@ def delete_graph_template(template_id: str):
     if not deleted:
         raise HTTPException(status_code=404, detail=f"模板 {template_id} 不存在")
     return {"ok": True, "deleted": True, "template_id": template_id}
+
+
+# ── Phase 6.6: 版本历史 API ────────────────────────────────
+
+
+@router.get("/graph/templates/{template_id}/versions", summary="列出 Template 版本历史")
+def list_graph_template_versions(template_id: str):
+    """列出模板的版本历史（摘要，不含完整 nodes/edges）"""
+    from backend.services.graph_template_store import get_template, list_versions
+
+    template = get_template(template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail=f"模板 {template_id} 不存在")
+
+    versions = list_versions(template_id)
+    return {"ok": True, "versions": versions, "total": len(versions)}
+
+
+@router.get(
+    "/graph/templates/{template_id}/versions/{version_id}",
+    summary="获取版本详情",
+)
+def get_graph_template_version(template_id: str, version_id: str):
+    """获取指定版本的完整快照数据"""
+    from backend.services.graph_template_store import get_template, get_version
+
+    template = get_template(template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail=f"模板 {template_id} 不存在")
+
+    version = get_version(template_id, version_id)
+    if version is None:
+        raise HTTPException(status_code=404, detail=f"版本 {version_id} 不存在")
+
+    return {"ok": True, "version": version}
+
+
+@router.post(
+    "/graph/templates/{template_id}/versions/{version_id}/restore",
+    summary="回滚到指定版本",
+)
+def restore_graph_template_version(template_id: str, version_id: str):
+    """回滚模板到指定版本。回滚前自动保存当前版本。"""
+    from backend.services.graph_template_store import (
+        get_template,
+        get_version,
+        save_version_snapshot,
+        update_template,
+    )
+
+    template = get_template(template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail=f"模板 {template_id} 不存在")
+
+    version = get_version(template_id, version_id)
+    if version is None:
+        raise HTTPException(status_code=404, detail=f"版本 {version_id} 不存在")
+
+    try:
+        restore_request = BossGraphTemplateCreateRequest(
+            name=version.get("name", ""),
+            description=version.get("description", ""),
+            goal_hint=version.get("goal_hint", ""),
+            nodes=version.get("nodes", []),
+            edges=version.get("edges", []),
+        )
+    except ValidationError as error:
+        raise HTTPException(status_code=409, detail={
+            "message": "版本快照格式无效，无法回滚",
+            "errors": error.errors(),
+        }) from error
+
+    graph = _build_custom_graph_from_nodes_edges(
+        restore_request.nodes,
+        restore_request.edges,
+    )
+    validation = validate_graph(graph)
+    if not validation.valid:
+        raise HTTPException(status_code=409, detail={
+            "message": "版本快照协作图无效，无法回滚",
+            "errors": validation.errors,
+            "warnings": validation.warnings,
+        })
+
+    # 回滚前先保存当前版本
+    save_version_snapshot(template_id, template)
+
+    # 恢复目标版本（跳过自动快照，避免重复保存）
+    restored = update_template(
+        template_id=template_id,
+        name=restore_request.name,
+        nodes=[node.model_dump() for node in restore_request.nodes],
+        edges=[edge.model_dump() for edge in restore_request.edges],
+        description=restore_request.description,
+        goal_hint=restore_request.goal_hint,
+        skip_version_snapshot=True,
+    )
+
+    if restored is None:
+        raise HTTPException(status_code=500, detail="回滚失败")
+
+    return {"ok": True, "template": restored, "restored_from_version": version_id}
 
 
 @router.post("/graph/templates/{template_id}/execute", summary="按 Graph Template 执行")

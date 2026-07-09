@@ -12,6 +12,8 @@ interface ConfirmDialogProps {
   onConfirm: () => void
   onCancel: () => void
   onDismiss?: () => void
+  confirmDisabled?: boolean
+  cancelDisabled?: boolean
 }
 
 /** Lightweight modal confirmation dialog with keyboard and focus management. */
@@ -25,6 +27,8 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
   onDismiss,
+  confirmDisabled = false,
+  cancelDisabled = false,
 }: ConfirmDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const cancelButtonRef = useRef<HTMLButtonElement>(null)
@@ -104,6 +108,7 @@ export function ConfirmDialog({
             variant="outline"
             size="sm"
             onClick={onCancel}
+            disabled={cancelDisabled}
             data-testid="confirm-dialog-cancel"
             className="h-7 text-xs"
           >
@@ -113,6 +118,7 @@ export function ConfirmDialog({
             variant={variant === "danger" ? "destructive" : "default"}
             size="sm"
             onClick={onConfirm}
+            disabled={confirmDisabled}
             data-testid="confirm-dialog-confirm"
             className="h-7 text-xs"
           >
