@@ -32,6 +32,7 @@ import {
   Copy,
   GitCompareArrows,
   Pencil,
+  Pin,
   X,
 } from "lucide-react"
 import { api } from "@/api/client"
@@ -911,6 +912,7 @@ export default function BossPage() {
   const [createSubmitting, setCreateSubmitting] = useState(false)
   const [createFormError, setCreateFormError] = useState<string | null>(null)
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null)
+  const [cloneSourceId, setCloneSourceId] = useState<string | null>(null)
 
   // ── Draft auto-save / restore (localStorage) ────────────────
   const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -939,6 +941,7 @@ export default function BossPage() {
     created_at: string
     label: string
     note: string
+    pinned: boolean
     name: string
     node_count: number
     edge_count: number
@@ -964,6 +967,21 @@ export default function BossPage() {
   const [compareTo, setCompareTo] = useState<string | null>(null)
   const [compareResult, setCompareResult] = useState<Record<string, unknown> | null>(null)
   const [compareLoading, setCompareLoading] = useState(false)
+
+  // ── Phase 6.8: Audit log state ────────────────────────────
+  const [showAuditLog, setShowAuditLog] = useState(false)
+  const [auditTemplateId, setAuditTemplateId] = useState<string | null>(null)
+  const [auditEvents, setAuditEvents] = useState<Array<{
+    event_id: string
+    timestamp: string
+    template_id: string
+    event_type: string
+    summary: string
+    details: Record<string, unknown>
+  }> | null>(null)
+  const [auditLoading, setAuditLoading] = useState(false)
+  const [auditFilter, setAuditFilter] = useState<string>("")
+  const [pinLoading, setPinLoading] = useState<string | null>(null)
 
   /** Save current draft to localStorage (debounced) */
   const saveDraftToStorage = useCallback((draft: GraphTemplateDraft) => {
@@ -1342,6 +1360,48 @@ export default function BossPage() {
     }
   }
 
+  // ── Phase 6.8: Audit log ─────────────────────────────────
+
+  const loadAuditLog = async (templateId: string, eventType?: string) => {
+    setAuditTemplateId(templateId)
+    setAuditLoading(true)
+    setAuditEvents(null)
+    setShowAuditLog(true)
+    try {
+      const data = await api.listBossGraphTemplateAudit(templateId, {
+        eventType: eventType || undefined,
+        limit: 200,
+      })
+      setAuditEvents(data.events || [])
+    } catch (error) {
+      console.error("Load audit log failed:", error)
+      setAuditEvents([])
+    } finally {
+      setAuditLoading(false)
+    }
+  }
+
+  // ── Phase 6.8: Version pin/unpin ─────────────────────────
+
+  const togglePin = async (templateId: string, versionId: string, currentlyPinned: boolean) => {
+    setPinLoading(versionId)
+    setVersionError(null)
+    try {
+      if (currentlyPinned) {
+        await api.unpinBossGraphTemplateVersion(templateId, versionId)
+      } else {
+        await api.pinBossGraphTemplateVersion(templateId, versionId)
+      }
+      await loadVersionList(templateId)
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "操作失败"
+      console.error("Pin/unpin failed:", error)
+      setVersionError(errorMsg)
+    } finally {
+      setPinLoading(null)
+    }
+  }
+
   // 创建模板 — 前端校验
   const validateDraft = (draft: GraphTemplateDraft): string[] => {
     const errors: string[] = []
@@ -1382,11 +1442,15 @@ export default function BossPage() {
         await api.updateBossGraphTemplate(editingTemplateId, payload)
         setEditingTemplateId(null)
       } else {
-        await api.createBossGraphTemplate(payload)
+        await api.createBossGraphTemplate({
+          ...payload,
+          source_template_id: cloneSourceId || undefined,
+        })
       }
       setShowCreateForm(false)
       setCreateDraft(DEFAULT_DRAFT)
       setCreateFormError(null)
+      setCloneSourceId(null)
       clearDraftStorage()
       loadGraphTemplates()
     } catch (error) {
@@ -1401,6 +1465,7 @@ export default function BossPage() {
   // 克隆模板：将已有模板内容填入创建表单
   const cloneGraphTemplate = (tpl: GraphTemplate) => {
     setEditingTemplateId(null)
+    setCloneSourceId(tpl.template_id)
     setCreateDraft({
       name: `${tpl.name} 副本`,
       description: tpl.description,
@@ -1415,6 +1480,7 @@ export default function BossPage() {
   // 编辑模板：将已有模板内容填入创建表单，进入编辑模式
   const editGraphTemplate = (tpl: GraphTemplate) => {
     setEditingTemplateId(tpl.template_id)
+    setCloneSourceId(null)
     setCreateDraft({
       name: tpl.name,
       description: tpl.description,
@@ -2275,6 +2341,7 @@ export default function BossPage() {
                     setCreateDraft(DEFAULT_DRAFT)
                     setCreateFormError(null)
                     setEditingTemplateId(null)
+                    setCloneSourceId(null)
                     clearDraftStorage()
                   }}
                   className="gap-1 text-xs"
@@ -2382,6 +2449,16 @@ export default function BossPage() {
                         >
                           <History className="h-3 w-3" />
                           版本
+                        </Button>
+                        <Button
+                          data-testid="audit-log-btn"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => loadAuditLog(tpl.template_id)}
+                          className="gap-1 text-xs text-[#6B6B6B] hover:text-[#0B0B0B]"
+                        >
+                          <ClipboardList className="h-3 w-3" />
+                          审计
                         </Button>
                         <Button
                           variant="ghost"
@@ -2547,6 +2624,12 @@ export default function BossPage() {
                       <span className="text-[10px] font-mono text-[#B5B5B5] bg-[#F4F3EF] px-1.5 py-0.5 rounded">
                         {v.version_id}
                       </span>
+                      {v.pinned && (
+                        <span data-testid={`version-pinned-${v.version_id}`} className="text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                          <Pin className="h-2.5 w-2.5" />
+                          固定
+                        </span>
+                      )}
                       {v.label ? (
                         <span className="text-xs font-medium text-[#0B0B0B]">{v.label}</span>
                       ) : (
@@ -2565,6 +2648,25 @@ export default function BossPage() {
                   <div className="flex items-center gap-2">
                     {!compareMode && (
                       <>
+                        <Button
+                          data-testid={`version-pin-${v.version_id}`}
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => togglePin(versionListTemplateId, v.version_id, v.pinned)}
+                          disabled={pinLoading === v.version_id}
+                          aria-label={v.pinned ? "取消固定" : "固定版本"}
+                          className={cn(
+                            "gap-1 text-xs",
+                            v.pinned ? "text-amber-600 hover:text-amber-700" : "text-[#8A8A8A] hover:text-[#0B0B0B]",
+                          )}
+                        >
+                          {pinLoading === v.version_id ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Pin className="h-3 w-3" />
+                          )}
+                          {v.pinned ? "取消固定" : "固定"}
+                        </Button>
                         <Button
                           variant="ghost"
                           size="sm"
@@ -2855,6 +2957,104 @@ export default function BossPage() {
               <pre className="text-[11px] text-[#6B6B6B] overflow-auto max-h-60 whitespace-pre-wrap">
                 {JSON.stringify(versionDetail, null, 2)}
               </pre>
+            </div>
+          )}
+        </motion.div>
+      )}
+
+      {/* Phase 6.8: Audit Log Panel */}
+      {mode === "boss-lite" && showAuditLog && auditTemplateId && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.15 }}
+          className="p-6 rounded-2xl border border-[#E5E5E5] bg-white mt-4"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <ClipboardList className="h-4 w-4 text-[#8A8A8A]" />
+              <h3 className="text-sm font-medium text-[#0B0B0B]">
+                审计日志 / {graphTemplates.find((t) => t.template_id === auditTemplateId)?.name || auditTemplateId}
+              </h3>
+              {auditEvents && (
+                <Badge variant="secondary">{auditEvents.length}</Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                data-testid="audit-filter"
+                value={auditFilter}
+                onChange={(e) => {
+                  setAuditFilter(e.target.value)
+                  loadAuditLog(auditTemplateId, e.target.value || undefined)
+                }}
+                className="rounded-md border border-[#E5E5E5] px-2 py-1 text-xs bg-white"
+              >
+                <option value="">全部事件</option>
+                <option value="create">创建</option>
+                <option value="clone">克隆</option>
+                <option value="update">更新</option>
+                <option value="delete">删除</option>
+                <option value="execute">执行</option>
+                <option value="restore">回滚</option>
+                <option value="metadata_update">元数据修改</option>
+                <option value="pin">固定</option>
+                <option value="unpin">取消固定</option>
+              </select>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setShowAuditLog(false)
+                  setAuditTemplateId(null)
+                  setAuditEvents(null)
+                  setAuditFilter("")
+                }}
+                aria-label="关闭审计日志"
+                className="gap-1 text-xs text-[#8A8A8A] hover:text-[#0B0B0B]"
+              >
+                <X className="h-3 w-3" />
+                关闭
+              </Button>
+            </div>
+          </div>
+
+          {auditLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-[#8A8A8A]" />
+            </div>
+          ) : auditEvents && auditEvents.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-[#D8D8D2] bg-[#FAFAF8] p-5 text-sm text-[#6B6B6B] text-center">
+              暂无审计日志。
+            </div>
+          ) : auditEvents && (
+            <div className="space-y-1.5 max-h-96 overflow-y-auto">
+              {auditEvents.map((ev) => (
+                <div
+                  key={ev.event_id}
+                  data-testid={`audit-event-${ev.event_type}`}
+                  className="flex items-start gap-3 rounded-lg border border-[#F0F0EC] p-2.5 text-[11px] hover:bg-[#F9F9F7] transition-all"
+                >
+                  <span className="text-[10px] text-[#B5B5B5] min-w-[130px] font-mono shrink-0">
+                    {formatLocalTime(ev.timestamp)}
+                  </span>
+                  <span className={cn(
+                    "px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0",
+                    ev.event_type === "create" && "bg-green-50 text-green-700",
+                    ev.event_type === "clone" && "bg-emerald-50 text-emerald-700",
+                    ev.event_type === "update" && "bg-blue-50 text-blue-700",
+                    ev.event_type === "delete" && "bg-red-50 text-red-700",
+                    ev.event_type === "execute" && "bg-purple-50 text-purple-700",
+                    ev.event_type === "restore" && "bg-amber-50 text-amber-700",
+                    ev.event_type === "metadata_update" && "bg-cyan-50 text-cyan-700",
+                    ev.event_type === "pin" && "bg-yellow-50 text-yellow-700",
+                    ev.event_type === "unpin" && "bg-gray-100 text-gray-600",
+                  )}>
+                    {ev.event_type}
+                  </span>
+                  <span className="text-[#0B0B0B] flex-1">{ev.summary}</span>
+                </div>
+              ))}
             </div>
           )}
         </motion.div>

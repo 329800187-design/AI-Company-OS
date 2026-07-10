@@ -2,8 +2,8 @@
 
 > 阶段：Phase 3 — P0 Agent 协作通用化
 > 创建日期：2026-07-07
-> 最后更新：2026-07-08
-> 状态：**Graph Template 更新闭环已完成**
+> 最后更新：2026-07-10
+> 状态：**Graph Template Audit Log + Pin/Unpin 已完成（Phase 6.8）**
 
 ---
 
@@ -727,4 +727,73 @@ Phase 3.10 实现了 Graph Template 更新功能：用户点击已有模板的�
 
 ---
 
-*由 AI Company OS Phase 3 P0 生成 · 2026-07-08 · 最后更新：模板更新（Phase 3.10）*
+## 二十、Graph Template Audit Log（Phase 6.8）
+
+### 20.1 概述
+
+Phase 6.8 实现了 Graph Template 审计日志系统，记录模板全生命周期操作事件，支持事后追溯。
+
+### 20.2 审计事件类型
+
+| 事件类型 | 触发时机 | 说明 |
+|----------|----------|------|
+| `create` | 创建模板 | 记录模板名称、节点数、边数 |
+| `clone` | 克隆模板 | 记录源模板 ID、源模板名称 |
+| `update` | 更新模板 | 记录变更摘要 |
+| `delete` | 删除模板 | 记录模板名称、节点数、边数、删除时间 |
+| `execute` | 按模板执行 | 记录执行目标 |
+| `restore` | 回滚版本 | 记录目标版本 ID |
+| `metadata_update` | 更新版本标签/备注 | 记录变更字段 |
+| `pin` | 固定版本 | 记录版本 ID |
+| `unpin` | 取消固定版本 | 记录版本 ID |
+
+### 20.3 存储
+
+- 路径：`output/graph_template_audit/{template_id}.jsonl`
+- 格式：JSONL，每行一个事件，包含 `event_id`（`aevt_{uuid}`）、`timestamp`（UTC ISO）、`template_id`、`event_type`、`summary`、`details`
+- 写入策略：JSONL 追加写入，每次写入后 `flush` + `fsync`，保证单条事件尽快落盘
+- 删除模板后审计日志**保留**，用于事后追溯
+
+### 20.4 安全特性
+
+- **敏感字段过滤**：自动移除 `api_key`、`token`、`secret`、`password`、`authorization` 等字段
+- **长文本截断**：超过 200 字符的字符串自动截断并追加 `...`
+- **列表长度限制**：列表类型最多保留 10 个元素
+
+### 20.5 API 端点
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/boss/graph/templates/{template_id}/audit` | GET | 查询审计日志，支持 `event_type` 过滤和 `limit` 参数 |
+| `/boss/graph/templates/{template_id}/versions/{version_id}/pin` | POST | 固定版本 |
+| `/boss/graph/templates/{template_id}/versions/{version_id}/unpin` | POST | 取消固定版本 |
+
+### 20.6 删除后查询
+
+模板删除后，审计 API 仍可查询：
+
+- 有审计记录：返回 `deleted: true` + 事件列表
+- 无审计记录且模板不存在：返回 404
+
+### 20.7 版本 Pin/Unpin
+
+- 固定版本不会被自动裁剪（`_MAX_VERSIONS_PER_TEMPLATE = 20` 限制只对未固定版本生效）
+- 固定版本在 UI 显示琥珀色「固定」徽章
+- Pin/Unpin 操作本身也会记录审计事件
+
+### 20.8 前端 UI
+
+- **审计面板**：每个模板卡片新增「审计」按钮，点击打开审计日志面板
+- **事件筛选**：下拉框支持按事件类型过滤（全部 + 9 种类型）
+- **事件颜色**：`create`=绿、`clone`=翠绿、`update`=蓝、`delete`=红、`execute`=紫、`restore`=琥珀、`metadata_update`=青、`pin`=黄、`unpin`=灰
+- **Pin UI**：版本列表每行显示固定/取消固定按钮，固定版本显示「固定」徽章
+
+### 20.9 测试覆盖
+
+`tests/test_graph_template_store.py` 覆盖 28 个场景：
+- 存储层（10 个）：保存/读取/列出/删除/落盘/空列表/不存在/自定义 ID/无边/非法 ID 拒绝
+- API 层（18 个）：创建/无效图/自环/列出/获取/获取 404/删除/删除 404/按模板执行/执行 404 + 审计相关：创建审计/更新审计/事件过滤/无效类型 400/不存在 404/无敏感信息/克隆审计/克隆来源/无来源创建审计/版本 pin/版本 unpin/不存在版本 pin 404/固定版本存活裁剪/回滚审计/元数据更新审计/pin 审计/删除后审计保留/删除事件详情/无文件 404
+
+---
+
+*由 AI Company OS Phase 3 P0 生成 · 2026-07-08 · 最后更新：Phase 6.8 Audit Log + Pin/Unpin*

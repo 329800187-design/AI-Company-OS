@@ -340,6 +340,7 @@ class BossGraphTemplateCreateRequest(BaseModel):
     goal_hint: str = Field(default="", max_length=500, description="目标提示")
     nodes: List[BossGraphNodeRequest] = Field(..., min_length=1, description="图节点列表")
     edges: List[BossGraphEdgeRequest] = Field(default_factory=list, description="图边列表")
+    source_template_id: Optional[str] = Field(default=None, description="克隆来源模板 ID（用于审计）")
 
 
 class BossGraphTemplateExecuteRequest(BaseModel):
@@ -1267,7 +1268,7 @@ def create_graph_template(request: BossGraphTemplateCreateRequest):
             "warnings": validation.warnings,
         })
 
-    from backend.services.graph_template_store import save_template
+    from backend.services.graph_template_store import save_template, get_template
 
     nodes_data = [n.model_dump() for n in request.nodes]
     edges_data = [e.model_dump() for e in request.edges]
@@ -1279,6 +1280,32 @@ def create_graph_template(request: BossGraphTemplateCreateRequest):
         description=request.description,
         goal_hint=request.goal_hint,
     )
+
+    # 审计日志
+    from backend.services.graph_template_audit import append_event
+    if request.source_template_id:
+        source_name = ""
+        source_t = get_template(request.source_template_id)
+        if source_t:
+            source_name = source_t.get("name", "")
+        append_event(
+            template["template_id"], "clone",
+            f"克隆模板「{request.name}」← 「{source_name}」",
+            {
+                "source_template_id": request.source_template_id,
+                "source_name": source_name,
+                "new_template_id": template["template_id"],
+                "node_count": len(nodes_data),
+                "edge_count": len(edges_data),
+            },
+        )
+    else:
+        append_event(
+            template["template_id"], "create",
+            f"创建模板「{request.name}」",
+            {"node_count": len(nodes_data), "edge_count": len(edges_data)},
+        )
+
     return {"ok": True, "template": template}
 
 
@@ -1334,13 +1361,39 @@ def update_graph_template(template_id: str, request: BossGraphTemplateCreateRequ
     )
     if template is None:
         raise HTTPException(status_code=404, detail=f"模板 {template_id} 不存在")
+
+    # 审计日志
+    from backend.services.graph_template_audit import append_event
+    append_event(
+        template_id, "update",
+        f"更新模板「{request.name}」",
+        {"node_count": len(nodes_data), "edge_count": len(edges_data)},
+    )
+
     return {"ok": True, "template": template}
 
 
 @router.delete("/graph/templates/{template_id}", summary="删除 Graph Template")
 def delete_graph_template(template_id: str):
     """删除指定 template"""
-    from backend.services.graph_template_store import delete_template
+    from backend.services.graph_template_store import delete_template, get_template
+
+    # 审计日志（删除前记录）
+    existing = get_template(template_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail=f"模板 {template_id} 不存在")
+
+    from backend.services.graph_template_audit import append_event
+    append_event(
+        template_id, "delete",
+        f"删除模板「{existing.get('name', '')}」",
+        {
+            "template_name": existing.get("name", ""),
+            "node_count": len(existing.get("nodes", [])),
+            "edge_count": len(existing.get("edges", [])),
+            "deleted_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
 
     try:
         deleted = delete_template(template_id)
@@ -1493,6 +1546,14 @@ def restore_graph_template_version(template_id: str, version_id: str):
     if restored is None:
         raise HTTPException(status_code=500, detail="回滚失败")
 
+    # 审计日志
+    from backend.services.graph_template_audit import append_event
+    append_event(
+        template_id, "restore",
+        f"回滚到版本 {version_id}",
+        {"restored_from_version": version_id, "version_name": version.get("name", "")},
+    )
+
     return {"ok": True, "template": restored, "restored_from_version": version_id}
 
 
@@ -1531,6 +1592,19 @@ def update_graph_template_version_metadata(
     if updated is None:
         raise HTTPException(status_code=404, detail=f"版本 {version_id} 不存在")
 
+    # 审计日志
+    from backend.services.graph_template_audit import append_event
+    changes = {}
+    if request.label is not None:
+        changes["label"] = request.label
+    if request.note is not None:
+        changes["note"] = request.note[:100]
+    append_event(
+        template_id, "metadata_update",
+        f"更新版本 {version_id} 元数据",
+        {"version_id": version_id, "changes": changes},
+    )
+
     return {"ok": True, "version": updated}
 
 
@@ -1554,7 +1628,104 @@ def execute_graph_template(template_id: str, request: BossGraphTemplateExecuteRe
         save_to_delivery=request.save_to_delivery,
     )
 
+    # 审计日志
+    from backend.services.graph_template_audit import append_event
+    append_event(
+        template_id, "execute",
+        f"执行模板「{template.get('name', '')}」",
+        {"goal": request.goal[:200], "node_count": len(nodes)},
+    )
+
     return boss_graph_execute(execute_request)
+
+
+# ── Phase 6.8: 审计日志 & 版本固定 API ─────────────────────
+
+
+@router.get(
+    "/graph/templates/{template_id}/audit",
+    summary="查询模板审计日志",
+)
+def list_graph_template_audit(
+    template_id: str,
+    event_type: Optional[str] = Query(default=None, description="按事件类型过滤"),
+    limit: int = Query(default=100, ge=1, le=500, description="最大返回条数"),
+):
+    """查询模板的审计日志"""
+    from backend.services.graph_template_store import get_template
+    from backend.services.graph_template_audit import list_events, _EVENT_TYPES
+
+    template = get_template(template_id)
+
+    if event_type and event_type not in _EVENT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"无效的事件类型: {event_type}，可选: {', '.join(sorted(_EVENT_TYPES))}",
+        )
+
+    events = list_events(template_id, event_type=event_type, limit=limit)
+
+    # 模板已删除但审计文件仍存在 → 返回 events + deleted 标记
+    if template is None:
+        if not events:
+            raise HTTPException(status_code=404, detail=f"模板 {template_id} 不存在且无审计记录")
+        return {"ok": True, "events": events, "total": len(events), "deleted": True}
+
+    return {"ok": True, "events": events, "total": len(events)}
+
+
+@router.post(
+    "/graph/templates/{template_id}/versions/{version_id}/pin",
+    summary="固定版本",
+)
+def pin_graph_template_version(template_id: str, version_id: str):
+    """固定版本，防止被自动裁剪"""
+    from backend.services.graph_template_store import get_template, pin_version
+
+    template = get_template(template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail=f"模板 {template_id} 不存在")
+
+    result = pin_version(template_id, version_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"版本 {version_id} 不存在")
+
+    # 审计日志
+    from backend.services.graph_template_audit import append_event
+    append_event(
+        template_id, "pin",
+        f"固定版本 {version_id}",
+        {"version_id": version_id},
+    )
+
+    return {"ok": True, "version": result}
+
+
+@router.post(
+    "/graph/templates/{template_id}/versions/{version_id}/unpin",
+    summary="取消固定版本",
+)
+def unpin_graph_template_version(template_id: str, version_id: str):
+    """取消固定版本"""
+    from backend.services.graph_template_store import get_template, unpin_version
+
+    template = get_template(template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail=f"模板 {template_id} 不存在")
+
+    result = unpin_version(template_id, version_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"版本 {version_id} 不存在")
+
+    # 审计日志
+    from backend.services.graph_template_audit import append_event
+    append_event(
+        template_id, "unpin",
+        f"取消固定版本 {version_id}",
+        {"version_id": version_id},
+    )
+
+    return {"ok": True, "version": result}
 
 
 def _build_custom_graph_from_nodes_edges(

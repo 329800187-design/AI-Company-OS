@@ -1197,6 +1197,7 @@ class ApiClient {
     name: string
     description?: string
     goal_hint?: string
+    source_template_id?: string
     nodes: Array<{
       id: string
       agent_id: string
@@ -1337,6 +1338,7 @@ class ApiClient {
         created_at: string
         label: string
         note: string
+        pinned: boolean
         name: string
         node_count: number
         edge_count: number
@@ -1451,6 +1453,49 @@ class ApiClient {
         }
       }
     }>(`/boss/graph/templates/${templateId}/versions/compare?${params.toString()}`)
+  }
+
+  // ── Phase 6.8: Audit Log & Version Pin APIs ──────────────
+
+  async listBossGraphTemplateAudit(
+    templateId: string,
+    options?: { eventType?: string; limit?: number },
+  ) {
+    const params = new URLSearchParams()
+    if (options?.eventType) params.set("event_type", options.eventType)
+    if (options?.limit) params.set("limit", String(options.limit))
+    const qs = params.toString()
+    return this.request<{
+      ok: boolean
+      events: Array<{
+        event_id: string
+        timestamp: string
+        template_id: string
+        event_type: string
+        summary: string
+        details: Record<string, unknown>
+      }>
+      total: number
+      deleted?: boolean
+    }>(`/boss/graph/templates/${templateId}/audit${qs ? `?${qs}` : ""}`)
+  }
+
+  async pinBossGraphTemplateVersion(templateId: string, versionId: string) {
+    return this.request<{
+      ok: boolean
+      version: Record<string, unknown>
+    }>(`/boss/graph/templates/${templateId}/versions/${versionId}/pin`, {
+      method: "POST",
+    })
+  }
+
+  async unpinBossGraphTemplateVersion(templateId: string, versionId: string) {
+    return this.request<{
+      ok: boolean
+      version: Record<string, unknown>
+    }>(`/boss/graph/templates/${templateId}/versions/${versionId}/unpin`, {
+      method: "POST",
+    })
   }
 }
 

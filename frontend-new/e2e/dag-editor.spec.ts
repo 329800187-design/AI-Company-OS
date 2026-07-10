@@ -1,17 +1,23 @@
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test"
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync, unlinkSync } from "node:fs"
+import { resolve } from "node:path"
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Navigate directly to boss page (skip landing via ?page=boss) */
 async function goToBoss(page: Page) {
   await page.goto("/app?page=boss")
-  await page.waitForTimeout(1500)
+  await page.waitForLoadState("networkidle")
+  // Wait for Graph Templates panel to be ready — use the DagEditor heading as anchor
+  // since it only appears after boss-lite mode renders
+  await expect(page.getByText("Graph Templates / 协作图模板")).toBeVisible({ timeout: 15000 })
 }
 
 /** Open the create template form */
 async function openCreateForm(page: Page) {
-  await page.locator("button", { hasText: "创建模板" }).click()
+  const btn = page.locator("button", { hasText: "创建模板" })
+  await expect(btn).toBeVisible({ timeout: 10000 })
+  await btn.click()
   await page.waitForTimeout(300)
 }
 
@@ -41,10 +47,25 @@ async function createTemplateFixture(request: APIRequestContext, name: string) {
   return body.template.template_id as string
 }
 
-async function deleteTemplateFixture(request: APIRequestContext, templateId: string | null) {
+function cleanupAuditArtifact(templateId: string | null) {
+  if (!templateId) return
+  const auditPath = resolve(process.cwd(), "..", "output", "graph_template_audit", `${templateId}.jsonl`)
+  if (existsSync(auditPath)) {
+    unlinkSync(auditPath)
+  }
+}
+
+async function deleteTemplateFixture(
+  request: APIRequestContext,
+  templateId: string | null,
+  options: { keepAudit?: boolean } = {},
+) {
   if (!templateId) return
   const response = await request.delete(`/boss/graph/templates/${templateId}`)
   expect(response.ok()).toBeTruthy()
+  if (!options.keepAudit) {
+    cleanupAuditArtifact(templateId)
+  }
 }
 
 /** Add a node via DagEditor "添加节点" button */
@@ -77,6 +98,11 @@ async function fillNodeField(page: Page, nodeIndex: number, field: string, value
   await input.fill(value)
 }
 
+/** Get the DagEditor container scope (avoids matching template card badges) */
+function dagEditor(page: Page) {
+  return page.getByRole("heading", { name: "DAG 编辑器", exact: true }).locator("..")
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe("DAG 编辑器 — 创建模板", () => {
@@ -100,8 +126,8 @@ test.describe("DAG 编辑器 — 创建模板", () => {
     await expect(page.locator("button", { hasText: "添加边" })).toBeVisible()
 
     // Default draft should have 2 nodes pre-populated
-    await expect(page.locator("text=2 节点")).toBeVisible()
-    await expect(page.locator("text=1 边")).toBeVisible()
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
   })
 
   test("创建 3 节点模板，wave 预览实时更新", async ({ page, request }) => {
@@ -170,12 +196,11 @@ test.describe("DAG 编辑器 — 编辑与克隆", () => {
   })
 
   test("编辑已有模板，数据正确回填", async ({ page }) => {
-    // Wait for templates to load
-    await page.waitForTimeout(2000)
+    // Wait for templates to load via network
+    await expect(page.locator("button", { hasText: "编辑" }).first()).toBeVisible({ timeout: 10000 })
 
     // Find a template card and click "编辑"
     const editBtn = page.locator("button", { hasText: "编辑" }).first()
-    await expect(editBtn).toBeVisible()
     await editBtn.click()
     await page.waitForTimeout(500)
 
@@ -193,10 +218,9 @@ test.describe("DAG 编辑器 — 编辑与克隆", () => {
   })
 
   test("克隆模板，名称带「副本」后缀", async ({ page }) => {
-    await page.waitForTimeout(2000)
+    await expect(page.locator("button", { hasText: "克隆" }).first()).toBeVisible({ timeout: 10000 })
 
     const cloneBtn = page.locator("button", { hasText: "克隆" }).first()
-    await expect(cloneBtn).toBeVisible()
     await cloneBtn.click()
     await page.waitForTimeout(500)
 
@@ -300,8 +324,8 @@ test.describe("DAG 编辑器 — 删除节点自动清理边", () => {
 
   test("删除节点后关联边自动移除", async ({ page }) => {
     // Default: 2 nodes (research, marketing), 1 edge (research -> marketing)
-    await expect(page.locator("text=2 节点")).toBeVisible()
-    await expect(page.locator("text=1 边")).toBeVisible()
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
 
     // Click delete → React ConfirmDialog appears
     const nodeSection = page.locator('h5', { hasText: '节点 / Nodes' }).locator('..').locator('[class*="space-y"]').locator('> div').first()
@@ -313,8 +337,8 @@ test.describe("DAG 编辑器 — 删除节点自动清理边", () => {
     await page.waitForTimeout(300)
 
     // Should now have 1 node and 0 edges (edge referenced "research")
-    await expect(page.locator("text=1 节点")).toBeVisible()
-    await expect(page.locator("text=0 边")).toBeVisible()
+    await expect(dagEditor(page).getByText("1 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("0 边", { exact: true })).toBeVisible()
   })
 })
 
@@ -380,29 +404,29 @@ test.describe("DAG 编辑器 — 撤销/重做与编辑安全", () => {
   })
 
   test("撤销：添加节点后撤销，回到 2 节点", async ({ page }) => {
-    await expect(page.locator("text=2 节点")).toBeVisible()
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
 
     await addNode(page)
-    await expect(page.locator("text=3 节点")).toBeVisible()
+    await expect(dagEditor(page).getByText("3 节点", { exact: true })).toBeVisible()
 
     // Click undo button
     await page.locator('[data-testid="undo-btn"]').click()
     await page.waitForTimeout(200)
 
-    await expect(page.locator("text=2 节点")).toBeVisible()
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
   })
 
   test("重做：添加 → 撤销 → 重做，回到 3 节点", async ({ page }) => {
     await addNode(page)
-    await expect(page.locator("text=3 节点")).toBeVisible()
+    await expect(dagEditor(page).getByText("3 节点", { exact: true })).toBeVisible()
 
     await page.locator('[data-testid="undo-btn"]').click()
     await page.waitForTimeout(200)
-    await expect(page.locator("text=2 节点")).toBeVisible()
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
 
     await page.locator('[data-testid="redo-btn"]').click()
     await page.waitForTimeout(200)
-    await expect(page.locator("text=3 节点")).toBeVisible()
+    await expect(dagEditor(page).getByText("3 节点", { exact: true })).toBeVisible()
   })
 
   test("重命名节点 ID 自动同步关联边", async ({ page }) => {
@@ -457,8 +481,8 @@ test.describe("DAG 编辑器 — 撤销/重做与编辑安全", () => {
 
   test("删除节点 — 确认后节点和关联边被移除", async ({ page }) => {
     // Default: 2 nodes, 1 edge
-    await expect(page.locator("text=2 节点")).toBeVisible()
-    await expect(page.locator("text=1 边")).toBeVisible()
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
 
     // Click delete button → dialog appears
     const nodeSection = page.locator('h5', { hasText: '节点 / Nodes' }).locator('..').locator('[class*="space-y"]').locator('> div').first()
@@ -472,13 +496,13 @@ test.describe("DAG 编辑器 — 撤销/重做与编辑安全", () => {
     await page.locator('[data-testid="confirm-dialog-confirm"]').click()
     await page.waitForTimeout(300)
 
-    await expect(page.locator("text=1 节点")).toBeVisible()
-    await expect(page.locator("text=0 边")).toBeVisible()
+    await expect(dagEditor(page).getByText("1 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("0 边", { exact: true })).toBeVisible()
   })
 
   test("删除节点 — 取消后数据不变", async ({ page }) => {
-    await expect(page.locator("text=2 节点")).toBeVisible()
-    await expect(page.locator("text=1 边")).toBeVisible()
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
 
     // Click delete button → dialog appears
     const nodeSection = page.locator('h5', { hasText: '节点 / Nodes' }).locator('..').locator('[class*="space-y"]').locator('> div').first()
@@ -490,12 +514,12 @@ test.describe("DAG 编辑器 — 撤销/重做与编辑安全", () => {
     await page.waitForTimeout(300)
 
     // Data should be unchanged
-    await expect(page.locator("text=2 节点")).toBeVisible()
-    await expect(page.locator("text=1 边")).toBeVisible()
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
   })
 
   test("删除对话框 — Esc 关闭，数据不变", async ({ page }) => {
-    await expect(page.locator("text=2 节点")).toBeVisible()
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
 
     // Click delete button
     const nodeSection = page.locator('h5', { hasText: '节点 / Nodes' }).locator('..').locator('[class*="space-y"]').locator('> div').first()
@@ -515,8 +539,8 @@ test.describe("DAG 编辑器 — 撤销/重做与编辑安全", () => {
 
     // Dialog should be gone, data unchanged
     await expect(page.locator('[data-testid="confirm-dialog"]')).not.toBeVisible()
-    await expect(page.locator("text=2 节点")).toBeVisible()
-    await expect(page.locator("text=1 边")).toBeVisible()
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
     await expect(deleteButton).toBeFocused()
   })
 
@@ -538,8 +562,8 @@ test.describe("DAG 编辑器 — 撤销/重做与编辑安全", () => {
   })
 
   test("删除后可撤销恢复", async ({ page }) => {
-    await expect(page.locator("text=2 节点")).toBeVisible()
-    await expect(page.locator("text=1 边")).toBeVisible()
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
 
     // Delete first node (confirm dialog)
     const nodeSection = page.locator('h5', { hasText: '节点 / Nodes' }).locator('..').locator('[class*="space-y"]').locator('> div').first()
@@ -549,20 +573,20 @@ test.describe("DAG 编辑器 — 撤销/重做与编辑安全", () => {
     await page.waitForTimeout(300)
 
     // Verify deletion
-    await expect(page.locator("text=1 节点")).toBeVisible()
-    await expect(page.locator("text=0 边")).toBeVisible()
+    await expect(dagEditor(page).getByText("1 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("0 边", { exact: true })).toBeVisible()
 
     // Undo → restore
     await page.locator('[data-testid="undo-btn"]').click()
     await page.waitForTimeout(300)
 
     // Should be back to original state
-    await expect(page.locator("text=2 节点")).toBeVisible()
-    await expect(page.locator("text=1 边")).toBeVisible()
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
   })
 
   test("连续文本输入合并为单次撤销", async ({ page }) => {
-    await expect(page.locator("text=2 节点")).toBeVisible()
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
 
     // Expand first node — the title field has default value "市场调研"
     await expandNode(page, 0)
@@ -713,8 +737,8 @@ test.describe("Phase 6.5 — JSON 导入", () => {
     await expect(nameInput).toHaveValue("导入测试模板")
 
     // DagEditor should show 2 nodes, 1 edge
-    await expect(page.locator("text=2 节点")).toBeVisible()
-    await expect(page.locator("text=1 边")).toBeVisible()
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
 
     // Should be in "create" mode (no "更新模板" button)
     await expect(page.locator("button", { hasText: "保存模板" })).toBeVisible()
@@ -883,7 +907,7 @@ test.describe("Phase 6.5 — 草稿自动保存与恢复", () => {
     await expect(page.getByRole("heading", { name: "创建 Graph Template" })).toBeVisible()
     const nameInput = page.locator('input[placeholder="模板名称"]')
     await expect(nameInput).toHaveValue("恢复确认测试")
-    await expect(page.locator("text=2 节点")).toBeVisible()
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
   })
 
   test("放弃草稿后 localStorage 被清理", async ({ page }) => {
@@ -971,7 +995,7 @@ test.describe("Phase 6.5 — 草稿自动保存与恢复", () => {
     const listBody = await listResponse.json()
     const created = listBody.templates.find((t: { name: string }) => t.name === templateName)
     if (created) {
-      await request.delete(`/boss/graph/templates/${created.template_id}`)
+      await deleteTemplateFixture(request, created.template_id)
     }
   })
 
@@ -1021,7 +1045,7 @@ test.describe("Phase 6.5 — 导入后 Undo/Redo 正确 reset", () => {
     await page.waitForTimeout(500)
 
     // Should show imported data
-    await expect(page.locator("text=2 节点")).toBeVisible()
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
 
     // Undo button should be disabled (history was reset on import)
     const undoBtn = page.locator('[data-testid="undo-btn"]')
@@ -1307,5 +1331,190 @@ test.describe("Phase 6.7 — Version Metadata & Compare", () => {
 
     await expect(page.getByText("版本操作失败", { exact: true })).toBeVisible()
     await expect(page.getByText("关闭提示", { exact: true })).toBeVisible()
+  })
+})
+
+// ── Phase 6.8: Audit Log & Pin/Unpin ─────────────────────────────────────
+
+test.describe("Phase 6.8 — 审计日志", () => {
+  let createdTemplateId: string | null = null
+
+  test.afterEach(async ({ request }) => {
+    await deleteTemplateFixture(request, createdTemplateId)
+    createdTemplateId = null
+  })
+
+  test("创建模板后审计面板显示 create 事件", async ({ page, request }) => {
+    // Create template via API
+    createdTemplateId = await createTemplateFixture(request, "审计-create-测试")
+    await goToBoss(page)
+
+    // Click the audit button on the template card
+    const auditBtn = page.locator('[data-testid="audit-log-btn"]').first()
+    await expect(auditBtn).toBeVisible({ timeout: 10000 })
+    await auditBtn.click()
+    await page.waitForTimeout(500)
+
+    // Audit panel should show a create event
+    await expect(page.locator('[data-testid="audit-event-create"]').first()).toBeVisible({ timeout: 5000 })
+    await expect(page.locator("text=创建模板").first()).toBeVisible()
+  })
+
+  test("克隆模板后审计面板显示 clone 事件", async ({ page, request }) => {
+    // Create source template
+    const sourceId = await createTemplateFixture(request, "审计-clone-源模板")
+    await goToBoss(page)
+
+    // Clone via UI
+    await expect(page.locator("button", { hasText: "克隆" }).first()).toBeVisible({ timeout: 10000 })
+    await page.locator("button", { hasText: "克隆" }).first().click()
+    await page.waitForTimeout(500)
+
+    // Save the clone
+    await fillTemplateName(page, "审计-clone-克隆体")
+    await page.locator("button", { hasText: "保存模板" }).click()
+    await page.waitForTimeout(1500)
+
+    // Find the cloned template and get its ID
+    const listResponse = await request.get("/boss/graph/templates")
+    const listBody = await listResponse.json()
+    const cloned = listBody.templates.find((t: { name: string }) => t.name === "审计-clone-克隆体")
+    expect(cloned).toBeTruthy()
+    createdTemplateId = cloned.template_id
+
+    // Open audit on the cloned template
+    // Navigate to the cloned template's audit via API (UI might have scrolled)
+    const auditResponse = await request.get(`/boss/graph/templates/${createdTemplateId}/audit`)
+    expect(auditResponse.ok()).toBeTruthy()
+    const auditBody = await auditResponse.json()
+    const cloneEvents = auditBody.events.filter((e: { event_type: string }) => e.event_type === "clone")
+    expect(cloneEvents.length).toBeGreaterThanOrEqual(1)
+    expect(cloneEvents[0].details.source_template_id).toBe(sourceId)
+
+    // Cleanup source
+    await deleteTemplateFixture(request, sourceId)
+  })
+
+  test("审计面板事件筛选功能", async ({ page, request }) => {
+    createdTemplateId = await createTemplateFixture(request, "审计-filter-测试")
+    // Update to generate another event type
+    await updateTemplateFixture(request, createdTemplateId, {
+      name: "审计-filter-测试-更新",
+      nodes: [
+        { id: "research", agent_id: "research", title: "调研", prompt: "做调研" },
+        { id: "marketing", agent_id: "marketing", title: "营销", prompt: "做营销" },
+      ],
+    })
+    await goToBoss(page)
+
+    // Open audit panel
+    await page.locator('[data-testid="audit-log-btn"]').first().click()
+    await page.waitForTimeout(500)
+
+    // Should show both create and update events
+    await expect(page.locator('[data-testid="audit-event-create"]').first()).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('[data-testid="audit-event-update"]').first()).toBeVisible()
+
+    // Filter to only "update"
+    await page.locator('[data-testid="audit-filter"]').selectOption("update")
+    await page.waitForTimeout(500)
+
+    // Should only show update events
+    await expect(page.locator('[data-testid="audit-event-update"]').first()).toBeVisible()
+    await expect(page.locator('[data-testid="audit-event-create"]')).toHaveCount(0)
+  })
+
+  test("审计 API 返回 deleted=true（模板删除后）", async ({ request }) => {
+    // Create and then delete template
+    const templateId = await createTemplateFixture(request, "审计-delete-测试")
+    await deleteTemplateFixture(request, templateId, { keepAudit: true })
+
+    // Audit API should still return events with deleted=true
+    const auditResponse = await request.get(`/boss/graph/templates/${templateId}/audit`)
+    expect(auditResponse.ok()).toBeTruthy()
+    const auditBody = await auditResponse.json()
+    expect(auditBody.deleted).toBe(true)
+    expect(auditBody.events.length).toBeGreaterThanOrEqual(1)
+    // Should have create and delete events
+    const eventTypes = auditBody.events.map((e: { event_type: string }) => e.event_type)
+    expect(eventTypes).toContain("create")
+    expect(eventTypes).toContain("delete")
+    cleanupAuditArtifact(templateId)
+  })
+})
+
+test.describe("Phase 6.8 — 版本 Pin/Unpin", () => {
+  let createdTemplateId: string | null = null
+
+  test.afterEach(async ({ request }) => {
+    await deleteTemplateFixture(request, createdTemplateId)
+    createdTemplateId = null
+  })
+
+  test("版本固定后显示「固定」徽章，取消后消失", async ({ page, request }) => {
+    createdTemplateId = await createTemplateFixture(request, "Pin-测试")
+
+    // Update to create a version
+    await updateTemplateFixture(request, createdTemplateId, {
+      name: "Pin-测试-V2",
+      nodes: [
+        { id: "research", agent_id: "research", title: "调研", prompt: "做调研" },
+        { id: "marketing", agent_id: "marketing", title: "营销", prompt: "做营销" },
+      ],
+    })
+
+    await goToBoss(page)
+
+    // Open version panel
+    await page.locator("button", { hasText: "版本" }).first().click()
+    await page.waitForTimeout(500)
+
+    // Pin the first version
+    const pinBtn = page.locator('[data-testid^="version-pin-"]').first()
+    await expect(pinBtn).toBeVisible({ timeout: 5000 })
+    await pinBtn.click()
+    await page.waitForTimeout(500)
+
+    // Should show pinned badge
+    const pinnedBadge = page.locator('[data-testid^="version-pinned-"]').first()
+    await expect(pinnedBadge).toBeVisible({ timeout: 5000 })
+    await expect(pinnedBadge).toContainText("固定")
+
+    // Unpin
+    const unpinBtn = page.locator('[data-testid^="version-pin-"]').first()
+    await unpinBtn.click()
+    await page.waitForTimeout(500)
+
+    // Pinned badge should be gone
+    await expect(page.locator('[data-testid^="version-pinned-"]').first()).not.toBeVisible()
+  })
+
+  test("Pin 操作生成审计事件", async ({ request }) => {
+    createdTemplateId = await createTemplateFixture(request, "Pin-audit-测试")
+
+    // Update to create a version
+    await updateTemplateFixture(request, createdTemplateId, {
+      name: "Pin-audit-测试-V2",
+      nodes: [
+        { id: "research", agent_id: "research", title: "调研", prompt: "做调研" },
+        { id: "marketing", agent_id: "marketing", title: "营销", prompt: "做营销" },
+      ],
+    })
+
+    // Get version list
+    const versionsResponse = await request.get(`/boss/graph/templates/${createdTemplateId}/versions`)
+    const versionsBody = await versionsResponse.json()
+    const versionId = versionsBody.versions[0].version_id
+
+    // Pin via API
+    const pinResponse = await request.post(`/boss/graph/templates/${createdTemplateId}/versions/${versionId}/pin`)
+    expect(pinResponse.ok()).toBeTruthy()
+
+    // Check audit log for pin event
+    const auditResponse = await request.get(`/boss/graph/templates/${createdTemplateId}/audit`)
+    const auditBody = await auditResponse.json()
+    const pinEvents = auditBody.events.filter((e: { event_type: string }) => e.event_type === "pin")
+    expect(pinEvents.length).toBeGreaterThanOrEqual(1)
+    expect(pinEvents[0].details.version_id).toBe(versionId)
   })
 })

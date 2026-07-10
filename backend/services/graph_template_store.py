@@ -90,8 +90,18 @@ def _version_created_at(file_path: Path) -> str:
         return ""
 
 
+def _is_version_pinned(file_path: Path) -> bool:
+    """检查版本是否被固定"""
+    try:
+        data = json.loads(file_path.read_text(encoding="utf-8"))
+        return bool(data.get("pinned", False))
+    except (json.JSONDecodeError, OSError):
+        return False
+
+
 def _trim_old_versions(template_id: str) -> None:
-    """保留最近 _MAX_VERSIONS_PER_TEMPLATE 个版本，删除最旧的"""
+    """保留最近 _MAX_VERSIONS_PER_TEMPLATE 个非固定版本，删除最旧的非固定版本。
+    固定版本不计入限额，不会被自动裁剪。"""
     versions_dir = _get_versions_dir(template_id, create=False)
     if not versions_dir.exists():
         return
@@ -99,9 +109,11 @@ def _trim_old_versions(template_id: str) -> None:
         versions_dir.glob("ver_*.json"),
         key=lambda file_path: (_version_created_at(file_path), file_path.name),
     )
-    excess = len(version_files) - _MAX_VERSIONS_PER_TEMPLATE
+    # 分离固定和非固定版本
+    unpinned = [f for f in version_files if not _is_version_pinned(f)]
+    excess = len(unpinned) - _MAX_VERSIONS_PER_TEMPLATE
     if excess > 0:
-        for f in version_files[:excess]:
+        for f in unpinned[:excess]:
             try:
                 f.unlink()
                 logger.info("Trimmed old version: %s", f.name)
@@ -133,6 +145,7 @@ def save_version_snapshot(
         "created_at": now,
         "label": "",
         "note": "",
+        "pinned": False,
         "name": template_data.get("name", ""),
         "description": template_data.get("description", ""),
         "goal_hint": template_data.get("goal_hint", ""),
@@ -176,6 +189,7 @@ def list_versions(template_id: str) -> List[Dict[str, Any]]:
                 "created_at": data.get("created_at", ""),
                 "label": data.get("label", ""),
                 "note": data.get("note", ""),
+                "pinned": data.get("pinned", False),
                 "name": data.get("name", ""),
                 "node_count": len(data.get("nodes", [])),
                 "edge_count": len(data.get("edges", [])),
@@ -272,6 +286,66 @@ def update_version_metadata(
         encoding="utf-8",
     )
     logger.info("Updated version metadata: %s", version_id)
+    return data
+
+
+def pin_version(
+    template_id: str,
+    version_id: str,
+) -> Optional[Dict[str, Any]]:
+    """固定版本，防止被自动裁剪。
+
+    Returns:
+        更新后的版本 dict，不存在返回 None
+    """
+    file_path = _version_path(template_id, version_id)
+    if file_path is None or not file_path.exists():
+        return None
+
+    try:
+        data = json.loads(file_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    if data.get("template_id") != template_id:
+        return None
+
+    data["pinned"] = True
+    file_path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    logger.info("Pinned version: %s", version_id)
+    return data
+
+
+def unpin_version(
+    template_id: str,
+    version_id: str,
+) -> Optional[Dict[str, Any]]:
+    """取消固定版本。
+
+    Returns:
+        更新后的版本 dict，不存在返回 None
+    """
+    file_path = _version_path(template_id, version_id)
+    if file_path is None or not file_path.exists():
+        return None
+
+    try:
+        data = json.loads(file_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    if data.get("template_id") != template_id:
+        return None
+
+    data["pinned"] = False
+    file_path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    logger.info("Unpinned version: %s", version_id)
     return data
 
 
@@ -591,6 +665,7 @@ def delete_template(template_id: str) -> bool:
         file_path.unlink()
         # Phase 6.6: 删除模板时同步清理版本目录
         delete_versions_for_template(template_id)
+        # Phase 6.8: 审计日志保留（不删除），用于事后追溯
         logger.info("Deleted graph template: %s", template_id)
         return True
     except OSError as e:

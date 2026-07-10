@@ -50,6 +50,13 @@ class TestTemplateStore:
             "backend.services.graph_template_store.DEFAULT_VERSIONS_DIR",
             self.versions_dir,
         )
+        # Phase 6.8: 审计日志目录也需要隔离，避免 API 测试污染 output/
+        self.audit_dir = tmp_path / "graph_template_audit"
+        self.audit_dir.mkdir()
+        monkeypatch.setattr(
+            "backend.services.graph_template_audit.DEFAULT_AUDIT_DIR",
+            self.audit_dir,
+        )
 
     def _sample_nodes(self):
         return [
@@ -811,6 +818,125 @@ def _sample_api_edges():
     return [{"from_node": "research", "to_node": "marketing", "handoff_type": "context"}]
 
 
+class TestGraphTemplateAudit:
+    """Graph Template Audit Log 单元测试"""
+
+    @pytest.fixture(autouse=True)
+    def setup_tmp_dir(self, tmp_path, monkeypatch):
+        self.audit_dir = tmp_path / "audit"
+        self.audit_dir.mkdir()
+        monkeypatch.setattr(
+            "backend.services.graph_template_audit.DEFAULT_AUDIT_DIR",
+            self.audit_dir,
+        )
+
+    def test_append_and_list_events(self):
+        """追加事件并读取"""
+        from backend.services.graph_template_audit import append_event, list_events
+
+        append_event("tpl_test12345678", "create", "创建模板", {"name": "测试"})
+        append_event("tpl_test12345678", "update", "更新模板", {"name": "测试v2"})
+
+        events = list_events("tpl_test12345678")
+        assert len(events) == 2
+        assert events[0]["event_type"] == "create"
+        assert events[1]["event_type"] == "update"
+
+    def test_filter_by_event_type(self):
+        """按事件类型过滤"""
+        from backend.services.graph_template_audit import append_event, list_events
+
+        append_event("tpl_test12345678", "create", "创建", {})
+        append_event("tpl_test12345678", "update", "更新", {})
+        append_event("tpl_test12345678", "create", "创建2", {})
+
+        create_events = list_events("tpl_test12345678", event_type="create")
+        assert len(create_events) == 2
+        assert all(e["event_type"] == "create" for e in create_events)
+
+    def test_event_id_format(self):
+        """事件 ID 符合 aevt_ 格式"""
+        from backend.services.graph_template_audit import append_event, list_events
+
+        append_event("tpl_test12345678", "create", "测试", {})
+        events = list_events("tpl_test12345678")
+        assert events[0]["event_id"].startswith("aevt_")
+
+    def test_sensitive_data_stripped(self):
+        """敏感字段被脱敏"""
+        from backend.services.graph_template_audit import append_event, list_events
+
+        append_event("tpl_test12345678", "create", "测试", {
+            "api_key": "sk-secret",
+            "token": "bearer-xxx",
+            "name": "正常数据",
+        })
+        events = list_events("tpl_test12345678")
+        details = events[0]["details"]
+        assert "api_key" not in details
+        assert "token" not in details
+        assert details["name"] == "正常数据"
+
+    def test_long_text_truncated(self):
+        """长文本被截断"""
+        from backend.services.graph_template_audit import append_event, list_events
+
+        long_text = "x" * 500
+        append_event("tpl_test12345678", "execute", "执行", {"goal": long_text})
+        events = list_events("tpl_test12345678")
+        assert len(events[0]["details"]["goal"]) < 300
+        assert events[0]["details"]["goal"].endswith("...")
+
+    def test_list_events_empty(self):
+        """无事件返回空列表"""
+        from backend.services.graph_template_audit import list_events
+
+        events = list_events("tpl_nonexistent123")
+        assert events == []
+
+    def test_list_events_limit(self):
+        """限制返回条数"""
+        from backend.services.graph_template_audit import append_event, list_events
+
+        for i in range(10):
+            append_event("tpl_test12345678", "execute", f"执行{i}", {})
+
+        events = list_events("tpl_test12345678", limit=3)
+        assert len(events) == 3
+
+    def test_invalid_event_type_raises(self):
+        """无效事件类型抛 ValueError"""
+        from backend.services.graph_template_audit import append_event
+
+        with pytest.raises(ValueError, match="无效的事件类型"):
+            append_event("tpl_test12345678", "bad_type", "测试", {})
+
+    def test_delete_audit_for_template(self):
+        """删除模板审计日志"""
+        from backend.services.graph_template_audit import append_event, list_events, delete_audit_for_template
+
+        append_event("tpl_test12345678", "create", "测试", {})
+        assert len(list_events("tpl_test12345678")) == 1
+
+        delete_audit_for_template("tpl_test12345678")
+        assert len(list_events("tpl_test12345678")) == 0
+
+    def test_atomic_write(self):
+        """写入后文件完整（单行 JSONL）"""
+        from backend.services.graph_template_audit import append_event
+        import json as json_mod
+
+        append_event("tpl_test12345678", "create", "测试", {})
+        path = self.audit_dir / "tpl_test12345678.jsonl"
+        assert path.exists()
+
+        lines = path.read_text(encoding="utf-8").strip().split("\n")
+        assert len(lines) == 1
+        # 每行都是合法 JSON
+        data = json_mod.loads(lines[0])
+        assert data["event_type"] == "create"
+
+
 class TestGraphTemplateAPI:
     """Graph Template API 集成测试"""
 
@@ -829,6 +955,13 @@ class TestGraphTemplateAPI:
         monkeypatch.setattr(
             "backend.services.graph_template_store.DEFAULT_VERSIONS_DIR",
             self.versions_dir,
+        )
+        # Phase 6.8: API 调用会写审计日志，也必须隔离到临时目录
+        self.audit_dir = tmp_path / "graph_template_audit"
+        self.audit_dir.mkdir()
+        monkeypatch.setattr(
+            "backend.services.graph_template_audit.DEFAULT_AUDIT_DIR",
+            self.audit_dir,
         )
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
@@ -1746,3 +1879,439 @@ class TestGraphTemplateAPI:
         # 用模板A的版本去对比模板B（from 属于 A，但 API 路由是 B）
         response = client.get(f"/boss/graph/templates/{tid_b}/versions/compare?from={vid_a}&to=current")
         assert response.status_code == 404
+
+    # ── Phase 6.8: Audit Log & Pin API 测试 ─────────────────
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_audit_log_created_on_create(self, mock_guard, mock_rate):
+        """创建模板时自动写入审计日志"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        resp = client.post("/boss/graph/templates", json={
+            "name": "审计创建测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = resp.json()["template"]["template_id"]
+
+        audit_resp = client.get(f"/boss/graph/templates/{tid}/audit")
+        assert audit_resp.status_code == 200
+        events = audit_resp.json()["events"]
+        assert len(events) >= 1
+        assert events[0]["event_type"] == "create"
+        assert "审计创建测试" in events[0]["summary"]
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_audit_log_created_on_update(self, mock_guard, mock_rate):
+        """更新模板时写入审计日志"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        resp = client.post("/boss/graph/templates", json={
+            "name": "审计更新测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = resp.json()["template"]["template_id"]
+
+        client.put(f"/boss/graph/templates/{tid}", json={
+            "name": "审计更新后",
+            "nodes": _sample_api_nodes(),
+        })
+
+        audit_resp = client.get(f"/boss/graph/templates/{tid}/audit")
+        events = audit_resp.json()["events"]
+        assert len(events) >= 2
+        event_types = [e["event_type"] for e in events]
+        assert "create" in event_types
+        assert "update" in event_types
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_audit_log_filter_by_type(self, mock_guard, mock_rate):
+        """按事件类型过滤审计日志"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        resp = client.post("/boss/graph/templates", json={
+            "name": "过滤测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = resp.json()["template"]["template_id"]
+
+        client.put(f"/boss/graph/templates/{tid}", json={
+            "name": "过滤测试更新",
+            "nodes": _sample_api_nodes(),
+        })
+
+        # 只看 create
+        audit_resp = client.get(f"/boss/graph/templates/{tid}/audit?event_type=create")
+        events = audit_resp.json()["events"]
+        assert all(e["event_type"] == "create" for e in events)
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_audit_log_invalid_type_400(self, mock_guard, mock_rate):
+        """无效事件类型返回 400"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        resp = client.post("/boss/graph/templates", json={
+            "name": "无效类型测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = resp.json()["template"]["template_id"]
+
+        audit_resp = client.get(f"/boss/graph/templates/{tid}/audit?event_type=invalid")
+        assert audit_resp.status_code == 400
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_audit_log_nonexistent_template_404(self, mock_guard, mock_rate):
+        """不存在模板的审计日志返回 404"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        audit_resp = client.get("/boss/graph/templates/tpl_nonexistent/audit")
+        assert audit_resp.status_code == 404
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_audit_log_no_secrets(self, mock_guard, mock_rate):
+        """审计日志不包含敏感信息"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        resp = client.post("/boss/graph/templates", json={
+            "name": "安全测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = resp.json()["template"]["template_id"]
+
+        audit_resp = client.get(f"/boss/graph/templates/{tid}/audit")
+        import json as json_mod
+        full_text = json_mod.dumps(audit_resp.json())
+        assert "api_key" not in full_text.lower()
+        assert "token" not in full_text.lower()
+        assert "secret" not in full_text.lower()
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_clone_creates_clone_audit(self, mock_guard, mock_rate):
+        """克隆模板写 clone 审计，不只是 create"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        # 创建源模板
+        resp = client.post("/boss/graph/templates", json={
+            "name": "源模板",
+            "nodes": _sample_api_nodes(),
+        })
+        source_tid = resp.json()["template"]["template_id"]
+
+        # 克隆
+        clone_resp = client.post("/boss/graph/templates", json={
+            "name": "源模板 副本",
+            "nodes": _sample_api_nodes(),
+            "source_template_id": source_tid,
+        })
+        clone_tid = clone_resp.json()["template"]["template_id"]
+
+        # 克隆模板的审计日志应包含 clone 事件
+        audit_resp = client.get(f"/boss/graph/templates/{clone_tid}/audit")
+        events = audit_resp.json()["events"]
+        event_types = [e["event_type"] for e in events]
+        assert "clone" in event_types
+        assert "create" not in event_types  # 不应出现 create
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_clone_audit_has_source_template_id(self, mock_guard, mock_rate):
+        """clone 审计 details 包含 source_template_id"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        resp = client.post("/boss/graph/templates", json={
+            "name": "源模板",
+            "nodes": _sample_api_nodes(),
+        })
+        source_tid = resp.json()["template"]["template_id"]
+
+        clone_resp = client.post("/boss/graph/templates", json={
+            "name": "克隆体",
+            "nodes": _sample_api_nodes(),
+            "source_template_id": source_tid,
+        })
+        clone_tid = clone_resp.json()["template"]["template_id"]
+
+        audit_resp = client.get(f"/boss/graph/templates/{clone_tid}/audit?event_type=clone")
+        events = audit_resp.json()["events"]
+        assert len(events) == 1
+        details = events[0]["details"]
+        assert details["source_template_id"] == source_tid
+        assert details["source_name"] == "源模板"
+        assert details["new_template_id"] == clone_tid
+        assert details["node_count"] == 2
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_create_without_source_still_creates_create_audit(self, mock_guard, mock_rate):
+        """普通创建（无 source_template_id）仍写 create 审计"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        resp = client.post("/boss/graph/templates", json={
+            "name": "普通创建",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = resp.json()["template"]["template_id"]
+
+        audit_resp = client.get(f"/boss/graph/templates/{tid}/audit")
+        events = audit_resp.json()["events"]
+        assert len(events) == 1
+        assert events[0]["event_type"] == "create"
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_pin_version_success(self, mock_guard, mock_rate):
+        """固定版本成功"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        resp = client.post("/boss/graph/templates", json={
+            "name": "固定测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = resp.json()["template"]["template_id"]
+        client.put(f"/boss/graph/templates/{tid}", json={"name": "更新", "nodes": _sample_api_nodes()})
+        vid = client.get(f"/boss/graph/templates/{tid}/versions").json()["versions"][0]["version_id"]
+
+        pin_resp = client.post(f"/boss/graph/templates/{tid}/versions/{vid}/pin")
+        assert pin_resp.status_code == 200
+        assert pin_resp.json()["version"]["pinned"] is True
+
+        # 列表也应显示 pinned
+        versions = client.get(f"/boss/graph/templates/{tid}/versions").json()["versions"]
+        pinned_ver = next(v for v in versions if v["version_id"] == vid)
+        assert pinned_ver["pinned"] is True
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_unpin_version_success(self, mock_guard, mock_rate):
+        """取消固定版本成功"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        resp = client.post("/boss/graph/templates", json={
+            "name": "取消固定测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = resp.json()["template"]["template_id"]
+        client.put(f"/boss/graph/templates/{tid}", json={"name": "更新", "nodes": _sample_api_nodes()})
+        vid = client.get(f"/boss/graph/templates/{tid}/versions").json()["versions"][0]["version_id"]
+
+        # 先固定
+        client.post(f"/boss/graph/templates/{tid}/versions/{vid}/pin")
+        # 取消固定
+        unpin_resp = client.post(f"/boss/graph/templates/{tid}/versions/{vid}/unpin")
+        assert unpin_resp.status_code == 200
+        assert unpin_resp.json()["version"]["pinned"] is False
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_pin_nonexistent_version_404(self, mock_guard, mock_rate):
+        """固定不存在的版本返回 404"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        resp = client.post("/boss/graph/templates", json={
+            "name": "测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = resp.json()["template"]["template_id"]
+
+        pin_resp = client.post(f"/boss/graph/templates/{tid}/versions/ver_nonexistent/pin")
+        assert pin_resp.status_code == 404
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_pin_version_survives_trim(self, mock_guard, mock_rate):
+        """固定版本不被自动裁剪"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        resp = client.post("/boss/graph/templates", json={
+            "name": "裁剪测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = resp.json()["template"]["template_id"]
+
+        # 创建第一个版本
+        client.put(f"/boss/graph/templates/{tid}", json={"name": "v1", "nodes": _sample_api_nodes()})
+        versions1 = client.get(f"/boss/graph/templates/{tid}/versions").json()["versions"]
+        vid_first = versions1[0]["version_id"]
+
+        # 固定第一个版本
+        client.post(f"/boss/graph/templates/{tid}/versions/{vid_first}/pin")
+
+        # 创建 25 个版本（超过 20 限额）
+        for i in range(25):
+            client.put(f"/boss/graph/templates/{tid}", json={"name": f"v{i+2}", "nodes": _sample_api_nodes()})
+
+        # 固定版本应该还在
+        versions_final = client.get(f"/boss/graph/templates/{tid}/versions").json()["versions"]
+        pinned_ids = [v["version_id"] for v in versions_final if v.get("pinned")]
+        assert vid_first in pinned_ids
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_audit_log_created_on_restore(self, mock_guard, mock_rate):
+        """回滚版本时写入审计日志"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        resp = client.post("/boss/graph/templates", json={
+            "name": "回滚审计测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = resp.json()["template"]["template_id"]
+        client.put(f"/boss/graph/templates/{tid}", json={"name": "更新", "nodes": _sample_api_nodes()})
+        vid = client.get(f"/boss/graph/templates/{tid}/versions").json()["versions"][0]["version_id"]
+
+        client.post(f"/boss/graph/templates/{tid}/versions/{vid}/restore")
+
+        audit_resp = client.get(f"/boss/graph/templates/{tid}/audit?event_type=restore")
+        events = audit_resp.json()["events"]
+        assert len(events) >= 1
+        assert vid in events[0]["summary"]
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_audit_log_created_on_metadata_update(self, mock_guard, mock_rate):
+        """更新版本元数据时写入审计日志"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        resp = client.post("/boss/graph/templates", json={
+            "name": "元数据审计测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = resp.json()["template"]["template_id"]
+        client.put(f"/boss/graph/templates/{tid}", json={"name": "更新", "nodes": _sample_api_nodes()})
+        vid = client.get(f"/boss/graph/templates/{tid}/versions").json()["versions"][0]["version_id"]
+
+        client.patch(f"/boss/graph/templates/{tid}/versions/{vid}", json={"label": "测试标签"})
+
+        audit_resp = client.get(f"/boss/graph/templates/{tid}/audit?event_type=metadata_update")
+        events = audit_resp.json()["events"]
+        assert len(events) >= 1
+        assert events[0]["details"]["version_id"] == vid
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_audit_log_created_on_pin(self, mock_guard, mock_rate):
+        """固定版本时写入审计日志"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        resp = client.post("/boss/graph/templates", json={
+            "name": "固定审计测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = resp.json()["template"]["template_id"]
+        client.put(f"/boss/graph/templates/{tid}", json={"name": "更新", "nodes": _sample_api_nodes()})
+        vid = client.get(f"/boss/graph/templates/{tid}/versions").json()["versions"][0]["version_id"]
+
+        client.post(f"/boss/graph/templates/{tid}/versions/{vid}/pin")
+
+        audit_resp = client.get(f"/boss/graph/templates/{tid}/audit?event_type=pin")
+        events = audit_resp.json()["events"]
+        assert len(events) >= 1
+        assert vid in events[0]["summary"]
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_delete_template_audit_retained(self, mock_guard, mock_rate):
+        """删除模板后审计日志仍可查询"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        resp = client.post("/boss/graph/templates", json={
+            "name": "保留审计测试",
+            "nodes": _sample_api_nodes(),
+        })
+        tid = resp.json()["template"]["template_id"]
+
+        # 审计日志存在
+        audit_resp = client.get(f"/boss/graph/templates/{tid}/audit")
+        assert audit_resp.status_code == 200
+
+        # 删除模板
+        client.delete(f"/boss/graph/templates/{tid}")
+
+        # 审计日志仍可查询，返回 deleted=true
+        audit_resp2 = client.get(f"/boss/graph/templates/{tid}/audit")
+        assert audit_resp2.status_code == 200
+        data = audit_resp2.json()
+        assert data["ok"] is True
+        assert data["deleted"] is True
+        # 包含 create 和 delete 事件
+        event_types = [e["event_type"] for e in data["events"]]
+        assert "create" in event_types
+        assert "delete" in event_types
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_delete_event_has_details(self, mock_guard, mock_rate):
+        """delete 事件 details 包含 template_name / node_count / edge_count / deleted_at"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        resp = client.post("/boss/graph/templates", json={
+            "name": "详情测试",
+            "nodes": _sample_api_nodes(),
+            "edges": _sample_api_edges(),
+        })
+        tid = resp.json()["template"]["template_id"]
+
+        client.delete(f"/boss/graph/templates/{tid}")
+
+        audit_resp = client.get(f"/boss/graph/templates/{tid}/audit?event_type=delete")
+        assert audit_resp.status_code == 200
+        events = audit_resp.json()["events"]
+        assert len(events) == 1
+        details = events[0]["details"]
+        assert details["template_name"] == "详情测试"
+        assert details["node_count"] == 2
+        assert details["edge_count"] == 1
+        assert "deleted_at" in details
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_audit_nonexistent_no_file_404(self, mock_guard, mock_rate):
+        """不存在且无审计文件的模板仍返回 404"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        audit_resp = client.get("/boss/graph/templates/tpl_neverexist123/audit")
+        assert audit_resp.status_code == 404

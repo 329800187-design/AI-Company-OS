@@ -2,7 +2,17 @@
 
 **版本 1.5.0**
 
-## 最新状态（2026-07-09）
+## 最新状态（2026-07-10）
+
+### Phase 6.8：Graph Template Audit Log + Pin/Unpin ✅ 已完成
+
+- ✅ **审计日志系统**：记录模板全生命周期 9 种事件（create / clone / update / delete / execute / restore / metadata_update / pin / unpin）
+- ✅ **安全特性**：敏感字段自动过滤（api_key/token/secret/password/authorization），长文本截断（200 字符）
+- ✅ **删除后可追溯**：模板删除后审计日志保留，API 返回 `deleted: true`
+- ✅ **版本 Pin/Unpin**：固定版本不会被自动裁剪（20 版本上限只对未固定版本生效）
+- ✅ **前端审计面板**：事件类型筛选、颜色编码（9 种颜色）、时间线展示
+- ✅ **前端 Pin UI**：版本列表显示固定/取消固定按钮，固定版本显示琥珀色「固定」徽章
+- ✅ **测试覆盖**：28 个测试场景，包含审计写入/查询/过滤/安全/pin 存活裁剪/删除后保留
 
 ### 第一阶段：业务部门 MVP 闭环 ✅ 已完成
 
@@ -137,11 +147,11 @@ cd frontend-new && npm run build              # ✅ 通过
 
 ## 当前进度快照
 
-最后保存时间：2026-07-09
+最后保存时间：2026-07-10
 
 当前项目已推进到：
 
-> 第五阶段产品化收口已完成，系统已具备导出、对比、监控、验收脚本和本地部署体检能力
+> Phase 6.8 Graph Template Audit Log + Pin/Unpin 已完成，系统已具备模板全生命周期审计和版本固定能力
 
 已经完成：
 
@@ -173,8 +183,8 @@ cd frontend-new && npm run build              # ✅ 通过
   - ✅ Boss 页面新增模板创建表单：基础信息、节点/边编辑、前端校验、保存后刷新列表。
   - ✅ Graph Template 克隆 UI：点击「克隆」自动填入创建表单，name 追加「副本」，保存为新模板。
   - ✅ Graph Template 更新：`PUT /boss/graph/templates/{id}` 更新已有模板，前端编辑模式，保留 created_at。
-  - Graph Template 闭环：创建 → 列表 → 编辑 → 克隆 → 删除 → 按模板执行 → 结果可视化。
-  - Graph Template 核心闭环已完成；跨 Mission 协作、图编辑器、多用户权限、版本历史留给 Phase 6。
+  - ✅ **Phase 6.8 Graph Template Audit Log**：9 种事件类型、敏感字段过滤、长文本截断、删除后保留、前端审计面板 + 事件筛选 + Pin UI。
+  - Graph Template 闭环：创建 → 列表 → 编辑 → 克隆 → 删除 → 按模板执行 → 结果可视化 → 审计日志 → 版本固定。
 
 - **第四阶段（真实能力接入）** ✅ 核心闭环完成
   - ✅ **Phase 4.1 Research Web Search**：`web_search_service.py` 可替换搜索服务层，Mock / SerpAPI / Bing 三 provider。
@@ -197,13 +207,12 @@ cd frontend-new && npm run build              # ✅ 通过
 
 ## 下一步计划
 
-Phase 1–5 已全部完成。下一步建议进入 **Phase 6：平台化**：
+Phase 1–5 已全部完成。Phase 6.8（Audit Log + Pin/Unpin）已完成。下一步建议继续 **Phase 6：平台化**：
 
 1. **前端 DAG 编辑器（P1）** — 从表单升级为图形化配置 nodes/edges
 2. **多用户权限（P1）** — 用户认证、团队协作
 3. **Docker 生产配置（P2）** — docker-compose.prod.yml、CI/CD
 4. **跨 Mission 协作（P2）** — 图模板跨任务数据传递
-5. **图版本历史（P2）** — Graph Template 版本管理
 
 当前边界：
 
@@ -226,6 +235,8 @@ Phase 1–5 已全部完成。下一步建议进入 **Phase 6：平台化**：
 - 📄 **PDF 导出** — 产物一键导出 PDF（reportlab + CJK 中文字体）
 - 🔍 **Mission 对比** — 两个任务结构化对比分析
 - 🩺 **部署体检** — 本地服务全量体检脚本
+- 📋 **模板审计日志** — 9 种事件类型、敏感字段过滤、删除后可追溯
+- 📌 **版本固定** — Pin 版本防止自动裁剪
 
 ## 🚀 快速开始
 
