@@ -4,6 +4,15 @@
 
 ## 最新状态（2026-07-10）
 
+### Phase 6.9：Graph Template Audit Retention Policy ✅ 已完成
+
+- ✅ **审计存储查询**：`GET /boss/graph/audit/storage` 返回文件数、总大小、最早/最新事件时间
+- ✅ **审计日志清理**：`POST /boss/graph/audit/cleanup` 支持 `retention_days` + `dry_run` 参数
+- ✅ **安全设计**：默认 `dry_run=True` 只预览不删除，只清理已删除模板的审计文件
+- ✅ **清理脚本**：`scripts/cleanup_graph_audit.py` 支持 `--retention-days`、`--dry-run`、`--apply`、`--json`
+- ✅ **前端 UI**：Audit Storage 信息块 + 预览清理按钮
+- ✅ **测试覆盖**：13 个测试场景，覆盖存储统计、清理逻辑、API 端点
+
 ### Phase 6.8：Graph Template Audit Log + Pin/Unpin ✅ 已完成
 
 - ✅ **审计日志系统**：记录模板全生命周期 9 种事件（create / clone / update / delete / execute / restore / metadata_update / pin / unpin）
@@ -151,7 +160,7 @@ cd frontend-new && npm run build              # ✅ 通过
 
 当前项目已推进到：
 
-> Phase 6.8 Graph Template Audit Log + Pin/Unpin 已完成，系统已具备模板全生命周期审计和版本固定能力
+> Phase 6.9 Graph Template Audit Retention Policy 已完成，系统已具备审计日志保留/清理能力，支持安全的运维清理操作
 
 已经完成：
 
@@ -184,7 +193,8 @@ cd frontend-new && npm run build              # ✅ 通过
   - ✅ Graph Template 克隆 UI：点击「克隆」自动填入创建表单，name 追加「副本」，保存为新模板。
   - ✅ Graph Template 更新：`PUT /boss/graph/templates/{id}` 更新已有模板，前端编辑模式，保留 created_at。
   - ✅ **Phase 6.8 Graph Template Audit Log**：9 种事件类型、敏感字段过滤、长文本截断、删除后保留、前端审计面板 + 事件筛选 + Pin UI。
-  - Graph Template 闭环：创建 → 列表 → 编辑 → 克隆 → 删除 → 按模板执行 → 结果可视化 → 审计日志 → 版本固定。
+  - ✅ **Phase 6.9 Audit Retention Policy**：审计存储查询、安全清理机制（dry_run 默认）、清理脚本、前端 Audit Storage UI。
+  - Graph Template 闭环：创建 → 列表 → 编辑 → 克隆 → 删除 → 按模板执行 → 结果可视化 → 审计日志 → 版本固定 → 审计保留/清理。
 
 - **第四阶段（真实能力接入）** ✅ 核心闭环完成
   - ✅ **Phase 4.1 Research Web Search**：`web_search_service.py` 可替换搜索服务层，Mock / SerpAPI / Bing 三 provider。
@@ -207,7 +217,7 @@ cd frontend-new && npm run build              # ✅ 通过
 
 ## 下一步计划
 
-Phase 1–5 已全部完成。Phase 6.8（Audit Log + Pin/Unpin）已完成。下一步建议继续 **Phase 6：平台化**：
+Phase 1–5 已全部完成。Phase 6.9（Audit Retention Policy）已完成。下一步建议继续 **Phase 6：平台化**：
 
 1. **前端 DAG 编辑器（P1）** — 从表单升级为图形化配置 nodes/edges
 2. **多用户权限（P1）** — 用户认证、团队协作

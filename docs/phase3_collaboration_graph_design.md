@@ -796,4 +796,138 @@ Phase 6.8 实现了 Graph Template 审计日志系统，记录模板全生命周
 
 ---
 
-*由 AI Company OS Phase 3 P0 生成 · 2026-07-08 · 最后更新：Phase 6.8 Audit Log + Pin/Unpin*
+## 二十一、Graph Template Audit Retention Policy（Phase 6.9）
+
+### 21.1 概述
+
+Phase 6.9 实现了审计日志保留/清理机制，解决长期运行 `output/graph_template_audit/` 目录增长问题。
+
+### 21.2 设计原则
+
+- **安全第一**：默认 `dry_run=True`，只预览不删除
+- **精准清理**：只清理"已删除模板"的审计文件，仍存在的模板审计不删
+- **保留天数**：`retention_days` 必须 > 0，否则返回 400/ValueError
+- **路径防穿越**：只允许 `output/graph_template_audit` 下的 `tpl_*.jsonl`
+- **容错设计**：文件读取失败进入 `errors`，不崩整个任务
+
+### 21.3 后端服务
+
+新增 `backend/services/graph_template_retention.py`：
+
+| 函数 | 说明 |
+|------|------|
+| `scan_audit_files()` | 扫描 `output/graph_template_audit/*.jsonl` |
+| `summarize_audit_storage()` | 返回文件数、总大小、最早/最新事件时间 |
+| `cleanup_audit_logs(retention_days, dry_run=True)` | 清理已删除模板的过期审计日志 |
+
+### 21.4 API 端点
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/boss/graph/audit/storage` | GET | 查询审计存储信息 |
+| `/boss/graph/audit/cleanup` | POST | 清理过期审计日志 |
+
+#### GET /boss/graph/audit/storage
+
+返回：
+```json
+{
+  "ok": true,
+  "storage": {
+    "file_count": 10,
+    "total_bytes": 12345,
+    "total_size_human": "12.1 KB",
+    "earliest_event": "2026-01-01T00:00:00Z",
+    "latest_event": "2026-07-10T12:00:00Z"
+  }
+}
+```
+
+#### POST /boss/graph/audit/cleanup
+
+请求：
+```json
+{
+  "retention_days": 30,
+  "dry_run": true
+}
+```
+
+返回：
+```json
+{
+  "ok": true,
+  "cleanup": {
+    "matched": 3,
+    "deleted": 0,
+    "skipped": 7,
+    "bytes_freed": 3456,
+    "bytes_freed_human": "3.4 KB",
+    "errors": [],
+    "dry_run": true,
+    "retention_days": 30,
+    "would_delete": [
+      {
+        "template_id": "tpl_abc123",
+        "file_path": "output/graph_template_audit/tpl_abc123.jsonl",
+        "size_bytes": 1234,
+        "event_count": 5,
+        "latest_event": "2026-05-01T12:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+### 21.5 清理脚本
+
+新增 `scripts/cleanup_graph_audit.py`：
+
+```bash
+# 预览模式（默认）
+python scripts/cleanup_graph_audit.py --retention-days 30 --dry-run
+
+# 实际删除
+python scripts/cleanup_graph_audit.py --retention-days 30 --apply
+
+# JSON 输出
+python scripts/cleanup_graph_audit.py --retention-days 30 --apply --json
+```
+
+### 21.6 前端 UI
+
+在 Boss Lite / Graph Template 区域新增"Audit Storage"信息块：
+
+- 显示 audit 文件数、总大小、最早/最新事件时间
+- 「刷新」按钮加载存储信息
+- 「预览清理 30 天前」按钮（dry_run）
+- 清理预览结果展示：匹配文件数、跳过文件数、将释放空间、将删除文件列表
+- 不做真实删除按钮，避免误操作；真实删除只留 API/脚本
+
+### 21.7 Retention Policy 规则
+
+| 条件 | 行为 |
+|------|------|
+| 模板仍存在 | 跳过，不删除审计文件 |
+| 模板已删除 + 最新事件未过期 | 跳过 |
+| 模板已删除 + 最新事件已过期 | 匹配，dry_run 时预览，apply 时删除 |
+| 文件名不符合 `tpl_*.jsonl` | 跳过 |
+| 文件读取失败 | 进入 errors，继续处理其他文件 |
+
+### 21.8 测试覆盖
+
+`tests/test_graph_template_retention.py` 覆盖 13 个场景：
+- storage summary 空目录
+- storage summary 多文件统计
+- dry_run 不删除
+- apply 删除过期已删除模板 audit
+- 未删除模板 audit 不删除
+- retention_days <= 0 报错（0 和负数）
+- 非 tpl_*.jsonl 文件跳过
+- 损坏 JSONL 不崩
+- API storage 返回正确
+- API cleanup dry_run/apply 正确
+
+---
+
+*由 AI Company OS Phase 3 P0 生成 · 2026-07-08 · 最后更新：Phase 6.9 Audit Retention Policy*

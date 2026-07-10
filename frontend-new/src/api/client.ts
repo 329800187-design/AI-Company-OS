@@ -1497,6 +1497,50 @@ class ApiClient {
       method: "POST",
     })
   }
+
+  // ── Phase 6.9: Audit Retention Policy ──────────────────────
+
+  async getBossAuditStorage() {
+    return this.request<{
+      ok: boolean
+      storage: {
+        file_count: number
+        total_bytes: number
+        total_size_human: string
+        earliest_event: string | null
+        latest_event: string | null
+      }
+    }>("/boss/graph/audit/storage")
+  }
+
+  async cleanupBossAuditLogs(params: { retentionDays: number; dryRun?: boolean }) {
+    return this.request<{
+      ok: boolean
+      cleanup: {
+        matched: number
+        deleted: number
+        skipped: number
+        bytes_freed: number
+        bytes_freed_human: string
+        errors: Array<{ template_id: string; error: string }>
+        dry_run: boolean
+        retention_days: number
+        would_delete: Array<{
+          template_id: string
+          file_path: string
+          size_bytes: number
+          event_count: number
+          latest_event: string
+        }>
+      }
+    }>("/boss/graph/audit/cleanup", {
+      method: "POST",
+      body: {
+        retention_days: params.retentionDays,
+        dry_run: params.dryRun ?? true,
+      },
+    })
+  }
 }
 
 export const api = new ApiClient()

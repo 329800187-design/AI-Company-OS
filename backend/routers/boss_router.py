@@ -1728,6 +1728,50 @@ def unpin_graph_template_version(template_id: str, version_id: str):
     return {"ok": True, "version": result}
 
 
+# ── Phase 6.9: Audit Retention Policy API ────────────────────
+
+
+class AuditCleanupRequest(BaseModel):
+    """审计日志清理请求"""
+    retention_days: int = Field(..., ge=1, description="保留天数（必须 >= 1）")
+    dry_run: bool = Field(default=True, description="True 只预览不删除，False 实际删除")
+
+
+@router.get(
+    "/graph/audit/storage",
+    summary="查询审计存储信息",
+)
+def get_audit_storage():
+    """返回审计文件数量、总大小、最早/最新事件时间"""
+    from backend.services.graph_template_retention import summarize_audit_storage
+
+    summary = summarize_audit_storage()
+    return {"ok": True, "storage": summary}
+
+
+@router.post(
+    "/graph/audit/cleanup",
+    summary="清理过期审计日志",
+)
+def cleanup_audit_logs(request: AuditCleanupRequest):
+    """清理已删除模板的过期审计日志。
+
+    - dry_run=True（默认）：只返回将删除的文件，不实际删除
+    - dry_run=False：实际删除
+    """
+    from backend.services.graph_template_retention import cleanup_audit_logs
+
+    try:
+        result = cleanup_audit_logs(
+            retention_days=request.retention_days,
+            dry_run=request.dry_run,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"ok": True, "cleanup": result}
+
+
 def _build_custom_graph_from_nodes_edges(
     nodes: List[BossGraphNodeRequest],
     edges: List[BossGraphEdgeRequest],

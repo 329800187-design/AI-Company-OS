@@ -11,6 +11,7 @@ import {
   Upload,
   FileText,
   Globe2,
+  HardDrive,
   History,
   Loader2,
   Megaphone,
@@ -983,6 +984,34 @@ export default function BossPage() {
   const [auditFilter, setAuditFilter] = useState<string>("")
   const [pinLoading, setPinLoading] = useState<string | null>(null)
 
+  // ── Phase 6.9: Audit storage state ─────────────────────────
+  const [auditStorage, setAuditStorage] = useState<{
+    file_count: number
+    total_bytes: number
+    total_size_human: string
+    earliest_event: string | null
+    latest_event: string | null
+  } | null>(null)
+  const [auditStorageLoading, setAuditStorageLoading] = useState(false)
+  const [cleanupPreview, setCleanupPreview] = useState<{
+    matched: number
+    deleted: number
+    skipped: number
+    bytes_freed: number
+    bytes_freed_human: string
+    errors: Array<{ template_id: string; error: string }>
+    dry_run: boolean
+    retention_days: number
+    would_delete: Array<{
+      template_id: string
+      file_path: string
+      size_bytes: number
+      event_count: number
+      latest_event: string
+    }>
+  } | null>(null)
+  const [cleanupLoading, setCleanupLoading] = useState(false)
+
   /** Save current draft to localStorage (debounced) */
   const saveDraftToStorage = useCallback((draft: GraphTemplateDraft) => {
     if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current)
@@ -1399,6 +1428,35 @@ export default function BossPage() {
       setVersionError(errorMsg)
     } finally {
       setPinLoading(null)
+    }
+  }
+
+  // ── Phase 6.9: Audit storage ───────────────────────────────
+
+  const loadAuditStorage = async () => {
+    setAuditStorageLoading(true)
+    try {
+      const data = await api.getBossAuditStorage()
+      setAuditStorage(data.storage || null)
+    } catch (error) {
+      console.error("Load audit storage failed:", error)
+      setAuditStorage(null)
+    } finally {
+      setAuditStorageLoading(false)
+    }
+  }
+
+  const previewCleanup = async () => {
+    setCleanupLoading(true)
+    setCleanupPreview(null)
+    try {
+      const data = await api.cleanupBossAuditLogs({ retentionDays: 30, dryRun: true })
+      setCleanupPreview(data.cleanup || null)
+    } catch (error) {
+      console.error("Preview cleanup failed:", error)
+      setCleanupPreview(null)
+    } finally {
+      setCleanupLoading(false)
     }
   }
 
@@ -3055,6 +3113,140 @@ export default function BossPage() {
                   <span className="text-[#0B0B0B] flex-1">{ev.summary}</span>
                 </div>
               ))}
+            </div>
+          )}
+        </motion.div>
+      )}
+
+      {/* Phase 6.9: Audit Storage Info */}
+      {mode === "boss-lite" && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.15 }}
+          className="p-6 rounded-2xl border border-[#E5E5E5] bg-white mt-4"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <HardDrive className="h-4 w-4 text-[#8A8A8A]" />
+              <h3 className="text-sm font-medium text-[#0B0B0B]">Audit Storage / 审计存储</h3>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={previewCleanup}
+                disabled={cleanupLoading}
+                className="gap-1 text-xs"
+              >
+                {cleanupLoading ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Eye className="h-3.5 w-3.5" />
+                )}
+                预览清理 30 天前
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={loadAuditStorage}
+                disabled={auditStorageLoading}
+                className="gap-1 text-[#8A8A8A] hover:text-[#0B0B0B]"
+              >
+                {auditStorageLoading ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-3.5 w-3.5" />
+                )}
+                刷新
+              </Button>
+            </div>
+          </div>
+
+          {auditStorage ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="rounded-xl border border-[#F0F0EC] bg-[#FAFAF8] p-4">
+                <div className="text-xs text-[#8A8A8A] mb-1">文件数量</div>
+                <div className="text-2xl font-semibold text-[#0B0B0B]">{auditStorage.file_count}</div>
+              </div>
+              <div className="rounded-xl border border-[#F0F0EC] bg-[#FAFAF8] p-4">
+                <div className="text-xs text-[#8A8A8A] mb-1">总大小</div>
+                <div className="text-2xl font-semibold text-[#0B0B0B]">{auditStorage.total_size_human}</div>
+              </div>
+              <div className="rounded-xl border border-[#F0F0EC] bg-[#FAFAF8] p-4">
+                <div className="text-xs text-[#8A8A8A] mb-1">最早事件</div>
+                <div className="text-sm font-medium text-[#0B0B0B]">
+                  {auditStorage.earliest_event ? formatLocalTime(auditStorage.earliest_event) : "—"}
+                </div>
+              </div>
+              <div className="rounded-xl border border-[#F0F0EC] bg-[#FAFAF8] p-4">
+                <div className="text-xs text-[#8A8A8A] mb-1">最新事件</div>
+                <div className="text-sm font-medium text-[#0B0B0B]">
+                  {auditStorage.latest_event ? formatLocalTime(auditStorage.latest_event) : "—"}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-[#D8D8D2] bg-[#FAFAF8] p-5 text-sm text-[#6B6B6B] text-center">
+              点击"刷新"加载审计存储信息。
+            </div>
+          )}
+
+          {/* Cleanup Preview */}
+          {cleanupPreview && (
+            <div className="mt-4 rounded-xl border border-[#E5E5E5] bg-[#FAFAF8] p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-sm font-medium text-[#0B0B0B]">清理预览（dry_run）</h4>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setCleanupPreview(null)}
+                  className="h-6 px-2 text-xs text-[#8A8A8A]"
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                <div>
+                  <div className="text-xs text-[#8A8A8A]">匹配文件</div>
+                  <div className="text-lg font-semibold">{cleanupPreview.matched}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-[#8A8A8A]">跳过文件</div>
+                  <div className="text-lg font-semibold">{cleanupPreview.skipped}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-[#8A8A8A]">将释放空间</div>
+                  <div className="text-lg font-semibold">{cleanupPreview.bytes_freed_human}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-[#8A8A8A]">错误数</div>
+                  <div className="text-lg font-semibold">{cleanupPreview.errors.length}</div>
+                </div>
+              </div>
+              {cleanupPreview.would_delete.length > 0 && (
+                <div className="space-y-1.5">
+                  <div className="text-xs text-[#8A8A8A] mb-1">将删除的文件：</div>
+                  {cleanupPreview.would_delete.map((f) => (
+                    <div
+                      key={f.template_id}
+                      className="flex items-center justify-between rounded-lg border border-[#F0F0EC] p-2 text-[11px]"
+                    >
+                      <span className="font-mono text-[#0B0B0B]">{f.template_id}</span>
+                      <span className="text-[#8A8A8A]">{f.event_count} 事件 · {f.size_bytes} B</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {cleanupPreview.errors.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {cleanupPreview.errors.map((e, i) => (
+                    <div key={i} className="text-xs text-red-500">
+                      {e.template_id}: {e.error}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </motion.div>
