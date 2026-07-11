@@ -1518,3 +1518,86 @@ test.describe("Phase 6.8 — 版本 Pin/Unpin", () => {
     expect(pinEvents[0].details.version_id).toBe(versionId)
   })
 })
+
+// ── Canvas Preview (Step 1) ────────────────────────────────────────────────
+
+test.describe("DAG Canvas 预览", () => {
+  let createdTemplateId: string | null = null
+
+  test.afterEach(async ({ request }) => {
+    await deleteTemplateFixture(request, createdTemplateId)
+    createdTemplateId = null
+  })
+
+  test("点击预览图能看到画布", async ({ page, request }) => {
+    createdTemplateId = await createTemplateFixture(request, "Canvas-预览测试")
+
+    await goToBoss(page)
+
+    // Click the preview button
+    const previewBtn = page.locator('[data-testid="preview-canvas-btn"]').first()
+    await expect(previewBtn).toBeVisible()
+    await previewBtn.click()
+    await page.waitForTimeout(500)
+
+    // The canvas container should appear
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible()
+
+    // React Flow container should be rendered inside
+    await expect(canvas.locator(".react-flow")).toBeVisible()
+  })
+
+  test("节点数量正确渲染", async ({ page, request }) => {
+    createdTemplateId = await createTemplateFixture(request, "Canvas-节点测试")
+
+    await goToBoss(page)
+
+    // Expand preview
+    const previewBtn = page.locator('[data-testid="preview-canvas-btn"]').first()
+    await previewBtn.click()
+    await page.waitForTimeout(500)
+
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible()
+
+    // Should render 2 nodes (research + marketing from fixture)
+    const flowNodes = canvas.locator(".react-flow__node")
+    await expect(flowNodes).toHaveCount(2)
+  })
+
+  test("空边状态正确显示", async ({ page, request }) => {
+    // Create a template with nodes but no edges
+    const response = await request.post("/boss/graph/templates", {
+      data: {
+        name: "Canvas-空边测试",
+        description: "无连线模板",
+        goal_hint: "测试空边状态",
+        nodes: [
+          { id: "solo", agent_id: "research", title: "独立节点", prompt: "独立任务" },
+        ],
+        edges: [],
+      },
+    })
+    expect(response.ok()).toBeTruthy()
+    const body = await response.json()
+    createdTemplateId = body.template.template_id as string
+
+    await goToBoss(page)
+
+    // Expand preview
+    const previewBtn = page.locator('[data-testid="preview-canvas-btn"]').first()
+    await previewBtn.click()
+    await page.waitForTimeout(500)
+
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible()
+
+    // "无连线" hint should be visible
+    await expect(canvas.getByText("无连线")).toBeVisible()
+
+    // The single node should still render
+    const flowNodes = canvas.locator(".react-flow__node")
+    await expect(flowNodes).toHaveCount(1)
+  })
+})

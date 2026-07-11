@@ -43,6 +43,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { DagEditor, type GraphTemplateDraft } from "./DagEditor"
+import { DagCanvas } from "./DagCanvas"
 import { validateDag } from "./dag-validation"
 
 interface ModuleResult {
@@ -894,6 +895,7 @@ export default function BossPage() {
   const [graphTemplatesError, setGraphTemplatesError] = useState<string | null>(null)
   const [graphTemplateExecutingId, setGraphTemplateExecutingId] = useState<string | null>(null)
   const [graphTemplateResult, setGraphTemplateResult] = useState<Record<string, unknown> | null>(null)
+  const [expandedPreviewId, setExpandedPreviewId] = useState<string | null>(null)
 
   // Graph Template 创建表单状态
   const DEFAULT_DRAFT: GraphTemplateDraft = {
@@ -2519,6 +2521,20 @@ export default function BossPage() {
                           审计
                         </Button>
                         <Button
+                          data-testid="preview-canvas-btn"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            setExpandedPreviewId(
+                              expandedPreviewId === tpl.template_id ? null : tpl.template_id,
+                            )
+                          }
+                          className="gap-1 text-xs text-[#6B6B6B] hover:text-[#0B0B0B]"
+                        >
+                          <Eye className="h-3 w-3" />
+                          预览图
+                        </Button>
+                        <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => deleteGraphTemplate(tpl.template_id)}
@@ -2529,6 +2545,20 @@ export default function BossPage() {
                         </Button>
                       </div>
                     </div>
+                    {expandedPreviewId === tpl.template_id && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.3, ease: [0.23, 1, 0.32, 1] }}
+                        className="mt-3 pt-3 border-t border-[#F0F0EC] overflow-hidden"
+                      >
+                        <DagCanvas
+                          nodes={tpl.nodes}
+                          edges={tpl.edges}
+                        />
+                      </motion.div>
+                    )}
                   </div>
                 )
               })}
