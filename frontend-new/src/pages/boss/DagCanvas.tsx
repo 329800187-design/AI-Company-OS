@@ -10,6 +10,9 @@ import {
   type Edge,
   ReactFlowProvider,
   type NodeProps,
+  type EdgeProps,
+  BaseEdge,
+  getBezierPath,
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import dagre from "@dagrejs/dagre"
@@ -49,7 +52,7 @@ const NODE_HEIGHT = 60
 function computeLayout(
   rawNodes: DagCanvasNode[],
   rawEdges: DagCanvasEdge[],
-): { nodes: Node[]; edges: Edge[] } {
+): { nodes: Node[]; edges: Edge[]; layoutHeight: number } {
   const g = new dagre.graphlib.Graph()
   g.setDefaultEdgeLabel(() => ({}))
   g.setGraph({ rankdir: "LR", nodesep: 60, ranksep: 80 })
@@ -62,6 +65,8 @@ function computeLayout(
   }
 
   dagre.layout(g)
+
+  const graphHeight = g.graph().height ?? 0
 
   const nodes: Node[] = rawNodes.map((n) => {
     const pos = g.node(n.id)
@@ -79,9 +84,11 @@ function computeLayout(
     id: `e-${e.from_node}-${e.to_node}-${i}`,
     source: e.from_node,
     target: e.to_node,
+    type: "dagCanvasEdge",
+    data: { testid: `edge-${e.from_node}-${e.to_node}` },
   }))
 
-  return { nodes, edges }
+  return { nodes, edges, layoutHeight: graphHeight }
 }
 
 // ── Custom node component ─────────────────────────────────────
@@ -114,7 +121,24 @@ const DagCanvasNodeComponent = (props: NodeProps) => {
   )
 }
 
+// ── Custom edge component ─────────────────────────────────────
+
+function DagCanvasEdgeComponent(props: EdgeProps) {
+  const { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition } = props
+  const [edgePath] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition })
+  const testid = (props.data as Record<string, unknown>)?.testid as string
+
+  return (
+    <>
+      {/* Invisible wide path for click hit area */}
+      <path d={edgePath} fill="none" stroke="rgba(0,0,0,0.001)" strokeWidth={20} data-testid={testid} />
+      <BaseEdge {...props} path={edgePath} />
+    </>
+  )
+}
+
 const nodeTypes = { dagCanvasNode: DagCanvasNodeComponent }
+const edgeTypes = { dagCanvasEdge: DagCanvasEdgeComponent }
 
 // ── Detail Panel ──────────────────────────────────────────────
 
@@ -193,10 +217,11 @@ function DetailRow({
 function DagCanvasInner({ nodes, edges, className }: DagCanvasProps) {
   const [selected, setSelected] = useState<SelectedInfo | null>(null)
 
-  const { flowNodes, flowEdges } = useMemo(() => {
-    if (nodes.length === 0) return { flowNodes: [], flowEdges: [] }
+  const { flowNodes, flowEdges, canvasHeight } = useMemo(() => {
+    if (nodes.length === 0) return { flowNodes: [], flowEdges: [], canvasHeight: 256 }
     const result = computeLayout(nodes, edges)
-    return { flowNodes: result.nodes, flowEdges: result.edges }
+    const height = Math.max(256, Math.min(600, result.layoutHeight + 120))
+    return { flowNodes: result.nodes, flowEdges: result.edges, canvasHeight: height }
   }, [nodes, edges])
 
   const nodeMap = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
@@ -261,13 +286,15 @@ function DagCanvasInner({ nodes, edges, className }: DagCanvasProps) {
         data-testid="dag-canvas"
         className={
           className ||
-          "h-64 rounded-xl border border-[#E5E5E5] bg-[#FAFAF8] relative"
+          "rounded-xl border border-[#E5E5E5] bg-[#FAFAF8] relative"
         }
+        style={className ? undefined : { height: canvasHeight }}
       >
         <ReactFlow
           nodes={flowNodes}
           edges={flowEdges}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable={true}

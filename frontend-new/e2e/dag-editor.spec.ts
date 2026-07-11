@@ -7,7 +7,6 @@ import { resolve } from "node:path"
 /** Navigate directly to boss page (skip landing via ?page=boss) */
 async function goToBoss(page: Page) {
   await page.goto("/app?page=boss")
-  await page.waitForLoadState("networkidle")
   // Wait for Graph Templates panel to be ready — use the DagEditor heading as anchor
   // since it only appears after boss-lite mode renders
   await expect(page.getByText("Graph Templates / 协作图模板")).toBeVisible({ timeout: 15000 })
@@ -1625,10 +1624,10 @@ test.describe("DAG Canvas 交互", () => {
     const canvas = page.locator('[data-testid="dag-canvas"]').first()
     await expect(canvas).toBeVisible()
 
-    // Click the first node (force: true to bypass MiniMap overlay)
+    // Click the first node
     const firstNode = canvas.locator(".react-flow__node").first()
     await expect(firstNode).toBeVisible()
-    await firstNode.click({ force: true })
+    await firstNode.click()
     await page.waitForTimeout(300)
 
     // Detail panel should appear
@@ -1659,9 +1658,12 @@ test.describe("DAG Canvas 交互", () => {
     const canvas = page.locator('[data-testid="dag-canvas"]').first()
     await expect(canvas).toBeVisible()
 
-    // Click an edge — edge may be clipped by canvas overflow, use force
-    const edgeGroup = canvas.locator("g.react-flow__edge, .react-flow__edge").first()
-    await edgeGroup.click({ force: true, timeout: 5000 })
+    // Click the edge using its data-testid (set by DagCanvas custom edge)
+    // Note: SVG edge paths with zero rendered height are "hidden" per Playwright.
+    // Use force:true for SVG path elements — the click still triggers the ReactFlow handler.
+    const edge = canvas.locator('[data-testid="edge-research-marketing"]').first()
+    await expect(edge).toBeAttached()
+    await edge.click({ force: true })
     await page.waitForTimeout(300)
 
     // Detail panel should appear with edge properties
