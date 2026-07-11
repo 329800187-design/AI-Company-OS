@@ -1601,3 +1601,96 @@ test.describe("DAG Canvas 预览", () => {
     await expect(flowNodes).toHaveCount(1)
   })
 })
+
+// ── Step 2: Canvas Interaction ────────────────────────────────────────────
+
+test.describe("DAG Canvas 交互", () => {
+  let createdTemplateId: string | null = null
+
+  test.afterEach(async ({ request }) => {
+    await deleteTemplateFixture(request, createdTemplateId)
+    createdTemplateId = null
+  })
+
+  test("点击节点显示属性面板", async ({ page, request }) => {
+    createdTemplateId = await createTemplateFixture(request, "Canvas-节点点击测试")
+
+    await goToBoss(page)
+
+    // Expand preview
+    const previewBtn = page.locator('[data-testid="preview-canvas-btn"]').first()
+    await previewBtn.click()
+    await page.waitForTimeout(500)
+
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible()
+
+    // Click the first node (force: true to bypass MiniMap overlay)
+    const firstNode = canvas.locator(".react-flow__node").first()
+    await expect(firstNode).toBeVisible()
+    await firstNode.click({ force: true })
+    await page.waitForTimeout(300)
+
+    // Detail panel should appear
+    const panel = page.locator('[data-testid="dag-detail-panel"]')
+    await expect(panel).toBeVisible()
+
+    // Should show node properties
+    await expect(panel.getByText("id", { exact: true })).toBeVisible()
+    await expect(panel.getByText("agent_id")).toBeVisible()
+    await expect(panel.locator('span.font-mono', { hasText: "research" }).first()).toBeVisible()
+    await expect(panel.getByText("市场调研")).toBeVisible()
+
+    // Should show edge counts
+    await expect(panel.getByText("入边数量")).toBeVisible()
+    await expect(panel.getByText("出边数量")).toBeVisible()
+  })
+
+  test("点击边显示属性面板", async ({ page, request }) => {
+    createdTemplateId = await createTemplateFixture(request, "Canvas-边点击测试")
+
+    await goToBoss(page)
+
+    // Expand preview
+    const previewBtn = page.locator('[data-testid="preview-canvas-btn"]').first()
+    await previewBtn.click()
+    await page.waitForTimeout(500)
+
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible()
+
+    // Click an edge — edge may be clipped by canvas overflow, use force
+    const edgeGroup = canvas.locator("g.react-flow__edge, .react-flow__edge").first()
+    await edgeGroup.click({ force: true, timeout: 5000 })
+    await page.waitForTimeout(300)
+
+    // Detail panel should appear with edge properties
+    const panel = page.locator('[data-testid="dag-detail-panel"]')
+    await expect(panel).toBeVisible()
+
+    await expect(panel.getByText("from_node")).toBeVisible()
+    await expect(panel.getByText("to_node")).toBeVisible()
+    await expect(panel.getByText("handoff_type")).toBeVisible()
+    await expect(panel.getByText("context")).toBeVisible()
+  })
+
+  test("MiniMap 和 Controls 可见", async ({ page, request }) => {
+    createdTemplateId = await createTemplateFixture(request, "Canvas-控件测试")
+
+    await goToBoss(page)
+
+    // Expand preview
+    const previewBtn = page.locator('[data-testid="preview-canvas-btn"]').first()
+    await previewBtn.click()
+    await page.waitForTimeout(500)
+
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible()
+
+    // MiniMap should exist
+    await expect(canvas.locator(".react-flow__minimap")).toBeVisible()
+
+    // Controls should exist
+    await expect(canvas.locator(".react-flow__controls")).toBeVisible()
+  })
+})
