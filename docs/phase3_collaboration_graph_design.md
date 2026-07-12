@@ -2,8 +2,8 @@
 
 > 阶段：Phase 3 — P0 Agent 协作通用化
 > 创建日期：2026-07-07
-> 最后更新：2026-07-10
-> 状态：**Graph Template Audit Log + Pin/Unpin 已完成（Phase 6.8）**
+> 最后更新：2026-07-12
+> 状态：**DAG Canvas 图形化编辑器已完成（Phase 6.10）**
 
 ---
 
@@ -282,7 +282,7 @@ Wave 1: ["marketing", "image", "website"]
 | Phase 3.8 | Graph Template 创建 UI | 创建模板表单 / 节点边编辑 / 前端校验 / 保存 | ✅ 已完成 |
 | Phase 3.9 | Graph Template 克隆 UI | 克隆按钮 / 创建表单复用 / name 追加副本 | ✅ 已完成 |
 | Phase 3.10 | Graph Template 更新 | PUT API / 前端编辑模式 / 保留 created_at | ✅ 已完成 |
-| 远期 | 前端 DAG 编辑器 | 前端 | 待定 |
+| 远期 | 前端 DAG 编辑器 | 前端 | ✅ 已完成 — Phase 6.10 |
 | 远期 | 跨 Mission 协作 | 架构 | 待定 |
 
 ---
@@ -643,7 +643,7 @@ Boss 页面 Graph Templates 面板新增「创建模板」按钮和表单：
 
 | 项目 | 说明 |
 |------|------|
-| 前端 DAG 编辑器 | 从只读 GraphPreview 升级为可配置 nodes/edges |
+| ~~前端 DAG 编辑器~~ | ✅ 已完成 — Phase 6.10 DAG Canvas |
 | ~~模板更新~~ | ✅ 已完成 — Phase 3.10 |
 | 跨 Mission 协作 | 不同 Mission 之间的 Agent 输出复用 |
 | CollaborationPlan 统一 | 将 CollaborationGraph 与现有 CollaborationPlan 合并 |
@@ -930,4 +930,119 @@ python scripts/cleanup_graph_audit.py --retention-days 30 --apply --json
 
 ---
 
-*由 AI Company OS Phase 3 P0 生成 · 2026-07-08 · 最后更新：Phase 6.9 Audit Retention Policy*
+## 二十二、Frontend DAG Canvas（Phase 6.10）
+
+### 22.1 概述
+
+Phase 6.10 将 Graph Template 创建表单从纯表单编辑升级为基于 React Flow 的图形化 DAG 编辑器（Canvas），支持可视化节点/边编辑、拖拽连线、自动布局和布局持久化。
+
+### 22.2 数据分层：Draft vs View-Only
+
+Canvas 在两种模式下运行，数据流严格隔离：
+
+| 模式 | 触发场景 | 数据源 | 可编辑 | 数据流向 |
+|------|----------|--------|--------|----------|
+| **Editable Canvas** | DagEditor 组件内（创建/编辑模板表单） | `draft` 状态（本地 React state） | ✅ 是 | Canvas 编辑 → 更新 draft → 提交时 draft 作为 API payload |
+| **Readonly Canvas** | 模板卡片「预览」按钮 | 模板 API 返回的 `template` 对象 | ❌ 否 | API → 只读渲染，无交互控件 |
+
+**关键约束：**
+
+- Editable Canvas 的所有编辑操作（属性修改、节点增删、边增删）直接修改 `draft` 状态
+- Readonly Canvas 不渲染「添加节点」按钮，handle 设置为 `visibility: hidden`，节点不可拖拽
+- 两种模式通过 `editable` prop 区分，共享同一个 `DagCanvas` 组件
+
+### 22.3 Positions 不进入模板 API Payload
+
+Canvas 中的节点位置（`position.x` / `position.y`）是**纯前端视图状态**，不作为模板数据提交到后端：
+
+```
+// 提交到 POST/PUT /boss/graph/templates 的 payload：
+{
+  name: string,
+  description: string,
+  goal_hint: string,
+  nodes: [{ id, agent_id, task_type, title, prompt }],  // 无 position 字段
+  edges: [{ from_node, to_node, handoff_type }]          // 无视觉属性
+}
+
+// 仅存在于前端的视图状态：
+// - React Flow 内部 node.position（拖拽坐标）
+// - localStorage `dag_layout_{draft.name}_{hash(sorted_node_ids)}` 键（布局持久化）
+```
+
+**布局持久化策略：**
+
+- 拖拽节点后，位置按节点 ID 映射存入 `localStorage`（键名 `dag_layout_{draft.name}_{hash(sorted_node_ids)}`）
+- 关闭并重新打开创建表单时，从 localStorage 恢复位置
+- 点击「自动布局」按钮后，清除 localStorage 中的旧位置，使用 dagre 算法重新排列
+- 新增节点时，已有节点保持其持久化位置，新节点由 dagre 计算合理位置
+- 拖拽操作不产生 undo/redo 历史（纯视图操作）
+
+### 22.4 校验规则
+
+Canvas 在拖拽连线时执行三重实时校验，任一不通过则拒绝创建边并显示 toast 提示：
+
+| 校验规则 | 说明 | 错误提示 |
+|----------|------|----------|
+| **Self-loop** | 源节点和目标节点相同（`source === target`） | 不允许自环 |
+| **Duplicate edge** | 已存在相同 `(from_node, to_node)` 的边 | 不允许重复边 |
+| **Cycle detection** | 新增该边后图会产生循环依赖 | 不允许产生循环 |
+
+校验逻辑在 `onConnect` 回调中执行，使用与后端 `validate_graph()` 相同的语义：
+
+```typescript
+// 伪代码
+function onConnect(connection) {
+  if (connection.source === connection.target) → reject (self-loop)
+  if (edgeExists(connection.source, connection.target)) → reject (duplicate)
+  if (wouldCreateCycle(connection.source, connection.target, edges)) → reject (cycle)
+  → accept, add edge to draft
+}
+```
+
+此外，提交模板时后端 `validate_graph()` 仍会执行完整校验（节点 ID 唯一性、边引用合法性、自环、循环依赖），前端校验是用户体验优化，后端校验是安全兜底。
+
+### 22.5 Canvas 功能清单
+
+| 功能 | Editable | Readonly | 说明 |
+|------|----------|----------|------|
+| 节点渲染 | ✅ | ✅ | React Flow 节点，显示 title + agent_id |
+| 边渲染 | ✅ | ✅ | 带箭头的有向边 |
+| MiniMap | ✅ | ✅ | 右下角缩略图 |
+| Controls | ✅ | ✅ | 缩放/适应画布控件 |
+| 点击节点 → 属性面板 | ✅ | ✅ | 只读模式也显示（但不可编辑） |
+| 点击边 → 属性面板 | ✅ | ✅ | 同上 |
+| 编辑属性 | ✅ | ❌ | title / agent_id / prompt / handoff_type |
+| 删除节点/边 | ✅ | ❌ | 面板按钮 + Delete 键 |
+| 拖拽连线 | ✅ | ❌ | handle 拖拽创建新边 |
+| 添加节点 | ✅ | ❌ | 工具栏按钮 |
+| 节点拖拽 | ✅ | ❌ | 自由拖拽改变位置 |
+| 自动布局 | ✅ | ❌ | dagre 算法一键排列 |
+| 布局持久化 | ✅ | ❌ | localStorage 存储/恢复 |
+| 节点定位 | ✅ | ❌ | 下拉选择自动定位高亮 |
+| Undo/Redo | ✅ | ❌ | 与 DagEditor 历史栈集成 |
+| 连线校验 | ✅ | — | self-loop / duplicate / cycle |
+| 小屏适配 | ✅ | ✅ | 480px 宽度下工具栏不遮挡节点 |
+
+### 22.6 E2E 测试覆盖
+
+43 个 Canvas 专项 E2E 测试，覆盖：
+
+- **预览**（3）：画布渲染、节点数量、空边状态
+- **交互**（3）：节点属性面板、边属性面板、MiniMap/Controls
+- **连字符节点 ID**（1）：边点击正确显示 from/to
+- **编辑**（4）：节点属性编辑同步、边 handoff_type 编辑、删除节点清理边、删除边
+- **agent_id 编辑**（1）：编辑后画布同步
+- **同标题切换**（1）：identityKey 正确区分同标题节点
+- **键盘快捷键**（2）：Delete 删除、Backspace 不误删
+- **Undo/Redo**（4）：编辑回退、删除恢复、重做、单一 Canvas
+- **图形编辑**（7）：添加节点、拖拽连线、自环/重复/cycle 校验、新增节点/边 undo/redo
+- **只读预览**（2）：无添加按钮、handle 隐藏
+- **节点拖拽**（6）：位置改变、自动布局、badge 不变、不产生历史、只读不可拖、拖拽后点击
+- **节点定位**（3）：选择定位、selected 样式、只读无定位控件
+- **小屏体验**（2）：工具栏不遮挡、面板无溢出
+- **布局持久化**（4）：位置恢复、自动布局清除旧位置、新增节点保留旧位置、不产生历史
+
+---
+
+*由 AI Company OS Phase 3 P0 生成 · 2026-07-08 · 最后更新：Phase 6.10 DAG Canvas*

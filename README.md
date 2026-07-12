@@ -2,7 +2,26 @@
 
 **版本 1.5.0**
 
-## 最新状态（2026-07-10）
+## 最新状态（2026-07-12）
+
+### Phase 6.10：DAG Canvas（前端图形化 DAG 编辑器） ✅ 已完成
+
+- ✅ **Canvas 预览**：模板卡片点击预览按钮打开 React Flow 画布，渲染节点/边/MiniMap/Controls
+- ✅ **节点选择与详情**：点击节点弹出属性面板（id / agent_id / title / prompt / 入边出边数）
+- ✅ **边选择与详情**：点击边弹出属性面板（from_node / to_node / handoff_type），支持含连字符节点 ID
+- ✅ **属性编辑**：节点 title / agent_id / prompt 和边 handoff_type 可在面板内编辑，修改即时同步到画布
+- ✅ **节点/边删除**：面板内删除按钮 + 确认对话框；选中后 Delete 键删除，自动清理关联边
+- ✅ **键盘安全**：输入框聚焦时 Backspace 不触发删除
+- ✅ **拖拽连线**：从 source handle 拖到 target handle 创建新边；自环 / 重复边 / cycle 三重校验并 toast 提示
+- ✅ **新增节点**：Canvas 工具栏「添加节点」按钮，自动生成唯一 ID
+- ✅ **节点拖拽**：editable 模式下节点可自由拖拽，只读预览不可拖拽
+- ✅ **自动布局**：dagre 算法自动排列，点击按钮一键恢复
+- ✅ **布局持久化**：拖拽位置存入 localStorage，关闭重开表单后恢复；自动布局后清除旧位置
+- ✅ **节点定位**：下拉选择节点自动定位并高亮，只读预览不显示定位控件
+- ✅ **Undo/Redo 集成**：编辑 title、删除节点/边、新增节点/边均支持撤销/重做；拖拽不产生历史
+- ✅ **只读预览隔离**：模板卡片的预览 Canvas 无「添加节点」按钮、handle 隐藏、节点不可拖拽
+- ✅ **小屏适配**：480px 宽度下工具栏不遮挡节点，详情面板输入框无水平溢出
+- ✅ **E2E 测试**：43 个 Canvas 专项用例全部通过（`npx playwright test e2e/dag-editor.spec.ts --grep "DAG Canvas"`）
 
 ### Phase 6.9：Graph Template Audit Retention Policy ✅ 已完成
 
@@ -120,6 +139,7 @@ cd frontend-new && npm run build              # ✅ 通过
 - `docs/phase4_image_generation_provider.md` — 第四阶段 Image Generation Provider 骨架验收
 - `docs/phase4_real_capabilities_acceptance.md` — 第四阶段真实能力接入最终验收文档
 - `docs/phase5_productization_acceptance.md` — 第五阶段产品化收口验收文档
+- `docs/phase6_dag_canvas_acceptance.md` — Phase 6.10 DAG Canvas 验收文档
 - `docs/business_pages_user_guide.md` — 业务页面使用说明
 - `docs/project_progress_snapshot_2026-07-06.md` — 详细进度快照
 - `docs/VISION.md` — 项目愿景
@@ -156,11 +176,11 @@ cd frontend-new && npm run build              # ✅ 通过
 
 ## 当前进度快照
 
-最后保存时间：2026-07-10
+最后保存时间：2026-07-12
 
 当前项目已推进到：
 
-> Phase 6.9 Graph Template Audit Retention Policy 已完成，系统已具备审计日志保留/清理能力，支持安全的运维清理操作
+> Phase 6.10 DAG Canvas（前端图形化 DAG 编辑器）已完成，系统已具备可视化编辑、拖拽连线、布局持久化等完整 Canvas 编辑能力
 
 已经完成：
 
@@ -194,7 +214,8 @@ cd frontend-new && npm run build              # ✅ 通过
   - ✅ Graph Template 更新：`PUT /boss/graph/templates/{id}` 更新已有模板，前端编辑模式，保留 created_at。
   - ✅ **Phase 6.8 Graph Template Audit Log**：9 种事件类型、敏感字段过滤、长文本截断、删除后保留、前端审计面板 + 事件筛选 + Pin UI。
   - ✅ **Phase 6.9 Audit Retention Policy**：审计存储查询、安全清理机制（dry_run 默认）、清理脚本、前端 Audit Storage UI。
-  - Graph Template 闭环：创建 → 列表 → 编辑 → 克隆 → 删除 → 按模板执行 → 结果可视化 → 审计日志 → 版本固定 → 审计保留/清理。
+  - ✅ **Phase 6.10 DAG Canvas**：React Flow 图形化编辑器，支持预览/选择详情/属性编辑/节点边删除/拖拽连线/新增节点/拖拽布局/自动布局/布局持久化/节点定位/undo-redo/只读隔离/小屏适配。
+  - Graph Template 闭环：创建 → 列表 → 编辑 → 克隆 → 删除 → 按模板执行 → 结果可视化 → 审计日志 → 版本固定 → 审计保留/清理 → **图形化 Canvas 编辑**。
 
 - **第四阶段（真实能力接入）** ✅ 核心闭环完成
   - ✅ **Phase 4.1 Research Web Search**：`web_search_service.py` 可替换搜索服务层，Mock / SerpAPI / Bing 三 provider。
@@ -217,12 +238,15 @@ cd frontend-new && npm run build              # ✅ 通过
 
 ## 下一步计划
 
-Phase 1–5 已全部完成。Phase 6.9（Audit Retention Policy）已完成。下一步建议继续 **Phase 6：平台化**：
+Phase 1–5 已全部完成。Phase 6.10（DAG Canvas）已完成。下一步建议继续 **Phase 6：平台化**：
 
-1. **前端 DAG 编辑器（P1）** — 从表单升级为图形化配置 nodes/edges
-2. **多用户权限（P1）** — 用户认证、团队协作
-3. **Docker 生产配置（P2）** — docker-compose.prod.yml、CI/CD
-4. **跨 Mission 协作（P2）** — 图模板跨任务数据传递
+1. ~~**前端 DAG 编辑器（P1）**~~ ✅ 已完成 — DAG Canvas 图形化编辑器
+2. **保存布局到后端（P2）** — 将 Canvas 拖拽布局持久化到模板 API，跨设备同步
+3. **批量选择（P2）** — Canvas 内框选多个节点批量移动/删除
+4. **节点模板库（P2）** — 预置常用 Agent 节点配置，拖入画布即创建
+5. **多用户权限（P1）** — 用户认证、团队协作
+6. **Docker 生产配置（P2）** — docker-compose.prod.yml、CI/CD
+7. **跨 Mission 协作（P2）** — 图模板跨任务数据传递
 
 当前边界：
 
@@ -247,6 +271,7 @@ Phase 1–5 已全部完成。Phase 6.9（Audit Retention Policy）已完成。�
 - 🩺 **部署体检** — 本地服务全量体检脚本
 - 📋 **模板审计日志** — 9 种事件类型、敏感字段过滤、删除后可追溯
 - 📌 **版本固定** — Pin 版本防止自动裁剪
+- 🎨 **DAG Canvas** — 图形化 DAG 编辑器（拖拽连线、属性编辑、自动布局、布局持久化）
 
 ## 🚀 快速开始
 
