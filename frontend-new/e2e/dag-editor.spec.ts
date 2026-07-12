@@ -102,6 +102,75 @@ function dagEditor(page: Page) {
   return page.getByRole("heading", { name: "DAG 编辑器", exact: true }).locator("..")
 }
 
+function sourceHandle(node: ReturnType<Page["locator"]>) {
+  return node.locator(".react-flow__handle.source")
+}
+
+function targetHandle(node: ReturnType<Page["locator"]>) {
+  return node.locator(".react-flow__handle.target")
+}
+
+async function dragHandleTo(
+  page: Page,
+  source: ReturnType<Page["locator"]>,
+  target: ReturnType<Page["locator"]>,
+) {
+  await source.scrollIntoViewIfNeeded()
+  await target.scrollIntoViewIfNeeded()
+  const sourceBox = await source.boundingBox()
+  const targetBox = await target.boundingBox()
+
+  if (!sourceBox || !targetBox) return
+
+  await page.mouse.move(
+    sourceBox.x + sourceBox.width / 2,
+    sourceBox.y + sourceBox.height / 2,
+  )
+  await page.mouse.down()
+  await page.mouse.move(
+    targetBox.x + targetBox.width / 2,
+    targetBox.y + targetBox.height / 2,
+    { steps: 10 },
+  )
+  await page.mouse.up()
+  await page.waitForTimeout(300)
+}
+
+async function dragNodeBy(
+  page: Page,
+  node: ReturnType<Page["locator"]>,
+  dx: number,
+  dy: number,
+) {
+  await node.scrollIntoViewIfNeeded()
+  const box = await node.boundingBox()
+  expect(box).not.toBeNull()
+
+  const startX = box!.x + box!.width / 2
+  const startY = box!.y + box!.height / 2
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  await page.mouse.move(startX + dx, startY + dy, { steps: 10 })
+  await page.mouse.up()
+  await page.waitForTimeout(300)
+}
+
+async function relativeNodeBox(
+  canvas: ReturnType<Page["locator"]>,
+  node: ReturnType<Page["locator"]>,
+) {
+  const canvasBox = await canvas.boundingBox()
+  const nodeBox = await node.boundingBox()
+  expect(canvasBox).not.toBeNull()
+  expect(nodeBox).not.toBeNull()
+  return {
+    x: nodeBox!.x - canvasBox!.x,
+    y: nodeBox!.y - canvasBox!.y,
+    width: nodeBox!.width,
+    height: nodeBox!.height,
+  }
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe("DAG 编辑器 — 创建模板", () => {
@@ -1694,5 +1763,1015 @@ test.describe("DAG Canvas 交互", () => {
 
     // Controls should exist
     await expect(canvas.locator(".react-flow__controls")).toBeVisible()
+  })
+})
+
+// ── Edge Click with Hyphenated Node IDs ─────────────────────────────────────
+
+test.describe("DAG Canvas — 边点击支持含连字符的节点 ID", () => {
+  let createdTemplateId: string | null = null
+
+  test.afterEach(async ({ request }) => {
+    await deleteTemplateFixture(request, createdTemplateId)
+    createdTemplateId = null
+  })
+
+  test("点击边显示正确的 from_node 和 to_node（含连字符）", async ({ page, request }) => {
+    // Create template with hyphenated node IDs
+    const response = await request.post("/boss/graph/templates", {
+      data: {
+        name: "Canvas-连字符测试",
+        description: "验证边点击支持含连字符的节点 ID",
+        goal_hint: "测试",
+        nodes: [
+          { id: "research-agent", agent_id: "research", title: "调研", prompt: "做调研" },
+          { id: "marketing-agent", agent_id: "marketing", title: "营销", prompt: "做营销" },
+        ],
+        edges: [{ from_node: "research-agent", to_node: "marketing-agent", handoff_type: "context" }],
+      },
+    })
+    expect(response.ok()).toBeTruthy()
+    const body = await response.json()
+    createdTemplateId = body.template.template_id as string
+
+    await goToBoss(page)
+
+    // Expand preview
+    const previewBtn = page.locator('[data-testid="preview-canvas-btn"]').first()
+    await expect(previewBtn).toBeVisible({ timeout: 10000 })
+    await previewBtn.click()
+    await page.waitForTimeout(500)
+
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible()
+
+    // Click the edge using its data-testid
+    const edge = canvas.locator('[data-testid="edge-research-agent-marketing-agent"]').first()
+    await expect(edge).toBeAttached()
+    await edge.click({ force: true })
+    await page.waitForTimeout(300)
+
+    // Detail panel should show correct from_node and to_node
+    const panel = page.locator('[data-testid="dag-detail-panel"]')
+    await expect(panel).toBeVisible()
+
+    await expect(panel.getByText("from_node")).toBeVisible()
+    await expect(panel.getByText("to_node")).toBeVisible()
+    // Verify the full hyphenated IDs are displayed correctly
+    await expect(panel.locator('span.font-mono', { hasText: "research-agent" }).first()).toBeVisible()
+    await expect(panel.locator('span.font-mono', { hasText: "marketing-agent" }).first()).toBeVisible()
+    await expect(panel.getByText("context")).toBeVisible()
+  })
+})
+
+// ── Editable Canvas ─────────────────────────────────────────────────────────
+
+test.describe("DAG Canvas 编辑", () => {
+  test.beforeEach(async ({ page }) => {
+    await goToBoss(page)
+    await openCreateForm(page)
+  })
+
+  test("点击节点可编辑属性并同步到画布", async ({ page }) => {
+    // The editable canvas should be visible in the create form
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Click the first node
+    const firstNode = canvas.locator(".react-flow__node").first()
+    await expect(firstNode).toBeVisible()
+    await firstNode.click()
+    await page.waitForTimeout(300)
+
+    // Detail panel should appear with editable fields
+    const panel = page.locator('[data-testid="dag-detail-panel"]')
+    await expect(panel).toBeVisible()
+
+    // The title field should be editable (contains "市场调研" from default draft)
+    const titleInput = panel.locator('[data-testid="canvas-edit-title"]')
+    await expect(titleInput).toBeVisible()
+    await expect(titleInput).toHaveValue("市场调研")
+
+    // Edit the title
+    await titleInput.clear()
+    await titleInput.fill("新标题")
+    await titleInput.blur()
+    await page.waitForTimeout(300)
+
+    // The node label in the canvas should update
+    await expect(canvas.locator(".react-flow__node").first().locator("text=新标题")).toBeVisible()
+  })
+
+  test("点击边可编辑 handoff_type", async ({ page }) => {
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Click the edge
+    const edge = canvas.locator('[data-testid="edge-research-marketing"]').first()
+    await expect(edge).toBeAttached()
+    await edge.click({ force: true })
+    await page.waitForTimeout(300)
+
+    const panel = page.locator('[data-testid="dag-detail-panel"]')
+    await expect(panel).toBeVisible()
+
+    // The handoff_type field should be editable
+    const handoffInput = panel.locator('[data-testid="canvas-edit-handoff_type"]')
+    await expect(handoffInput).toBeVisible()
+    await expect(handoffInput).toHaveValue("context")
+
+    // Edit handoff_type
+    await handoffInput.clear()
+    await handoffInput.fill("data_only")
+    await handoffInput.blur()
+    await page.waitForTimeout(300)
+
+    // Close and re-click the edge to verify the change persisted
+    await canvas.locator(".react-flow").click({ position: { x: 10, y: 10 } })
+    await page.waitForTimeout(200)
+
+    await edge.click({ force: true })
+    await page.waitForTimeout(300)
+
+    await expect(panel.locator('[data-testid="canvas-edit-handoff_type"]')).toHaveValue("data_only")
+  })
+
+  test("删除节点自动清理关联边", async ({ page }) => {
+    // Default draft: 2 nodes, 1 edge
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
+
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Click the first node
+    const firstNode = canvas.locator(".react-flow__node").first()
+    await firstNode.click()
+    await page.waitForTimeout(300)
+
+    const panel = page.locator('[data-testid="dag-detail-panel"]')
+    await expect(panel).toBeVisible()
+
+    // Click delete button
+    await panel.locator('[data-testid="canvas-delete-node-btn"]').click()
+    await page.waitForTimeout(200)
+
+    // Confirm deletion
+    await panel.locator('[data-testid="canvas-confirm-delete-node"]').click()
+    await page.waitForTimeout(300)
+
+    // DagEditor badge should show 1 node, 0 edges
+    await expect(dagEditor(page).getByText("1 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("0 边", { exact: true })).toBeVisible()
+
+    // Canvas should render 1 node
+    const flowNodes = canvas.locator(".react-flow__node")
+    await expect(flowNodes).toHaveCount(1)
+  })
+
+  test("删除边", async ({ page }) => {
+    // Default draft: 2 nodes, 1 edge
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
+
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Click the edge
+    const edge = canvas.locator('[data-testid="edge-research-marketing"]').first()
+    await expect(edge).toBeAttached()
+    await edge.click({ force: true })
+    await page.waitForTimeout(300)
+
+    const panel = page.locator('[data-testid="dag-detail-panel"]')
+    await expect(panel).toBeVisible()
+
+    // Click delete edge button
+    await panel.locator('[data-testid="canvas-delete-edge-btn"]').click()
+    await page.waitForTimeout(300)
+
+    // DagEditor badge should show 2 nodes, 0 edges
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("0 边", { exact: true })).toBeVisible()
+  })
+})
+
+// ── agent_id 编辑 ──────────────────────────────────────────────────────────
+
+test.describe("DAG Canvas 编辑 — agent_id 可编辑", () => {
+  test.beforeEach(async ({ page }) => {
+    await goToBoss(page)
+    await openCreateForm(page)
+  })
+
+  test("编辑 agent_id 并同步到画布", async ({ page }) => {
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Click first node (research)
+    const firstNode = canvas.locator(".react-flow__node").first()
+    await firstNode.click()
+    await page.waitForTimeout(300)
+
+    const panel = page.locator('[data-testid="dag-detail-panel"]')
+    await expect(panel).toBeVisible()
+
+    // agent_id should be editable and show "research"
+    const agentInput = panel.locator('[data-testid="canvas-edit-agent_id"]')
+    await expect(agentInput).toBeVisible()
+    await expect(agentInput).toHaveValue("research")
+
+    // Edit agent_id
+    await agentInput.clear()
+    await agentInput.fill("research-v2")
+    await agentInput.blur()
+    await page.waitForTimeout(300)
+
+    // The node sublabel in the canvas should update to show the new agent_id
+    await expect(canvas.locator(".react-flow__node").first().locator("text=research-v2")).toBeVisible()
+  })
+})
+
+// ── identityKey 同标题切换 ─────────────────────────────────────────────────
+
+test.describe("DAG Canvas 编辑 — 相同标题节点切换", () => {
+  test("两个节点 title 相同，编辑后切换，输入框正确重置", async ({ page }) => {
+    // Clear any saved draft first
+    await page.goto("/app?page=boss")
+    await page.evaluate((key) => localStorage.removeItem(key), DRAFT_STORAGE_KEY)
+    await page.waitForTimeout(500)
+
+    await goToBoss(page)
+    const cancelBtn = page.locator('[data-testid="confirm-dialog-cancel"]')
+    if (await cancelBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await cancelBtn.click()
+      await page.waitForTimeout(300)
+    }
+
+    // Import a draft with two nodes that have the same title
+    const sameTitleDraft = {
+      name: "同标题测试",
+      description: "两个节点 title 相同",
+      goal_hint: "测试",
+      nodes: [
+        { id: "node-a", agent_id: "research", task_type: "", title: "相同标题", prompt: "A 的 prompt" },
+        { id: "node-b", agent_id: "marketing", task_type: "", title: "相同标题", prompt: "B 的 prompt" },
+      ],
+      edges: [{ from_node: "node-a", to_node: "node-b", handoff_type: "context" }],
+    }
+    const fileInput = page.locator('input[type="file"][accept=".json,application/json"]')
+    await fileInput.setInputFiles(jsonUpload(sameTitleDraft))
+    await page.waitForTimeout(500)
+
+    // The editable canvas should be visible in the create form
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Click first node (node-a)
+    const nodes = canvas.locator(".react-flow__node")
+    await nodes.first().click()
+    await page.waitForTimeout(300)
+
+    const panel = page.locator('[data-testid="dag-detail-panel"]')
+    await expect(panel).toBeVisible()
+
+    // Edit title of first node
+    const titleInput = panel.locator('[data-testid="canvas-edit-title"]')
+    await expect(titleInput).toHaveValue("相同标题")
+    await titleInput.clear()
+    await titleInput.fill("A 的新标题")
+    await titleInput.blur()
+    await page.waitForTimeout(300)
+
+    // Verify edit applied
+    await expect(titleInput).toHaveValue("A 的新标题")
+
+    // Click pane to deselect
+    await canvas.locator(".react-flow").click({ position: { x: 10, y: 10 } })
+    await page.waitForTimeout(200)
+
+    // Click second node (node-b) — also has title "相同标题"
+    await nodes.nth(1).click()
+    await page.waitForTimeout(300)
+
+    // The title input should show "相同标题" (node-b's value), NOT "A 的新标题"
+    const titleInput2 = panel.locator('[data-testid="canvas-edit-title"]')
+    await expect(titleInput2).toHaveValue("相同标题")
+  })
+})
+
+// ── Delete/Backspace 快捷键 ───────────────────────────────────────────────
+
+test.describe("DAG Canvas 编辑 — 键盘快捷键", () => {
+  test.beforeEach(async ({ page }) => {
+    await goToBoss(page)
+    await openCreateForm(page)
+  })
+
+  test("选中节点后按 Delete 删除节点及关联边", async ({ page }) => {
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
+
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Click first node to select it
+    const firstNode = canvas.locator(".react-flow__node").first()
+    await firstNode.click()
+    await page.waitForTimeout(300)
+
+    // Panel should be visible (confirms selection)
+    const panel = page.locator('[data-testid="dag-detail-panel"]')
+    await expect(panel).toBeVisible()
+
+    // Press Delete key
+    await page.keyboard.press("Delete")
+    await page.waitForTimeout(300)
+
+    // Node and edge should be removed
+    await expect(dagEditor(page).getByText("1 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("0 边", { exact: true })).toBeVisible()
+
+    // Canvas should render 1 node
+    const flowNodes = canvas.locator(".react-flow__node")
+    await expect(flowNodes).toHaveCount(1)
+  })
+
+  test("输入框聚焦时按 Backspace 不触发删除", async ({ page }) => {
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Click first node to select it
+    const firstNode = canvas.locator(".react-flow__node").first()
+    await firstNode.click()
+    await page.waitForTimeout(300)
+
+    const panel = page.locator('[data-testid="dag-detail-panel"]')
+    await expect(panel).toBeVisible()
+
+    // Focus the title input inside the detail panel
+    const titleInput = panel.locator('[data-testid="canvas-edit-title"]')
+    await titleInput.click()
+    await page.waitForTimeout(100)
+
+    // Press Backspace while input is focused — should NOT delete the node
+    await page.keyboard.press("Backspace")
+    await page.waitForTimeout(200)
+
+    // Both nodes should still exist
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
+
+    // Canvas should still render 2 nodes
+    const flowNodes = canvas.locator(".react-flow__node")
+    await expect(flowNodes).toHaveCount(2)
+  })
+})
+
+// ── Canvas undo/redo integration ─────────────────────────────────────────
+
+test.describe("DAG Canvas — undo/redo integration", () => {
+  test.beforeEach(async ({ page }) => {
+    await goToBoss(page)
+    await openCreateForm(page)
+    // Wait for DagEditor and canvas to be ready
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+  })
+
+  test("Canvas 编辑节点 title 后点击撤销按钮，Canvas 节点标题回退", async ({ page }) => {
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+
+    // Click first node in canvas to open detail panel
+    const firstNode = canvas.locator(".react-flow__node").first()
+    await firstNode.click()
+    await page.waitForTimeout(300)
+
+    const panel = page.locator('[data-testid="dag-detail-panel"]')
+    await expect(panel).toBeVisible()
+
+    // Edit the title field
+    const titleInput = panel.locator('[data-testid="canvas-edit-title"]')
+    await titleInput.clear()
+    await titleInput.fill("新标题ABC")
+    await titleInput.blur()
+    await page.waitForTimeout(300)
+
+    // Verify canvas node label updated
+    await expect(canvas.locator(".react-flow__node").getByText("新标题ABC")).toBeVisible()
+
+    // Click DagEditor's undo button
+    const undoBtn = page.locator('[data-testid="undo-btn"]')
+    await undoBtn.click()
+    await page.waitForTimeout(300)
+
+    // Canvas title should revert
+    await expect(canvas.locator(".react-flow__node").getByText("新标题ABC")).not.toBeVisible()
+  })
+
+  test("Canvas 删除节点后撤销，节点和关联边恢复", async ({ page }) => {
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+
+    // Verify initial state: 2 nodes, 1 edge
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
+
+    // Click first node to select it
+    const firstNode = canvas.locator(".react-flow__node").first()
+    await firstNode.click()
+    await page.waitForTimeout(300)
+
+    const panel = page.locator('[data-testid="dag-detail-panel"]')
+    await expect(panel).toBeVisible()
+
+    // Delete the node via canvas delete button
+    const deleteBtn = panel.locator('[data-testid="canvas-delete-node-btn"]')
+    await deleteBtn.click()
+    await page.waitForTimeout(200)
+
+    // Confirm deletion
+    const confirmBtn = panel.locator('[data-testid="canvas-confirm-delete-node"]')
+    await confirmBtn.click()
+    await page.waitForTimeout(300)
+
+    // Verify node was deleted: 1 node, 0 edges
+    await expect(dagEditor(page).getByText("1 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("0 边", { exact: true })).toBeVisible()
+
+    // Click undo
+    const undoBtn = page.locator('[data-testid="undo-btn"]')
+    await undoBtn.click()
+    await page.waitForTimeout(300)
+
+    // Verify node and edge restored: 2 nodes, 1 edge
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
+    const flowNodes = canvas.locator(".react-flow__node")
+    await expect(flowNodes).toHaveCount(2)
+  })
+
+  test("撤销后再重做，删除状态恢复", async ({ page }) => {
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+
+    // Click first node to select it
+    const firstNode = canvas.locator(".react-flow__node").first()
+    await firstNode.click()
+    await page.waitForTimeout(300)
+
+    const panel = page.locator('[data-testid="dag-detail-panel"]')
+    await expect(panel).toBeVisible()
+
+    // Delete the node
+    const deleteBtn = panel.locator('[data-testid="canvas-delete-node-btn"]')
+    await deleteBtn.click()
+    await page.waitForTimeout(200)
+    const confirmBtn = panel.locator('[data-testid="canvas-confirm-delete-node"]')
+    await confirmBtn.click()
+    await page.waitForTimeout(300)
+
+    // Verify deleted
+    await expect(dagEditor(page).getByText("1 节点", { exact: true })).toBeVisible()
+
+    // Undo
+    const undoBtn = page.locator('[data-testid="undo-btn"]')
+    await undoBtn.click()
+    await page.waitForTimeout(300)
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+
+    // Redo
+    const redoBtn = page.locator('[data-testid="redo-btn"]')
+    await redoBtn.click()
+    await page.waitForTimeout(300)
+
+    // Delete state should be restored
+    await expect(dagEditor(page).getByText("1 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("0 边", { exact: true })).toBeVisible()
+    const flowNodes = canvas.locator(".react-flow__node")
+    await expect(flowNodes).toHaveCount(1)
+  })
+
+  test("boss 页面不出现两个可编辑 Canvas", async ({ page }) => {
+    // Only one canvas should exist inside DagEditor (the editable one)
+    // The readonly canvases in template cards are separate
+    const canvases = page.locator('[data-testid="dag-canvas"]')
+    // There should be exactly 1 editable canvas (inside DagEditor)
+    // Template preview canvases only appear when expanded, which doesn't happen on form open
+    const count = await canvases.count()
+    expect(count).toBe(1)
+  })
+})
+
+// ── Canvas 图形编辑（拖拽连线 + 添加节点）────────────────────────────────
+
+test.describe("DAG Canvas 图形编辑", () => {
+  test.beforeEach(async ({ page }) => {
+    await goToBoss(page)
+    await openCreateForm(page)
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+  })
+
+  test("Canvas 添加节点后，DagEditor badge 从 2 节点变 3 节点", async ({ page }) => {
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Click the "添加节点" button inside the canvas
+    const addBtn = canvas.locator('[data-testid="canvas-add-node-btn"]')
+    await expect(addBtn).toBeVisible()
+    await addBtn.click()
+    await page.waitForTimeout(300)
+
+    // DagEditor badge should update to 3 nodes
+    await expect(dagEditor(page).getByText("3 节点", { exact: true })).toBeVisible()
+
+    // Canvas should render 3 nodes
+    const flowNodes = canvas.locator(".react-flow__node")
+    await expect(flowNodes).toHaveCount(3)
+  })
+
+  test("Canvas 拖拽连线创建边，边数 +1", async ({ page }) => {
+    // First add a new node via canvas button
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    const addBtn = canvas.locator('[data-testid="canvas-add-node-btn"]')
+    await addBtn.click()
+    await page.waitForTimeout(300)
+
+    // Should now have 3 nodes, 1 edge (original research -> marketing)
+    await expect(dagEditor(page).getByText("3 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
+
+    // Drag from research's source handle to the new node's target handle
+    // React Flow handles are rendered as small circles on node edges
+    const nodes = canvas.locator(".react-flow__node")
+    const sourceNode = nodes.nth(0) // research
+    const targetNode = nodes.nth(2) // new node (node_2)
+
+    // Get the source handle (right side of research node) and target handle (left side of new node)
+    const source = sourceHandle(sourceNode)
+    const target = targetHandle(targetNode)
+
+    await dragHandleTo(page, source, target)
+
+    // Edge count should increase to 2
+    await expect(dagEditor(page).getByText("2 边", { exact: true }).first()).toBeVisible()
+  })
+
+  test("自环拖拽不新增边", async ({ page }) => {
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Initial: 2 nodes, 1 edge
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
+
+    // Try to drag from research's source handle to research's target handle (self-loop)
+    const firstNode = canvas.locator(".react-flow__node").first()
+    const source = sourceHandle(firstNode)
+    const target = targetHandle(firstNode)
+
+    await dragHandleTo(page, source, target)
+
+    // Edge count should stay at 1
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
+
+    // Error toast should appear
+    await expect(canvas.locator('[data-testid="canvas-connection-error"]')).toBeVisible()
+  })
+
+  test("重复边拖拽不新增边", async ({ page }) => {
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Initial: 2 nodes, 1 edge (research -> marketing)
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
+
+    // Try to drag from research to marketing again (duplicate edge)
+    const sourceNode = canvas.locator(".react-flow__node").nth(0) // research
+    const targetNode = canvas.locator(".react-flow__node").nth(1) // marketing
+
+    const source = sourceHandle(sourceNode)
+    const target = targetHandle(targetNode)
+
+    await dragHandleTo(page, source, target)
+
+    // Edge count should stay at 1
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
+
+    // Error toast should appear
+    await expect(canvas.locator('[data-testid="canvas-connection-error"]')).toBeVisible()
+  })
+
+  test("会造成 cycle 的边拖拽不新增边", async ({ page }) => {
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Initial: 2 nodes, 1 edge (research -> marketing)
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
+
+    // Try to drag from marketing to research (would create cycle)
+    const sourceNode = canvas.locator(".react-flow__node").nth(1) // marketing
+    const targetNode = canvas.locator(".react-flow__node").nth(0) // research
+
+    const source = sourceHandle(sourceNode)
+    const target = targetHandle(targetNode)
+
+    await dragHandleTo(page, source, target)
+
+    // Edge count should stay at 1
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
+
+    // Error toast should appear
+    await expect(canvas.locator('[data-testid="canvas-connection-error"]')).toBeVisible()
+  })
+
+  test("Canvas 新增节点后撤销/重做正常", async ({ page }) => {
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Add node via canvas button
+    const addBtn = canvas.locator('[data-testid="canvas-add-node-btn"]')
+    await addBtn.click()
+    await page.waitForTimeout(300)
+
+    await expect(dagEditor(page).getByText("3 节点", { exact: true })).toBeVisible()
+
+    // Undo
+    await page.locator('[data-testid="undo-btn"]').click()
+    await page.waitForTimeout(300)
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+
+    // Redo
+    await page.locator('[data-testid="redo-btn"]').click()
+    await page.waitForTimeout(300)
+    await expect(dagEditor(page).getByText("3 节点", { exact: true })).toBeVisible()
+  })
+
+  test("Canvas 新增边后撤销/重做正常", async ({ page }) => {
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Add a new node first (so we have a valid non-duplicate target)
+    const addBtn = canvas.locator('[data-testid="canvas-add-node-btn"]')
+    await addBtn.click()
+    await page.waitForTimeout(300)
+    await expect(dagEditor(page).getByText("3 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
+
+    // Drag from research's source to the new node's target
+    const nodes = canvas.locator(".react-flow__node")
+    const sourceNode = nodes.nth(0) // research
+    const targetNode = nodes.nth(2) // new node
+
+    const source = sourceHandle(sourceNode)
+    const target = targetHandle(targetNode)
+
+    await dragHandleTo(page, source, target)
+
+    await expect(dagEditor(page).getByText("2 边", { exact: true }).first()).toBeVisible()
+
+    // Undo — edge should be removed
+    await page.locator('[data-testid="undo-btn"]').click()
+    await page.waitForTimeout(300)
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
+
+    // Redo — edge should come back
+    await page.locator('[data-testid="redo-btn"]').click()
+    await page.waitForTimeout(300)
+    await expect(dagEditor(page).getByText("2 边", { exact: true }).first()).toBeVisible()
+  })
+})
+
+// ── Canvas 只读预览不可编辑 ──────────────────────────────────────────────
+
+test.describe("DAG Canvas 只读预览", () => {
+  let createdTemplateId: string | null = null
+
+  test.afterEach(async ({ request }) => {
+    await deleteTemplateFixture(request, createdTemplateId)
+    createdTemplateId = null
+  })
+
+  test("只读预览里没有「添加节点」按钮", async ({ page, request }) => {
+    createdTemplateId = await createTemplateFixture(request, "Canvas-只读测试")
+
+    await goToBoss(page)
+
+    // Expand the readonly canvas preview
+    const previewBtn = page.locator('[data-testid="preview-canvas-btn"]').first()
+    await expect(previewBtn).toBeVisible({ timeout: 10000 })
+    await previewBtn.click()
+    await page.waitForTimeout(500)
+
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible()
+
+    // "添加节点" button should NOT exist inside the readonly canvas
+    const addBtn = canvas.locator('[data-testid="canvas-add-node-btn"]')
+    await expect(addBtn).not.toBeVisible()
+  })
+
+  test("只读预览里节点不可连线", async ({ page, request }) => {
+    createdTemplateId = await createTemplateFixture(request, "Canvas-只读连线测试")
+
+    await goToBoss(page)
+
+    // Expand the readonly canvas preview
+    const previewBtn = page.locator('[data-testid="preview-canvas-btn"]').first()
+    await expect(previewBtn).toBeVisible({ timeout: 10000 })
+    await previewBtn.click()
+    await page.waitForTimeout(500)
+
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible()
+
+    // Handles should be hidden (not interactable)
+    // The react-flow__handle elements should have visibility:hidden
+    const handles = canvas.locator(".react-flow__handle")
+    const count = await handles.count()
+    for (let i = 0; i < count; i++) {
+      const style = await handles.nth(i).getAttribute("style")
+      expect(style).toContain("visibility: hidden")
+    }
+  })
+})
+
+// ── Canvas 节点拖拽 ──────────────────────────────────────────────────────
+
+test.describe("DAG Canvas 节点拖拽", () => {
+  test.beforeEach(async ({ page }) => {
+    await goToBoss(page)
+    await openCreateForm(page)
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+  })
+
+  test("editable Canvas 拖拽节点后位置改变", async ({ page }) => {
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    const firstNode = canvas.locator(".react-flow__node").first()
+    const boxBefore = await firstNode.boundingBox()
+    expect(boxBefore).not.toBeNull()
+
+    // Drag node 150px right, 50px down
+    await dragNodeBy(page, firstNode, 150, 50)
+
+    const boxAfter = await firstNode.boundingBox()
+    expect(boxAfter).not.toBeNull()
+
+    // Position should have changed significantly (allow some tolerance for layout shifts)
+    const moved = Math.abs(boxAfter!.x - boxBefore!.x) > 20 || Math.abs(boxAfter!.y - boxBefore!.y) > 20
+    expect(moved).toBe(true)
+  })
+
+  test("自动布局后节点回到 dagre 布局位置", async ({ page }) => {
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    const firstNode = canvas.locator(".react-flow__node").first()
+    const boxBefore = await firstNode.boundingBox()
+    expect(boxBefore).not.toBeNull()
+    const relBefore = await relativeNodeBox(canvas, firstNode)
+
+    // Drag node to a new position
+    await dragNodeBy(page, firstNode, 200, 80)
+
+    // Verify it moved
+    const boxDragged = await firstNode.boundingBox()
+    expect(boxDragged).not.toBeNull()
+    expect(Math.abs(boxDragged!.x - boxBefore!.x) > 20 || Math.abs(boxDragged!.y - boxBefore!.y) > 20).toBe(true)
+
+    // Click auto-layout button
+    const autoLayoutBtn = canvas.locator('[data-testid="canvas-auto-layout-btn"]')
+    await expect(autoLayoutBtn).toBeVisible()
+    await autoLayoutBtn.click()
+    await page.waitForTimeout(500)
+
+    // After auto-layout, the node should be back near its original dagre position
+    // (within tolerance since fitView may shift things slightly)
+    const boxAfterLayout = await firstNode.boundingBox()
+    expect(boxAfterLayout).not.toBeNull()
+    const relAfterLayout = await relativeNodeBox(canvas, firstNode)
+    expect(Math.abs(relAfterLayout.x - relBefore.x)).toBeLessThan(30)
+    expect(Math.abs(relAfterLayout.y - relBefore.y)).toBeLessThan(30)
+  })
+
+  test("拖拽节点后 DagEditor 节点/边 badge 不变", async ({ page }) => {
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Verify initial badges
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
+
+    // Drag a node
+    const firstNode = canvas.locator(".react-flow__node").first()
+    const box = await firstNode.boundingBox()
+    expect(box).not.toBeNull()
+    await dragNodeBy(page, firstNode, 100, 50)
+
+    // Badges should be unchanged
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+    await expect(dagEditor(page).getByText("1 边", { exact: true })).toBeVisible()
+  })
+
+  test("拖拽节点后撤销按钮状态不变化（不产生历史）", async ({ page }) => {
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Undo button should be disabled initially (no edits yet)
+    const undoBtn = page.locator('[data-testid="undo-btn"]')
+    await expect(undoBtn).toBeDisabled()
+
+    // Drag a node
+    const firstNode = canvas.locator(".react-flow__node").first()
+    const box = await firstNode.boundingBox()
+    expect(box).not.toBeNull()
+    await dragNodeBy(page, firstNode, 100, 50)
+
+    // Undo button should still be disabled — drag didn't create history
+    await expect(undoBtn).toBeDisabled()
+  })
+
+  test("只读预览节点不可拖拽", async ({ page, request }) => {
+    // Create a fixture for readonly preview
+    const templateId = await createTemplateFixture(request, "Canvas-只读拖拽测试")
+
+    await goToBoss(page)
+
+    // Expand the readonly canvas preview
+    const previewBtn = page.locator('[data-testid="preview-canvas-btn"]').first()
+    await expect(previewBtn).toBeVisible({ timeout: 10000 })
+    await previewBtn.click()
+    await page.waitForTimeout(500)
+
+    const readonlyCanvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(readonlyCanvas).toBeVisible()
+
+    // First node should NOT be draggable
+    const firstNode = readonlyCanvas.locator(".react-flow__node").first()
+    const draggable = await firstNode.getAttribute("draggable")
+    expect(draggable).not.toBe("true")
+
+    // Cleanup
+    await deleteTemplateFixture(request, templateId)
+  })
+
+  test("拖拽后点击节点仍显示属性面板", async ({ page }) => {
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    const firstNode = canvas.locator(".react-flow__node").first()
+    const box = await firstNode.boundingBox()
+    expect(box).not.toBeNull()
+
+    // Drag the node a small distance
+    await dragNodeBy(page, firstNode, 100, 0)
+
+    // Now click the node (not drag)
+    await firstNode.click()
+    await page.waitForTimeout(300)
+
+    // Detail panel should appear
+    const panel = page.locator('[data-testid="dag-detail-panel"]')
+    await expect(panel).toBeVisible()
+    await expect(panel.locator('[data-testid="canvas-edit-title"]')).toHaveValue("市场调研")
+  })
+})
+
+// ── Canvas 节点定位 ─────────────────────────────────────────────────────
+
+test.describe("DAG Canvas 节点定位", () => {
+  test.beforeEach(async ({ page }) => {
+    await goToBoss(page)
+    await openCreateForm(page)
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+  })
+
+  test("选择节点后详情面板显示该节点属性", async ({ page }) => {
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    const select = canvas.locator('[data-testid="canvas-locate-node-select"]')
+    await expect(select).toBeVisible()
+
+    // Select "marketing" node (title: "营销文案")
+    await select.selectOption("marketing")
+    await page.waitForTimeout(500)
+
+    // Detail panel should show marketing node properties
+    const panel = page.locator('[data-testid="dag-detail-panel"]')
+    await expect(panel).toBeVisible()
+    await expect(panel.locator('[data-testid="canvas-edit-title"]')).toHaveValue("营销文案")
+    await expect(panel.locator('[data-testid="canvas-edit-agent_id"]')).toHaveValue("marketing")
+  })
+
+  test("选择节点后节点处于 selected 样式", async ({ page }) => {
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    const select = canvas.locator('[data-testid="canvas-locate-node-select"]')
+    await select.selectOption("marketing")
+    await page.waitForTimeout(500)
+
+    // The marketing node should have the selected ring style
+    const marketingNode = canvas.locator(".react-flow__node").nth(1)
+    await expect(marketingNode.locator(".ring-2")).toBeVisible()
+  })
+
+  test("只读预览不显示节点定位控件", async ({ page, request }) => {
+    const templateId = await createTemplateFixture(request, "Canvas-只读定位测试")
+
+    await goToBoss(page)
+
+    // Expand the readonly canvas preview
+    const previewBtn = page.locator('[data-testid="preview-canvas-btn"]').first()
+    await expect(previewBtn).toBeVisible({ timeout: 10000 })
+    await previewBtn.click()
+    await page.waitForTimeout(500)
+
+    const readonlyCanvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(readonlyCanvas).toBeVisible()
+
+    // Locate dropdown should NOT exist in readonly canvas
+    const locateSelect = readonlyCanvas.locator('[data-testid="canvas-locate-node-select"]')
+    await expect(locateSelect).toHaveCount(0)
+
+    // Cleanup
+    await deleteTemplateFixture(request, templateId)
+  })
+})
+
+// ── Canvas 小屏体验 ─────────────────────────────────────────────────────
+
+test.describe("DAG Canvas 小屏体验", () => {
+  test("小屏 viewport 下 Canvas 工具区可见且不遮挡第一个节点", async ({ page }) => {
+    // Set a small viewport
+    await page.setViewportSize({ width: 480, height: 800 })
+    await goToBoss(page)
+    await openCreateForm(page)
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Toolbar should be visible
+    const addBtn = canvas.locator('[data-testid="canvas-add-node-btn"]')
+    await expect(addBtn).toBeVisible()
+
+    // First ReactFlow node should also be visible (not hidden behind toolbar)
+    const firstNode = canvas.locator(".react-flow__node").first()
+    await expect(firstNode).toBeVisible()
+
+    // Verify the toolbar and node don't fully overlap
+    const toolbarBox = await addBtn.boundingBox()
+    const nodeBox = await firstNode.boundingBox()
+    expect(toolbarBox).not.toBeNull()
+    expect(nodeBox).not.toBeNull()
+
+    // The node's top should be below the toolbar's bottom (with some tolerance)
+    // OR they overlap by less than 20px (toolbar is small enough)
+    const overlap = toolbarBox!.y + toolbarBox!.height - nodeBox!.y
+    expect(overlap).toBeLessThan(30)
+
+    // Restore default viewport
+    await page.setViewportSize({ width: 1280, height: 720 })
+  })
+
+  test("小屏 viewport 下详情面板输入框没有水平溢出", async ({ page }) => {
+    await page.setViewportSize({ width: 480, height: 800 })
+    await goToBoss(page)
+    await openCreateForm(page)
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Click a node to open detail panel
+    const firstNode = canvas.locator(".react-flow__node").first()
+    await firstNode.click()
+    await page.waitForTimeout(300)
+
+    const panel = page.locator('[data-testid="dag-detail-panel"]')
+    await expect(panel).toBeVisible()
+
+    // Check that the panel doesn't overflow the canvas width
+    const canvasBox = await canvas.boundingBox()
+    const panelBox = await panel.boundingBox()
+    expect(canvasBox).not.toBeNull()
+    expect(panelBox).not.toBeNull()
+
+    // Panel should not extend beyond canvas right edge (with tolerance)
+    expect(panelBox!.x + panelBox!.width).toBeLessThanOrEqual(canvasBox!.x + canvasBox!.width + 5)
+
+    // Input fields should be visible and not overflow
+    const titleInput = panel.locator('[data-testid="canvas-edit-title"]')
+    await expect(titleInput).toBeVisible()
+    const inputBox = await titleInput.boundingBox()
+    expect(inputBox).not.toBeNull()
+    // Input should fit within the panel
+    expect(inputBox!.x + inputBox!.width).toBeLessThanOrEqual(panelBox!.x + panelBox!.width + 5)
+
+    await page.setViewportSize({ width: 1280, height: 720 })
   })
 })

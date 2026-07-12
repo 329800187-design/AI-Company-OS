@@ -2379,6 +2379,7 @@ export default function BossPage() {
                 }}
                 errors={createFormError ? createFormError.split("\n") : []}
                 disabled={createSubmitting}
+                showCanvas
               />
 
               {/* 操作按钮 */}

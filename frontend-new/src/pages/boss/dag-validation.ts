@@ -65,6 +65,32 @@ function detectCycle(nodeIds: string[], edges: DagEdge[]): string[] | null {
   return null
 }
 
+/**
+ * Check whether adding edge (from → to) to the given edge set would be valid.
+ * Returns null if OK, or an error message string describing why it's rejected.
+ */
+export function canConnectEdge(
+  from: string,
+  to: string,
+  existingEdges: Array<{ from_node: string; to_node: string }>,
+  nodeIds: string[],
+): string | null {
+  const f = from.trim()
+  const t = to.trim()
+  if (!f || !t) return "节点 ID 不能为空"
+  if (f === t) return "自环不允许"
+  if (!nodeIds.includes(f) || !nodeIds.includes(t)) return "节点不存在"
+  const dup = existingEdges.some(
+    (e) => e.from_node.trim() === f && e.to_node.trim() === t,
+  )
+  if (dup) return "重复边不允许"
+  // Cycle check: temporarily add the edge and run detectCycle
+  const testEdges = [...existingEdges, { from_node: f, to_node: t }]
+  const cycle = detectCycle(nodeIds, testEdges)
+  if (cycle) return `会造成循环: ${cycle.join(" → ")}`
+  return null
+}
+
 export function validateDag(nodes: DagNode[], edges: DagEdge[]): DagValidationError[] {
   const errors: DagValidationError[] = []
   const nodeIds = nodes.map((node) => node.id.trim())

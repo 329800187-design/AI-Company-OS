@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { cn } from "@/lib/utils"
+import { DagCanvas } from "./DagCanvas"
 import { validateDag } from "./dag-validation"
 import { useDagHistory } from "@/hooks/useDagHistory"
 
@@ -36,6 +37,7 @@ export interface DagEditorProps {
   onChange: (draft: GraphTemplateDraft) => void
   errors: string[]
   disabled?: boolean
+  showCanvas?: boolean
 }
 
 // ── Merge session tracking ───────────────────────────────────
@@ -115,7 +117,7 @@ const COMMON_AGENTS = [
 
 // ── Component ─────────────────────────────────────────────────
 
-export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps) {
+export function DagEditor({ draft, onChange, errors, disabled, showCanvas }: DagEditorProps) {
   const [editingNodeId, setEditingNodeId] = useState<number | null>(null)
   const [editingEdgeIdx, setEditingEdgeIdx] = useState<number | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null)
@@ -148,6 +150,15 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
       }
     },
     [history],
+  )
+
+  /** DagCanvas onChange — commits canvas edits as undo checkpoints */
+  const handleCanvasChange = useCallback(
+    (nodes: GraphNodeDraft[], edges: GraphEdgeDraft[]) => {
+      endMergeSession()
+      history.set({ ...history.state, nodes, edges })
+    },
+    [history, endMergeSession],
   )
 
   // Sync external draft changes (template switch / clone) into history
@@ -368,6 +379,21 @@ export function DagEditor({ draft, onChange, errors, disabled }: DagEditorProps)
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Canvas (editable graph visualization) ── */}
+      {showCanvas && currentDraft.nodes.length > 0 && (
+        <div className="mb-5">
+          <h5 className="text-xs font-medium text-[#8A8A8A] mb-2 uppercase tracking-wider">
+            画布预览 / Canvas — 点击节点或边可编辑属性
+          </h5>
+          <DagCanvas
+            nodes={currentDraft.nodes}
+            edges={currentDraft.edges}
+            editable
+            onChange={handleCanvasChange}
+          />
         </div>
       )}
 
