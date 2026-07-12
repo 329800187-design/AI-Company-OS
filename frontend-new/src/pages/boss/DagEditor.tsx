@@ -115,12 +115,31 @@ const COMMON_AGENTS = [
   { id: "website", label: "落地页" },
 ]
 
+/** Simple hash for stable localStorage key from sorted node IDs */
+function hashNodeIds(ids: string[]): string {
+  const sorted = [...ids].sort().join(",")
+  let hash = 0
+  for (let i = 0; i < sorted.length; i++) {
+    hash = ((hash << 5) - hash + sorted.charCodeAt(i)) | 0
+  }
+  return Math.abs(hash).toString(36)
+}
+
 // ── Component ─────────────────────────────────────────────────
 
 export function DagEditor({ draft, onChange, errors, disabled, showCanvas }: DagEditorProps) {
   const [editingNodeId, setEditingNodeId] = useState<number | null>(null)
   const [editingEdgeIdx, setEditingEdgeIdx] = useState<number | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null)
+
+  // Stable layout storage key — computed once from initial draft, does not change on edits
+  const layoutStorageKeyRef = useRef<string | undefined>(undefined)
+  if (layoutStorageKeyRef.current === undefined) {
+    const nodeIds = draft.nodes.map((n) => n.id.trim()).filter(Boolean)
+    layoutStorageKeyRef.current = nodeIds.length > 0
+      ? `dag_layout_${draft.name}_${hashNodeIds(nodeIds)}`
+      : undefined
+  }
 
   // ── Undo/Redo history ──
   const history = useDagHistory<GraphTemplateDraft>(draft, onChange)
@@ -393,6 +412,7 @@ export function DagEditor({ draft, onChange, errors, disabled, showCanvas }: Dag
             edges={currentDraft.edges}
             editable
             onChange={handleCanvasChange}
+            layoutStorageKey={layoutStorageKeyRef.current}
           />
         </div>
       )}

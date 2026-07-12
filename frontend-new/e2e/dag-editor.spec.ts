@@ -2775,3 +2775,168 @@ test.describe("DAG Canvas 小屏体验", () => {
     await page.setViewportSize({ width: 1280, height: 720 })
   })
 })
+
+// ── DAG Canvas 布局持久化 ───────────────────────────────────────────────
+
+test.describe("DAG Canvas 布局持久化", () => {
+  test.beforeEach(async ({ page }) => {
+    // Clear any saved layout from previous tests
+    await page.goto("/app?page=boss")
+    await page.evaluate(() => {
+      const keys = Object.keys(localStorage).filter((k) => k.startsWith("dag_layout_"))
+      keys.forEach((k) => localStorage.removeItem(k))
+    })
+    await page.waitForTimeout(300)
+  })
+
+  test("拖拽节点后关闭并重新打开创建表单，位置恢复", async ({ page }) => {
+    await goToBoss(page)
+    await openCreateForm(page)
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Drag first node to a new position
+    const firstNode = canvas.locator(".react-flow__node").first()
+    await dragNodeBy(page, firstNode, 200, 100)
+    await page.waitForTimeout(300)
+
+    // Remember the dragged position (relative to canvas)
+    const relAfterDrag = await relativeNodeBox(canvas, firstNode)
+
+    // Close the form (click cancel)
+    await page.locator("button", { hasText: "取消" }).click()
+    await page.waitForTimeout(500)
+
+    // Reopen create form
+    await openCreateForm(page)
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+
+    const canvas2 = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas2).toBeVisible({ timeout: 5000 })
+
+    // The first node should be at the dragged position (restored from localStorage)
+    const firstNode2 = canvas2.locator(".react-flow__node").first()
+    const relRestored = await relativeNodeBox(canvas2, firstNode2)
+
+    // Positions should be close (within tolerance for fitView adjustments)
+    expect(Math.abs(relRestored.x - relAfterDrag.x)).toBeLessThan(120)
+    expect(Math.abs(relRestored.y - relAfterDrag.y)).toBeLessThan(120)
+  })
+
+  test("点击自动布局后，刷新/重开不再恢复旧拖拽位置", async ({ page }) => {
+    await goToBoss(page)
+    await openCreateForm(page)
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Drag first node
+    const firstNode = canvas.locator(".react-flow__node").first()
+    await dragNodeBy(page, firstNode, 200, 100)
+    await page.waitForTimeout(300)
+
+    // Click auto-layout button
+    const autoLayoutBtn = canvas.locator('[data-testid="canvas-auto-layout-btn"]')
+    await autoLayoutBtn.click()
+    await page.waitForTimeout(500)
+
+    // Remember the auto-layout position
+    const relAutoLayout = await relativeNodeBox(canvas, firstNode)
+
+    // Close and reopen
+    await page.locator("button", { hasText: "取消" }).click()
+    await page.waitForTimeout(500)
+    await openCreateForm(page)
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+
+    const canvas2 = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas2).toBeVisible({ timeout: 5000 })
+
+    // Position should be at dagre default (not the old dragged position)
+    const firstNode2 = canvas2.locator(".react-flow__node").first()
+    const relRestored = await relativeNodeBox(canvas2, firstNode2)
+
+    // Should be close to auto-layout position (dagre default), not the dragged position
+    expect(Math.abs(relRestored.x - relAutoLayout.x)).toBeLessThan(120)
+    expect(Math.abs(relRestored.y - relAutoLayout.y)).toBeLessThan(120)
+  })
+
+  test("新增节点后旧节点位置保留，新节点有合理 dagre 位置", async ({ page }) => {
+    await goToBoss(page)
+    await openCreateForm(page)
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Drag first node to a distinct position
+    const firstNode = canvas.locator(".react-flow__node").first()
+    await dragNodeBy(page, firstNode, 200, 100)
+    await page.waitForTimeout(300)
+    const relDragged = await relativeNodeBox(canvas, firstNode)
+
+    // Close and reopen to ensure layout is persisted
+    await page.locator("button", { hasText: "取消" }).click()
+    await page.waitForTimeout(500)
+    await openCreateForm(page)
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+
+    const canvas2 = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas2).toBeVisible({ timeout: 5000 })
+
+    // Add a third node via canvas button
+    const addBtn = canvas2.locator('[data-testid="canvas-add-node-btn"]')
+    await addBtn.click()
+    await page.waitForTimeout(500)
+
+    await expect(dagEditor(page).getByText("3 节点", { exact: true })).toBeVisible()
+
+    // Old node should still be at the dragged position
+    const firstNode2 = canvas2.locator(".react-flow__node").first()
+    const relAfterAdd = await relativeNodeBox(canvas2, firstNode2)
+    expect(Math.abs(relAfterAdd.x - relDragged.x)).toBeLessThan(120)
+    expect(Math.abs(relAfterAdd.y - relDragged.y)).toBeLessThan(120)
+
+    // New node should exist and have a position (not at 0,0)
+    const nodes = canvas2.locator(".react-flow__node")
+    await expect(nodes).toHaveCount(3)
+    const newNode = nodes.nth(2)
+    const newBox = await newNode.boundingBox()
+    expect(newBox).not.toBeNull()
+    // New node should have a reasonable position (not at origin)
+    expect(newBox!.x + newBox!.y).toBeGreaterThan(100)
+  })
+
+  test("布局保存不产生 undo/redo 历史", async ({ page }) => {
+    await goToBoss(page)
+    await openCreateForm(page)
+    await expect(dagEditor(page).getByText("2 节点", { exact: true })).toBeVisible()
+
+    const canvas = page.locator('[data-testid="dag-canvas"]').first()
+    await expect(canvas).toBeVisible({ timeout: 5000 })
+
+    // Undo button should be disabled initially
+    const undoBtn = page.locator('[data-testid="undo-btn"]')
+    await expect(undoBtn).toBeDisabled()
+
+    // Drag a node
+    const firstNode = canvas.locator(".react-flow__node").first()
+    await dragNodeBy(page, firstNode, 200, 100)
+    await page.waitForTimeout(300)
+
+    // Undo button should still be disabled — drag doesn't create history
+    await expect(undoBtn).toBeDisabled()
+
+    // Verify localStorage has saved positions
+    const saved = await page.evaluate(() => {
+      const keys = Object.keys(localStorage).filter((k) => k.startsWith("dag_layout_"))
+      if (keys.length === 0) return null
+      return JSON.parse(localStorage.getItem(keys[0])!)
+    })
+    expect(saved).not.toBeNull()
+    expect(Object.keys(saved).length).toBeGreaterThan(0)
+  })
+})

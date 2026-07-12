@@ -45,6 +45,8 @@ export interface DagCanvasProps {
   className?: string
   editable?: boolean
   onChange?: (nodes: DagCanvasNode[], edges: DagCanvasEdge[]) => void
+  /** localStorage key for persisting node positions (view-only). Omit to disable persistence. */
+  layoutStorageKey?: string
 }
 
 type SelectedInfo =
@@ -440,7 +442,7 @@ function EditableDetailRow({
 
 // ── Main component ────────────────────────────────────────────
 
-function DagCanvasInner({ nodes, edges, className, editable, onChange }: DagCanvasProps) {
+function DagCanvasInner({ nodes, edges, className, editable, onChange, layoutStorageKey }: DagCanvasProps) {
   const [selected, setSelected] = useState<SelectedInfo | null>(null)
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -482,6 +484,32 @@ function DagCanvasInner({ nodes, edges, className, editable, onChange }: DagCanv
       return next
     })
   }, [nodes, edges])
+
+  // Restore saved positions from localStorage on mount / key change
+  const storageKeyRef = useRef(layoutStorageKey)
+  useEffect(() => {
+    if (!layoutStorageKey) return
+    storageKeyRef.current = layoutStorageKey
+    try {
+      const raw = localStorage.getItem(layoutStorageKey)
+      if (!raw) return
+      const saved = JSON.parse(raw) as Record<string, { x: number; y: number }>
+      const nodeIds = new Set(nodes.map((n) => n.id))
+      setPositions((prev) => {
+        const next = new Map(prev)
+        for (const [id, pos] of Object.entries(saved)) {
+          if (nodeIds.has(id) && typeof pos?.x === "number" && typeof pos?.y === "number") {
+            next.set(id, pos)
+          }
+        }
+        return next
+      })
+    } catch {
+      // corrupt entry — ignore
+    }
+    // Run once on mount / when key or node set changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layoutStorageKey, nodes.length])
 
   const { flowNodes, flowEdges, canvasHeight } = useMemo(() => {
     if (nodes.length === 0) return { flowNodes: [], flowEdges: [], canvasHeight: 256 }
@@ -534,18 +562,32 @@ function DagCanvasInner({ nodes, edges, className, editable, onChange }: DagCanv
       setPositions((prev) => {
         const next = new Map(prev)
         next.set(node.id, { ...node.position })
+        // Persist to localStorage (view-only, no undo/redo history)
+        const key = storageKeyRef.current
+        if (key) {
+          try {
+            const obj: Record<string, { x: number; y: number }> = {}
+            for (const [id, pos] of next) obj[id] = pos
+            localStorage.setItem(key, JSON.stringify(obj))
+          } catch { /* quota exceeded — ignore */ }
+        }
         return next
       })
     },
     [],
   )
 
-  // ── Auto-layout (reset all positions to dagre) ──
+  // ── Auto-layout (reset all positions to dagre, clear saved layout) ──
 
   const handleAutoLayout = useCallback(() => {
     const dagrePos = computeDagrePositions(nodes, edges)
     setPositions(dagrePos)
     setLayoutCounter((c) => c + 1)
+    // Clear saved layout so future opens use dagre defaults
+    const key = storageKeyRef.current
+    if (key) {
+      try { localStorage.removeItem(key) } catch { /* ignore */ }
+    }
   }, [nodes, edges])
 
   // ── Node locate (center + select from dropdown) ──
