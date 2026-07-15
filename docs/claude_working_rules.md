@@ -2,6 +2,14 @@
 
 Use this file before modifying AI Company OS.
 
+## Current Direction Override (2026-07-14)
+
+- First read `docs/current_project_state.md`.
+- Current Boss work is Phase 6.19+ genericization: AI Company OS must be a **generic business process execution system**, not a single business/process tool.
+- Do not add default templates, UI copy, prompts, reports, or tests that lock the core product to Xianyu, ecommerce, Xiaohongshu, SEO, landing pages, SaaS, or any other specific domain.
+- Concrete domains may appear only as user input, compatibility aliases, examples, tests for legacy compatibility, or opt-in legacy plugins.
+- Next required cleanup is Phase 6.23: frontend Boss detail panel and README residual wording.
+
 ## Core Rules
 
 - Governance is the only controlled execution entry.
@@ -77,4 +85,3 @@ Always report:
 验收：[concrete checks]
 输出：按规则
 ```
-

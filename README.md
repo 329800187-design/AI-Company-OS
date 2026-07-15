@@ -2,7 +2,18 @@
 
 **版本 1.5.0**
 
-## 最新状态（2026-07-12）
+## 最新状态（2026-07-14）
+
+### Phase 6.19：通用业务流程执行协议 ✅ 已完成
+
+Boss Command Center 从"某些具体业务模板"纠偏为"通用业务流程执行系统"：
+
+- ✅ **通用模板机制**：8 个通用业务流程模板（目标到计划、调研到决策、交付物生成、沟通方案、流程复盘、风险检查、执行清单、数据洞察）
+- ✅ **模板协议标准化**：每个模板包含 `protocol_version`、`template_type`、`domain_lock`、`context_schema`、`review_checklist`
+- ✅ **模块定义通用化**：5 个模块改为通用能力描述（目标理解与策略判断、上下文与证据整理、沟通与触达方案、交付物结构、执行计划）
+- ✅ **旧模板兼容**：旧业务模板 ID 通过 `TEMPLATE_ALIASES` 映射到通用模板
+- ✅ **前端入口通用化**：Boss Lite 常用入口改为通用业务流程
+- ✅ **核心原则**：业务不写死在核心代码里，业务只作为用户输入、模板参数、上下文 schema、审核标准进入
 
 ### Phase 6.10：DAG Canvas（前端图形化 DAG 编辑器） ✅ 已完成
 
@@ -21,7 +32,21 @@
 - ✅ **Undo/Redo 集成**：编辑 title、删除节点/边、新增节点/边均支持撤销/重做；拖拽不产生历史
 - ✅ **只读预览隔离**：模板卡片的预览 Canvas 无「添加节点」按钮、handle 隐藏、节点不可拖拽
 - ✅ **小屏适配**：480px 宽度下工具栏不遮挡节点，详情面板输入框无水平溢出
-- ✅ **E2E 测试**：43 个 Canvas 专项用例全部通过（`npx playwright test e2e/dag-editor.spec.ts --grep "DAG Canvas"`）
+- ✅ **批量选择**：Shift+拖拽框选多节点、批量拖动、批量删除（含关联边自动清理）、undo/redo 正确恢复、只读预览不暴露批量操作
+- ✅ **E2E 测试**：51 个 Canvas 专项用例全部通过（`npx playwright test e2e/dag-editor.spec.ts --grep "DAG Canvas"`）
+
+### Phase 6.11：DAG Canvas 布局后端持久化 ✅ 已完成
+
+- ✅ **后端布局存储**：`canvas_layout` 字段写入模板 JSON（`{node_id: {x, y}}`），不影响现有 nodes/edges 结构
+- ✅ **PATCH 布局 API**：`PATCH /boss/graph/templates/{id}/layout` 专用端点，不创建版本快照
+- ✅ **前端优先级**：后端布局 > localStorage > dagre 自动布局
+- ✅ **拖拽自动保存**：节点拖拽后 800ms 防抖自动 PATCH 到后端，跨设备/浏览器同步
+- ✅ **自动布局联动**：点击「自动布局」清除后端布局和 localStorage，后续打开使用 dagre 默认
+- ✅ **向后兼容**：旧模板无 `canvas_layout` 字段时自动 fallback 到 localStorage → dagre
+- ✅ **版本快照不含布局**：`canvas_layout` 是 per-template 属性，不进入版本快照
+- ✅ **create/update 透传**：`canvas_layout` 可通过 POST/PUT 传入，也可通过 PATCH 单独更新
+- ✅ **17 个新增测试**：10 个 store 层 + 7 个 API 层，覆盖保存/读取/更新/不存在/不创版本/列表包含/清除布局/NaN过滤/null拒绝等场景
+- ✅ **全量测试通过**：126 个 graph template 测试全部通过
 
 ### Phase 6.9：Graph Template Audit Retention Policy ✅ 已完成
 
@@ -95,8 +120,12 @@ Phase 4 能力状态：
 Boss Lite 已完成能力：
 
 - 一句话目标输入，支持 8 个常用作战模板一键填入
+- **人工确认执行流**：创建 → pending_review → 人工确认 → 执行 → 人工审核 accept → done
 - 自动拆解为 5 个业务 Agent：research / marketing / image / data / website
 - 5 个 Agent 并行执行（ThreadPoolExecutor，max_workers=5）
+- **模块级 Timeout**：每个模块独立超时（60-90s），超时后 interrupted，后续模块不执行
+- **Stale Cleanup**：全局/单任务两层清理，保留已有结果，不删除数据
+- **Late Result CAS 保护**：防止晚返回结果覆盖 interrupted 状态
 - **Agent Handoff v1 已完成**：research / data 上游洞察自动传递给 marketing / image / website
 - 前端已可视化 handoff 状态：Summary Banner 显示 handoff flow，下游 Agent 卡片显示「已参考上游洞察」，详情页显示 handoff 来源
 - 可读的 Boss 作战报告（Markdown 格式，含各部门结论和 Boss 建议）
@@ -139,12 +168,13 @@ cd frontend-new && npm run build              # ✅ 通过
 - `docs/phase4_image_generation_provider.md` — 第四阶段 Image Generation Provider 骨架验收
 - `docs/phase4_real_capabilities_acceptance.md` — 第四阶段真实能力接入最终验收文档
 - `docs/phase5_productization_acceptance.md` — 第五阶段产品化收口验收文档
-- `docs/phase6_dag_canvas_acceptance.md` — Phase 6.10 DAG Canvas 验收文档
+- `docs/phase6_dag_canvas_acceptance.md` — Phase 6.10 DAG Canvas 验收文档 + Phase 6.11 布局后端持久化 + Phase 6.12 批量选择
+- `docs/phase6_boss_execution_flow.md` — Phase 6.13-6.16 Boss 执行闭环审计（状态机/人工确认/timeout/stale cleanup/CAS 保护）
 - `docs/business_pages_user_guide.md` — 业务页面使用说明
 - `docs/project_progress_snapshot_2026-07-06.md` — 详细进度快照
 - `docs/VISION.md` — 项目愿景
 
-> 你告诉它"要做什么"，它自动拆解、分配、执行、验收，最后给你总结报告。
+> 你告诉它"要做什么"，它生成计划、等你确认、执行任务、等你审核，最后给你总结报告。
 
 ## 项目初心
 
@@ -169,18 +199,18 @@ cd frontend-new && npm run build              # ✅ 通过
 | Image Agent | 美术总监部 | 产出图片提示词 + 图片生成 Provider 接口 |
 | Data Agent | 数据分析部 | 真实数据源读取 + 数据分析报告 |
 | Research Agent | 情报研究部 | 产出结构化研究简报 |
-| Website Agent | 网站策划部 | 产出落地页文案和页面方案 |
+| Deliverable Agent | 交付物结构 | 产出交付物框架、核心内容和检索展示建议 |
 | MiniDelivery | 后勤归档 | 保存、预览、下载交付物 |
 | Governance | 风控/审计 | 拦截危险或不受控任务 |
-| Boss 指挥台 | 董事长办公室 | 两阶段流程，支持模块选择和浏览器授权 |
+| Boss 指挥台 | 董事长办公室 | 人工确认执行流，支持模块选择、timeout 保护和浏览器授权 |
 
 ## 当前进度快照
 
-最后保存时间：2026-07-12
+最后保存时间：2026-07-13
 
 当前项目已推进到：
 
-> Phase 6.10 DAG Canvas（前端图形化 DAG 编辑器）已完成，系统已具备可视化编辑、拖拽连线、布局持久化等完整 Canvas 编辑能力
+> Phase 6.16 Boss 执行闭环审计完成，人工确认执行流 + timeout + stale cleanup + late result CAS 保护全部就绪
 
 已经完成：
 
@@ -193,7 +223,7 @@ cd frontend-new && npm run build              # ✅ 通过
 - **第二阶段（Boss Lite）** ✅ 已完成
   - Boss 页面默认 Boss Lite 模式，一句话目标 → 5 Agent 并行执行。
   - Agent Handoff v1：先执行 research / data，再把上游洞察传递给下游 Agent。
-  - 8 个常用作战模板（新品上线、品牌冷启动、小红书种草、抖音增长、SEO 增长、落地页转化、竞品调研、数据复盘）。
+  - 8 个通用业务流程模板（目标到计划、调研到决策、交付物生成、沟通方案、流程复盘、风险检查、执行清单、数据洞察）。
   - 并行执行 + 进度 UI + 总耗时/单 Agent 耗时统计。
   - 可读 Markdown 作战报告，自动保存到 MiniDelivery。
   - Delivery 搜索/预览/详情/下载已验证。
@@ -214,8 +244,16 @@ cd frontend-new && npm run build              # ✅ 通过
   - ✅ Graph Template 更新：`PUT /boss/graph/templates/{id}` 更新已有模板，前端编辑模式，保留 created_at。
   - ✅ **Phase 6.8 Graph Template Audit Log**：9 种事件类型、敏感字段过滤、长文本截断、删除后保留、前端审计面板 + 事件筛选 + Pin UI。
   - ✅ **Phase 6.9 Audit Retention Policy**：审计存储查询、安全清理机制（dry_run 默认）、清理脚本、前端 Audit Storage UI。
-  - ✅ **Phase 6.10 DAG Canvas**：React Flow 图形化编辑器，支持预览/选择详情/属性编辑/节点边删除/拖拽连线/新增节点/拖拽布局/自动布局/布局持久化/节点定位/undo-redo/只读隔离/小屏适配。
-  - Graph Template 闭环：创建 → 列表 → 编辑 → 克隆 → 删除 → 按模板执行 → 结果可视化 → 审计日志 → 版本固定 → 审计保留/清理 → **图形化 Canvas 编辑**。
+  - ✅ **Phase 6.10 DAG Canvas**：React Flow 图形化编辑器，支持预览/选择详情/属性编辑/节点边删除/拖拽连线/新增节点/拖拽布局/自动布局/布局持久化/节点定位/undo-redo/只读隔离/小屏适配/批量选择。
+  - ✅ **Phase 6.11 DAG Canvas 布局后端持久化**：Canvas 拖拽布局通过 PATCH API 持久化到模板 JSON，跨设备同步，后端布局优先 → localStorage fallback → dagre 自动布局。
+  - ✅ **Phase 6.12 DAG Canvas 批量选择**：Shift+拖拽框选多节点、批量拖动、批量删除（含关联边自动清理）、undo/redo 正确恢复、只读预览不暴露批量操作。
+  - ✅ **Phase 6.13 人工确认执行流**：create_mission → pending_review → 人工确认 → run_mission → 人工审核 accept → done，auto_run 废弃。
+  - ✅ **Phase 6.14 Stale Running Cleanup**：全局/单任务两层清理机制，保留已有结果，不删除数据。
+  - ✅ **Phase 6.15 执行进度轮询**：前端轮询 terminal 状态后停止。
+  - ✅ **Phase 6.16 模块级 Timeout**：独立超时 + interrupted 标记 + 后续模块中断 + ThreadPoolExecutor 快速返回。
+  - ✅ **Phase 6.16.1 Late Result CAS 保护**：expected_status 条件更新，防止晚返回结果覆盖 interrupted 状态。
+  - ✅ **Phase 6.16.2 ThreadPoolExecutor shutdown 修复**：timeout 后 shutdown(wait=False) 不阻塞请求。
+  - Graph Template 闭环：创建 → 列表 → 编辑 → 克隆 → 删除 → 按模板执行 → 结果可视化 → 审计日志 → 版本固定 → 审计保留/清理 → 图形化 Canvas 编辑 → 布局后端持久化 → **批量选择** → **人工确认执行流** → **timeout/stale cleanup/CAS 保护**。
 
 - **第四阶段（真实能力接入）** ✅ 核心闭环完成
   - ✅ **Phase 4.1 Research Web Search**：`web_search_service.py` 可替换搜索服务层，Mock / SerpAPI / Bing 三 provider。
@@ -238,11 +276,11 @@ cd frontend-new && npm run build              # ✅ 通过
 
 ## 下一步计划
 
-Phase 1–5 已全部完成。Phase 6.10（DAG Canvas）已完成。下一步建议继续 **Phase 6：平台化**：
+Phase 1–5 已全部完成。Phase 6.16（Boss 执行闭环审计）已完成。下一步建议继续 **Phase 6：平台化**：
 
 1. ~~**前端 DAG 编辑器（P1）**~~ ✅ 已完成 — DAG Canvas 图形化编辑器
-2. **保存布局到后端（P2）** — 将 Canvas 拖拽布局持久化到模板 API，跨设备同步
-3. **批量选择（P2）** — Canvas 内框选多个节点批量移动/删除
+2. ~~**保存布局到后端（P2）**~~ ✅ 已完成 — Canvas 布局通过 PATCH API 持久化
+3. ~~**批量选择（P2）**~~ ✅ 已完成 — 框选多节点、批量拖动、批量删除、undo/redo 恢复
 4. **节点模板库（P2）** — 预置常用 Agent 节点配置，拖入画布即创建
 5. **多用户权限（P1）** — 用户认证、团队协作
 6. **Docker 生产配置（P2）** — docker-compose.prod.yml、CI/CD
@@ -258,7 +296,7 @@ Phase 1–5 已全部完成。Phase 6.10（DAG Canvas）已完成。下一步建
 ## ✨ 核心特性
 
 - 🤖 **10个AI智能体** — CEO/Codex/OpenClaw/QA/System/CTO/Image/Marketing/Video/Data
-- ⚡ **Boss Lite 一句话执行** — 一句话目标 → 5 Agent 并行 → 作战报告
+- ⚡ **Boss Lite 一句话执行** — 一句话目标 → 人工确认 → 5 Agent 并行 → 作战报告 → 人工审核接受
 - 🧠 **智能任务编排** — 自动拆解复杂目标，多Agent协作执行
 - 🎨 **科技感UI** — React + TypeScript + Tailwind CSS 4
 - 🔌 **多Provider支持** — DeepSeek/OpenAI/Claude 一键切换
@@ -271,7 +309,7 @@ Phase 1–5 已全部完成。Phase 6.10（DAG Canvas）已完成。下一步建
 - 🩺 **部署体检** — 本地服务全量体检脚本
 - 📋 **模板审计日志** — 9 种事件类型、敏感字段过滤、删除后可追溯
 - 📌 **版本固定** — Pin 版本防止自动裁剪
-- 🎨 **DAG Canvas** — 图形化 DAG 编辑器（拖拽连线、属性编辑、自动布局、布局持久化）
+- 🎨 **DAG Canvas** — 图形化 DAG 编辑器（拖拽连线、属性编辑、自动布局、布局后端持久化、批量选择）
 
 ## 🚀 快速开始
 
@@ -430,7 +468,7 @@ AI Company OS
 ├── agents/            # AI智能体
 │   ├── ceo_agent/     # 目标拆解
 │   ├── codex_agent/   # 代码执行
-│   ├── marketing_agent/ # 营销文案
+│   ├── marketing_agent/ # 沟通表达
 │   └── ...
 ├── core/              # 核心模块
 │   ├── skills/        # 技能系统
