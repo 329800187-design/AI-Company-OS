@@ -1,5 +1,5 @@
 """
-Boss Module Executors — 模块级执行器
+Boss Module Executors — 通用模块级执行器
 
 每个 executor 实现 ModuleExecutor 接口：
 - execute(mission, module, goal, context) -> ExecutionResult
@@ -7,9 +7,10 @@ Boss Module Executors — 模块级执行器
 注册表根据 (template_id, module_id) 分发到具体执行器。
 未注册的模块 fallback 到 LocalAgentRuntime。
 
-V2: 引入 ExecutionProvider 抽象层
-- executor 负责模块编排、事件、结构化输出整理
-- provider 负责真实能力来源（市场调研、竞品分析、上架物料包生成）
+设计原则：
+- 系统核心使用通用模块定义，不绑定具体行业
+- 业务特定执行器仅用于旧模板 ID 的向后兼容
+- 新模板统一使用 DefaultModuleExecutor + 通用 prompt
 """
 import json
 from abc import ABC, abstractmethod
@@ -771,16 +772,31 @@ MODULE_OWNER = {
     "actions": "local_heuristic",      # 执行清单：本地模型
 }
 
-_EXECUTOR_REGISTRY: Dict[str, Dict[str, ModuleExecutor]] = {
+# Phase 6.20: 默认注册表为空 — 所有模块走 DefaultModuleExecutor 通用路径。
+# 旧业务执行器（EcommerceMarketResearchExecutor 等）仅在显式设置
+# ACO_ENABLE_LEGACY_BUSINESS_EXECUTORS=true 时才注册。
+# 旧业务执行器类定义保留，供有需要的部署环境 opt-in 使用。
+_LEGACY_EXECUTOR_MAP = {
     "ecommerce_product_research": {
-        "market": EcommerceMarketResearchExecutor(),
-        "competitor_analysis": EcommerceCompetitorAnalysisExecutor(),
-        "marketing": EcommerceListingPackExecutor(),
+        "market": EcommerceMarketResearchExecutor,
+        "competitor_analysis": EcommerceCompetitorAnalysisExecutor,
+        "marketing": EcommerceListingPackExecutor,
     },
-    # 未来模板可以在这里注册
-    # "xianyu_listing_pack": { ... },
-    # "saas_feature_planning": { ... },
 }
+
+_EXECUTOR_REGISTRY: Dict[str, Dict[str, ModuleExecutor]] = {}
+
+
+def _init_legacy_executors():
+    """仅当环境变量 ACO_ENABLE_LEGACY_BUSINESS_EXECUTORS=true 时注册旧业务执行器"""
+    import os
+    if os.environ.get("ACO_ENABLE_LEGACY_BUSINESS_EXECUTORS", "").lower() == "true":
+        for tpl_id, module_map in _LEGACY_EXECUTOR_MAP.items():
+            _EXECUTOR_REGISTRY[tpl_id] = {mod_id: cls() for mod_id, cls in module_map.items()}
+        logger.info("Legacy business executors enabled via ACO_ENABLE_LEGACY_BUSINESS_EXECUTORS")
+
+
+_init_legacy_executors()
 
 # 默认 fallback executor（使用 LocalAgentRuntime）
 _default_executor = None

@@ -1,4 +1,5 @@
 """Governance Guard — 旧主入口轻量守卫"""
+import os
 from typing import Tuple, Optional
 
 from .classifier import classify_goal, ClassificationResult
@@ -71,8 +72,19 @@ def guard_payload(
     2. 如果 goal 为空，不阻断（保持原有行为）
     3. 如果 goal 不为空，检查是否应阻断
 
+    测试绕过：设置 ACO_TEST_BYPASS_GOVERNANCE=true 环境变量可跳过 guard 检查。
+    仅限测试环境使用，生产环境默认不生效。
+
     返回 (blocked, classification)
     """
+    # 测试绕过：仅在显式设置时生效
+    if os.environ.get("ACO_TEST_BYPASS_GOVERNANCE", "").lower() == "true":
+        return False, ClassificationResult(
+            ok=True,
+            confidence=1.0,
+            reason="测试环境绕过 governance guard",
+        )
+
     goal = extract_goal_from_payload(payload)
     if not goal:
         # 无法提取 goal → 不阻断，让旧逻辑处理

@@ -239,6 +239,25 @@ def accept_mission(mission_id: str, request: MissionAcceptRequest = MissionAccep
     return mission
 
 
+class CleanupStaleRequest(BaseModel):
+    """清理超时 running 模块请求"""
+    timeout_minutes: int = Field(default=30, ge=1, le=1440, description="超时阈值（分钟），默认 30")
+
+
+@router.post("/missions/cleanup-stale", summary="清理超时 running 模块")
+def cleanup_stale_missions(request: CleanupStaleRequest = CleanupStaleRequest()):
+    """清理超时的 running 状态模块和任务
+
+    规则：
+    - running 超过 timeout_minutes 的模块标记为 partial（有结果）或 interrupted（无结果）
+    - 写入 warning 提示用户人工检查
+    - 不删除任何数据，不自动重跑
+    """
+    service = get_boss_command_center()
+    result = service.cleanup_stale_running_missions(timeout_minutes=request.timeout_minutes)
+    return result
+
+
 @router.get("/modules/definitions", summary="模块定义")
 def get_module_definitions():
     """返回 5 个模块的定义（供前端渲染）"""
@@ -256,42 +275,42 @@ def get_module_definitions():
 
 # ── Boss Lite ──────────────────────────────────────────────
 
-# 业务 Agent 定义：每个 agent 对应的任务类型和目的
+# 通用业务 Agent 定义：每个 agent 对应一种通用业务能力
 BOSS_LITE_AGENTS = [
     {
         "agent_id": "research",
-        "title": "市场调研",
+        "title": "上下文整理",
         "task_type": "research_brief",
-        "purpose": "调研市场趋势、目标用户、竞品和机会",
-        "prompt_tpl": "请围绕以下业务目标做一份市场调研简报：\n\n{goal}\n\n要求：\n1. 市场趋势与机会\n2. 目标用户画像\n3. 竞品分析（至少 3 个）\n4. 差异化切入点\n5. 风险提示\n6. 下一步建议",
+        "purpose": "围绕目标收集上下文、事实依据、参考案例和数据支撑",
+        "prompt_tpl": "请围绕以下业务目标做一份上下文整理简报：\n\n{goal}\n\n要求：\n1. 相关背景与现状\n2. 参考案例（成功/失败）\n3. 关键数据与事实\n4. 差异化机会\n5. 风险提示\n6. 下一步建议",
     },
     {
         "agent_id": "marketing",
-        "title": "营销方案",
+        "title": "沟通表达",
         "task_type": "copywriting",
-        "purpose": "生成营销策略、卖点、渠道打法和文案",
-        "prompt_tpl": "请围绕以下业务目标制定一套营销方案：\n\n{goal}\n\n要求：\n1. 品牌定位与目标受众\n2. 核心卖点（3-5 个）\n3. 渠道策略（小红书/抖音/微信等）\n4. 内容选题方向（5 个以上）\n5. 3 条可直接使用的推广文案\n6. 推荐发布时间与互动钩子",
+        "purpose": "设计沟通策略、内容方向、触达渠道和具体文案",
+        "prompt_tpl": "请围绕以下业务目标制定一套沟通与触达方案：\n\n{goal}\n\n要求：\n1. 目标受众画像\n2. 核心信息（3-5 个关键点）\n3. 触达渠道策略\n4. 内容选题方向（5 个以上）\n5. 3 条可直接使用的内容/文案\n6. 推荐执行节奏",
     },
     {
         "agent_id": "image",
-        "title": "视觉方案",
+        "title": "素材方向",
         "task_type": "image_prompt",
-        "purpose": "生成视觉方向、图片提示词和拍摄建议",
-        "prompt_tpl": "请围绕以下业务目标制定视觉方案：\n\n{goal}\n\n要求：\n1. 视觉风格方向\n2. 主色调与色彩方案\n3. 3 组可用的 AI 图片生成提示词\n4. 拍摄/制图建议\n5. 适配平台（小红书/淘宝/官网等）的尺寸建议",
+        "purpose": "生成素材方向、图片提示词和制作建议",
+        "prompt_tpl": "请围绕以下业务目标制定素材方向建议：\n\n{goal}\n\n要求：\n1. 视觉风格方向\n2. 主色调与色彩方案\n3. 3 组可用的 AI 图片生成提示词\n4. 制作/拍摄建议\n5. 适配场景说明",
     },
     {
         "agent_id": "data",
-        "title": "数据分析",
+        "title": "数据洞察",
         "task_type": "data_report",
         "purpose": "分析关键指标、趋势和行动建议",
-        "prompt_tpl": "请围绕以下业务目标做一份数据分析框架：\n\n{goal}\n\n要求：\n1. 需要关注的核心指标（KPI）\n2. 数据采集渠道与方法\n3. 基准值与目标值建议\n4. 关键趋势判断\n5. 数据驱动的行动建议\n6. 风险与限制说明",
+        "prompt_tpl": "请围绕以下业务目标做一份数据洞察框架：\n\n{goal}\n\n要求：\n1. 需要关注的核心指标\n2. 数据采集渠道与方法\n3. 基准值与目标值建议\n4. 关键趋势判断\n5. 数据驱动的行动建议\n6. 风险与限制说明",
     },
     {
         "agent_id": "website",
-        "title": "落地页方案",
+        "title": "交付物结构",
         "task_type": "landing_page_copy",
-        "purpose": "生成落地页结构、首屏、卖点和 CTA",
-        "prompt_tpl": "请围绕以下业务目标设计一个落地页方案：\n\n{goal}\n\n要求：\n1. 页面定位与目标受众\n2. Hero 区域（标题 + 副标题 + CTA）\n3. 3-5 个卖点板块\n4. 信任证明（案例/数据/背书）\n5. FAQ 区域\n6. SEO 建议\n7. 页面结构说明",
+        "purpose": "设计可交付物的结构、框架和核心内容",
+        "prompt_tpl": "请围绕以下业务目标设计一个交付物方案：\n\n{goal}\n\n要求：\n1. 交付物定位与目标受众\n2. 核心结构（标题 + 副标题 + CTA）\n3. 3-5 个核心板块\n4. 信任支撑（案例/数据/背书）\n5. FAQ 区域\n6. 使用/分发建议\n7. 结构说明",
     },
 ]
 
@@ -341,6 +360,7 @@ class BossGraphTemplateCreateRequest(BaseModel):
     nodes: List[BossGraphNodeRequest] = Field(..., min_length=1, description="图节点列表")
     edges: List[BossGraphEdgeRequest] = Field(default_factory=list, description="图边列表")
     source_template_id: Optional[str] = Field(default=None, description="克隆来源模板 ID（用于审计）")
+    canvas_layout: Optional[Dict[str, Dict[str, float]]] = Field(default=None, description="Canvas 节点布局")
 
 
 class BossGraphTemplateExecuteRequest(BaseModel):
@@ -368,11 +388,11 @@ _HANDOFF_LABELS = {
 }
 
 _HANDOFF_CN_LABELS = {
-    "research": "市场调研",
-    "data": "数据分析",
-    "marketing": "营销",
-    "image": "视觉",
-    "website": "落地页",
+    "research": "上下文整理",
+    "data": "数据洞察",
+    "marketing": "沟通表达",
+    "image": "素材方向",
+    "website": "交付物结构",
 }
 
 
@@ -432,7 +452,7 @@ def _build_handoff_prompt(agent_id: str, handoff_ctx: dict, ho_sources: list) ->
     parts.append("\n\n---\n## 上游部门洞察（请参考并保持一致）\n")
 
     if has_research:
-        parts.append("### 市场调研结论")
+        parts.append("### 上下文整理结论")
         if handoff_ctx["research_summary"]:
             parts.append(f"- 摘要：{handoff_ctx['research_summary'][:300]}")
         for item in handoff_ctx["research_key_findings"][:3]:
@@ -444,7 +464,7 @@ def _build_handoff_prompt(agent_id: str, handoff_ctx: dict, ho_sources: list) ->
         parts.append("")
 
     if has_data:
-        parts.append("### 数据分析结论")
+        parts.append("### 数据洞察结论")
         for item in handoff_ctx["data_key_metrics"][:3]:
             parts.append(f"- 核心指标：{_format_boss_value(item)}")
         for item in handoff_ctx["data_findings"][:3]:
@@ -453,7 +473,7 @@ def _build_handoff_prompt(agent_id: str, handoff_ctx: dict, ho_sources: list) ->
             parts.append(f"- 行动建议：{_format_boss_value(item)}")
         parts.append("")
 
-    parts.append("请确保你的输出与以上上游调研和数据分析结论保持一致。")
+    parts.append("请确保你的输出与以上上游上下文和数据洞察保持一致。")
     return "\n".join(parts)
 
 
@@ -1279,6 +1299,7 @@ def create_graph_template(request: BossGraphTemplateCreateRequest):
         edges=edges_data,
         description=request.description,
         goal_hint=request.goal_hint,
+        canvas_layout=request.canvas_layout,
     )
 
     # 审计日志
@@ -1358,6 +1379,7 @@ def update_graph_template(template_id: str, request: BossGraphTemplateCreateRequ
         edges=edges_data,
         description=request.description,
         goal_hint=request.goal_hint,
+        canvas_layout=request.canvas_layout,
     )
     if template is None:
         raise HTTPException(status_code=404, detail=f"模板 {template_id} 不存在")
@@ -1370,6 +1392,24 @@ def update_graph_template(template_id: str, request: BossGraphTemplateCreateRequ
         {"node_count": len(nodes_data), "edge_count": len(edges_data)},
     )
 
+    return {"ok": True, "template": template}
+
+
+class CanvasLayoutRequest(BaseModel):
+    """更新 Canvas 布局请求"""
+    canvas_layout: Dict[str, Dict[str, float]] = Field(
+        ..., description="节点布局 {node_id: {x: float, y: float}}"
+    )
+
+
+@router.patch("/graph/templates/{template_id}/layout", summary="更新 Canvas 布局")
+def update_canvas_layout(template_id: str, request: CanvasLayoutRequest):
+    """仅更新模板的 Canvas 节点布局（不创建版本快照）"""
+    from backend.services.graph_template_store import update_canvas_layout as store_update_layout
+
+    template = store_update_layout(template_id, request.canvas_layout)
+    if template is None:
+        raise HTTPException(status_code=404, detail=f"模板 {template_id} 不存在")
     return {"ok": True, "template": template}
 
 
@@ -1869,7 +1909,7 @@ def _render_boss_lite_md(goal: str, plan: list, results: list, boss_so: dict) ->
         has_research = bool(handoff_ctx.get("research_summary"))
         has_data = bool(handoff_ctx.get("data_key_metrics"))
         if has_research:
-            lines.append(f"- **市场调研 → {target_text}**")
+            lines.append(f"- **上下文整理 → {target_text}**")
             if handoff_ctx["research_summary"]:
                 lines.append(f"  - 摘要：{handoff_ctx['research_summary'][:200]}")
             for item in handoff_ctx.get("research_key_findings", [])[:3]:
@@ -1878,7 +1918,7 @@ def _render_boss_lite_md(goal: str, plan: list, results: list, boss_so: dict) ->
                 lines.append(f"  - 机会：{_format_boss_value(item)}")
             lines.append("")
         if has_data:
-            lines.append(f"- **数据分析 → {target_text}**")
+            lines.append(f"- **数据洞察 → {target_text}**")
             for item in handoff_ctx.get("data_key_metrics", [])[:3]:
                 lines.append(f"  - 核心指标：{_format_boss_value(item)}")
             for item in handoff_ctx.get("data_findings", [])[:3]:
@@ -1896,25 +1936,25 @@ def _render_boss_lite_md(goal: str, plan: list, results: list, boss_so: dict) ->
     failed_agents = [r["agent_id"] for r in results if not r["ok"]]
 
     if "research" in succeeded_agents:
-        lines.append("- **先做什么：** 确认市场调研的核心发现，验证目标用户需求和竞品差距")
+        lines.append("- **先做什么：** 确认上下文整理的核心发现，验证目标对象需求和关键差异")
     elif "marketing" in succeeded_agents:
-        lines.append("- **先做什么：** 基于营销方案准备第一批推广素材和文案")
+        lines.append("- **先做什么：** 基于沟通表达方案准备第一批可验证材料")
     elif "data" in succeeded_agents:
         lines.append("- **先做什么：** 先建立关键指标看板，用数据确认最值得投入的方向")
     elif "website" in succeeded_agents:
-        lines.append("- **先做什么：** 先把落地页核心结构搭出来，验证转化路径是否顺畅")
+        lines.append("- **先做什么：** 先把交付物核心结构搭出来，验证交付路径是否清晰")
     elif "image" in succeeded_agents:
-        lines.append("- **先做什么：** 先统一视觉方向，产出第一批可用于测试的素材")
+        lines.append("- **先做什么：** 先统一素材方向，产出第一批可用于测试的素材")
     else:
         lines.append("- **先做什么：** 先重新执行 Boss Lite，补齐可用的部门输出")
 
     if "marketing" in succeeded_agents and "image" in succeeded_agents:
-        lines.append("- **再做什么：** 结合营销文案和视觉方案，制作可用于投放的图文素材")
+        lines.append("- **再做什么：** 结合沟通表达和素材方向，制作可用于验证的图文素材")
     elif "website" in succeeded_agents:
-        lines.append("- **再做什么：** 参考落地页方案搭建转化页面，配合营销节奏上线")
+        lines.append("- **再做什么：** 参考交付物结构完成首版交付，配合沟通节奏上线")
 
     if "data" in succeeded_agents:
-        lines.append("- **数据追踪：** 按数据分析框架建立效果追踪体系，每周复盘关键指标")
+        lines.append("- **数据追踪：** 按数据洞察框架建立效果追踪体系，每周复盘关键指标")
 
     if failed_agents:
         failed_titles = [r["title"] for r in results if not r["ok"]]
@@ -1933,7 +1973,7 @@ def _render_boss_lite_md(goal: str, plan: list, results: list, boss_so: dict) ->
 
 
 def _render_research_section(lines: list, r: dict, so: dict):
-    """渲染市场调研结论"""
+    """渲染上下文整理结论"""
     summary = r.get("summary") or so.get("summary") or so.get("market_summary", "")
     if summary:
         lines.append(f"- **摘要：** {summary[:200]}")
@@ -1962,7 +2002,7 @@ def _render_research_section(lines: list, r: dict, so: dict):
 
 
 def _render_marketing_section(lines: list, r: dict, so: dict):
-    """渲染营销方案结论"""
+    """渲染沟通表达结论"""
     headline = so.get("headline", "")
     if headline:
         lines.append(f"- **核心文案：** {headline}")
@@ -1992,7 +2032,7 @@ def _render_marketing_section(lines: list, r: dict, so: dict):
 
 
 def _render_image_section(lines: list, r: dict, so: dict):
-    """渲染视觉方案结论"""
+    """渲染素材方向结论"""
     style = so.get("style", "")
     if style:
         lines.append(f"- **视觉风格：** {style}")
@@ -2015,7 +2055,7 @@ def _render_image_section(lines: list, r: dict, so: dict):
 
 
 def _render_data_section(lines: list, r: dict, so: dict):
-    """渲染数据分析结论"""
+    """渲染数据洞察结论"""
     question = so.get("analysis_question", "")
     if question:
         lines.append(f"- **分析主题：** {question}")
@@ -2044,10 +2084,10 @@ def _render_data_section(lines: list, r: dict, so: dict):
 
 
 def _render_website_section(lines: list, r: dict, so: dict):
-    """渲染落地页方案结论"""
+    """渲染交付物结构结论"""
     page_goal = so.get("page_goal", "")
     if page_goal:
-        lines.append(f"- **页面目标：** {page_goal}")
+        lines.append(f"- **交付目标：** {page_goal}")
         lines.append("")
 
     hero = so.get("hero", {})
@@ -2056,7 +2096,7 @@ def _render_website_section(lines: list, r: dict, so: dict):
         hero_sub = hero.get("subheadline", "")
         hero_cta = hero.get("cta", "")
         if hero_headline:
-            lines.append(f"- **首屏标题：** {hero_headline}")
+            lines.append(f"- **核心标题：** {hero_headline}")
         if hero_sub:
             lines.append(f"  - 副标题：{hero_sub}")
         if hero_cta:
@@ -2065,7 +2105,7 @@ def _render_website_section(lines: list, r: dict, so: dict):
 
     sections = so.get("sections", [])
     if sections and isinstance(sections, list):
-        lines.append("- **页面板块：**")
+        lines.append("- **交付板块：**")
         for item in sections[:5]:
             if isinstance(item, dict):
                 lines.append(f"  - {item.get('title', item.get('name', str(item)))}")
@@ -2080,7 +2120,7 @@ def _render_website_section(lines: list, r: dict, so: dict):
 
     seo = so.get("seo", {})
     if seo and isinstance(seo, dict):
-        lines.append("- **SEO 建议：**")
+        lines.append("- **检索展示建议：**")
         for k, v in list(seo.items())[:3]:
             lines.append(f"  - {k}: {v}")
         lines.append("")

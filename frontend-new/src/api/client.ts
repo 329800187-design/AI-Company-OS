@@ -207,6 +207,26 @@ class ApiClient {
         default_modules: string[]
         suggested_inputs: string[]
         expected_outputs: string[]
+        // Phase 6.20: 通用业务流程模板协议
+        protocol_version?: string
+        template_type?: string
+        domain_lock?: boolean
+        context_schema?: Record<string, unknown>
+        review_checklist?: string[]
+        input_fields?: Array<{
+          name: string
+          label: string
+          type: "text" | "select"
+          required: boolean
+          placeholder?: string
+          options?: string[]
+          default?: string
+        }>
+        output_schema?: { sections: Array<{ id: string; title: string; module: string }> }
+        expected_sections?: string[]
+        suggested_review_checklist?: string[]
+        prompt_overrides?: Record<string, string>
+        aliased_to?: string
       }>
       total: number
     }>("/boss/templates")
@@ -457,6 +477,24 @@ class ApiClient {
     }>(`/boss/missions/${missionId}/accept`, {
       method: "POST",
       body: { comment },
+    })
+  }
+
+  // 清理超时 running 模块
+  async cleanupStaleMissions(timeoutMinutes = 30) {
+    return this.request<{
+      cleaned_modules: number
+      affected_missions: string[]
+      details: Array<{
+        mission_id: string
+        module_id: string
+        old_status: string
+        new_status: string
+        has_result: boolean
+      }>
+    }>("/boss/missions/cleanup-stale", {
+      method: "POST",
+      body: { timeout_minutes: timeoutMinutes },
     })
   }
 
@@ -1246,6 +1284,16 @@ class ApiClient {
       template_id: string
     }>(`/boss/graph/templates/${templateId}`, {
       method: "DELETE",
+    })
+  }
+
+  async updateBossGraphTemplateLayout(templateId: string, canvasLayout: Record<string, { x: number; y: number }>) {
+    return this.request<{
+      ok: boolean
+      template: Record<string, unknown>
+    }>(`/boss/graph/templates/${templateId}/layout`, {
+      method: "PATCH",
+      body: { canvas_layout: canvasLayout },
     })
   }
 

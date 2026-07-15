@@ -1,5 +1,6 @@
 """AI Company OS - FastAPI 入口"""
 import sys
+import logging
 from pathlib import Path
 
 # 确保项目根目录在 sys.path 中（解决 CWD 依赖问题）
@@ -58,6 +59,8 @@ from backend.middleware.audit import AuditMiddleware
 from backend.middleware.tier_limits import TierLimitMiddleware
 from backend.services.logger import log_api_request, log_info
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="AI Company OS · 多智能体协作操作系统",
@@ -220,6 +223,16 @@ def startup():
     init_db()
     log_info("system", "AI Company OS 启动完成", version="1.0.0", provider=config.AI_PROVIDER)
 
+    # 清理超时的 running 状态模块（非阻塞，快速完成）
+    try:
+        from backend.services.boss_command_center import get_boss_command_center
+        result = get_boss_command_center().cleanup_stale_running_missions(timeout_minutes=30)
+        if result["cleaned_modules"] > 0:
+            log_info("system", f"启动时清理了 {result['cleaned_modules']} 个超时 running 模块",
+                     affected_missions=result["affected_missions"])
+    except Exception as e:
+        logger.error(f"Startup stale cleanup failed: {e}")
+
 
 # WebSocket 端点 — 任务进度实时推送（支持 token 认证）
 @app.websocket("/ws/task/{task_id}")
@@ -266,15 +279,14 @@ if FRONTEND_HTML.exists():
 
 # 新前端 UI 页面 (React 科技感版本)
 NEW_FRONTEND_HTML = Path(__file__).parent.parent / "frontend-new" / "dist" / "index.html"
-if NEW_FRONTEND_HTML.exists():
-    _NEW_UI_HTML = NEW_FRONTEND_HTML.read_text(encoding="utf-8")
 
+if NEW_FRONTEND_HTML.exists():
     @app.get("/app", response_class=HTMLResponse, include_in_schema=False)
     @app.get("/app/", response_class=HTMLResponse, include_in_schema=False)
     @app.get("/app/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
     def new_ui_page(full_path: str = ""):
-        """返回新前端页面（React 科技感版本）"""
-        return HTMLResponse(content=_NEW_UI_HTML)
+        """返回新前端页面（React 科技感版本）— 每次请求从磁盘读取，避免 stale build"""
+        return HTMLResponse(content=NEW_FRONTEND_HTML.read_text(encoding="utf-8"))
 
 
 @app.get("/api/versions", include_in_schema=False)
