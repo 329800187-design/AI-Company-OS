@@ -92,6 +92,23 @@ interface MissionEvent {
   created_at: string
 }
 
+// Phase 6.19: 通用业务流程模板
+interface InputField {
+  name: string
+  label: string
+  type: "text" | "select"
+  required: boolean
+  placeholder?: string
+  options?: string[]
+  default?: string
+}
+
+interface OutputSection {
+  id: string
+  title: string
+  module: string
+}
+
 interface MissionTemplate {
   id: string
   name: string
@@ -100,6 +117,12 @@ interface MissionTemplate {
   default_modules: string[]
   suggested_inputs: string[]
   expected_outputs: string[]
+  // Phase 6.19 新增
+  input_fields?: InputField[]
+  output_schema?: { sections: OutputSection[] }
+  expected_sections?: string[]
+  suggested_review_checklist?: string[]
+  prompt_overrides?: Record<string, string>
 }
 
 interface MissionMetrics {
@@ -107,6 +130,7 @@ interface MissionMetrics {
   succeeded_modules: number
   failed_modules: number
   skipped_modules: number
+  interrupted_modules?: number
   duration_ms: number
   warning_count: number
   next_action_count: number
@@ -124,70 +148,70 @@ const moduleIcons: Record<string, React.ElementType> = {
 }
 
 const moduleDescriptions: Record<string, string> = {
-  strategy: "把老板目标压缩成业务判断、关键机会和风险。",
-  market: "调研市场、用户、竞品和可进入机会。",
-  marketing: "生成卖点、内容方向、渠道打法和首批文案。",
-  landing: "生成首屏、卖点、证明、CTA 等落地页结构。",
-  actions: "拆成今天、本周、本月能执行的行动项。",
+  strategy: "理解目标，提取核心意图，给出策略判断、机会和风险。",
+  market: "围绕目标收集上下文、事实依据、参考案例和数据支撑。",
+  marketing: "设计沟通策略、内容方向、触达渠道和具体文案。",
+  landing: "设计可交付物的结构、框架和核心内容。",
+  actions: "将目标拆解为可执行的行动项，按时间或优先级排列。",
 }
 
-// Boss Lite 常用作战模板
+// Boss Lite 常用入口（通用业务流程，不绑定具体行业）
 const liteTemplates = [
   {
-    id: "new-product",
-    label: "新品上线",
-    icon: Sparkles,
-    goal: "我要为一个新产品做一次完整的新品上线策划，目标是产出市场定位分析、首批种草文案、视觉方向建议、核心数据指标和落地页框架。",
-  },
-  {
-    id: "cold-start",
-    label: "品牌冷启动",
+    id: "goal-to-plan",
+    label: "目标到计划",
     icon: Target,
-    goal: "我要为一个新品牌做冷启动方案，目标是完成目标用户画像、竞品差异分析、初始获客渠道策略、第一批内容方向和品牌视觉调性建议。",
+    goal: "我有一个业务目标需要拆解成可执行计划，产出策略判断、关键依据和分阶段行动项。",
   },
   {
-    id: "xiaohongshu",
-    label: "小红书种草",
-    icon: BookOpen,
-    goal: "我要在小红书做一次种草投放，目标是产出 5 条种草笔记文案、封面视觉方向、关键词布局策略、达人合作建议和数据跟踪指标。",
-  },
-  {
-    id: "douyin",
-    label: "抖音短视频增长",
-    icon: BarChart3,
-    goal: "我要用抖音短视频做增长，目标是产出 5 条短视频脚本、选题方向、投流策略、账号人设建议和核心转化指标。",
-  },
-  {
-    id: "seo",
-    label: "SEO 内容增长",
-    icon: Globe2,
-    goal: "我要通过 SEO 内容做长期流量增长，目标是产出关键词矩阵、10 篇内容选题、页面结构建议、内链策略和排名跟踪指标。",
-  },
-  {
-    id: "landing-page",
-    label: "落地页转化",
-    icon: Megaphone,
-    goal: "我要优化一个产品的落地页转化率，目标是产出首屏文案、卖点排序、信任证明方案、CTA 策略和 A/B 测试建议。",
-  },
-  {
-    id: "competitor",
-    label: "竞品调研",
+    id: "research-to-decision",
+    label: "调研到决策",
     icon: Search,
-    goal: "我要做一次深度竞品调研，目标是分析 5 个核心竞品的定位、定价、卖点、渠道策略，找出差异化机会和可借鉴打法。",
+    goal: "我需要做一个业务决策，希望先收集充分的上下文信息、分析备选方案、给出推荐建议。",
   },
   {
-    id: "data-review",
-    label: "数据复盘",
+    id: "deliverable",
+    label: "交付物生成",
+    icon: FileText,
+    goal: "我需要生成一套结构化的交付物，包含内容框架、核心内容、质量检查和交付清单。",
+  },
+  {
+    id: "communication",
+    label: "沟通方案",
+    icon: Megaphone,
+    goal: "我需要设计一套沟通触达方案，包含受众分析、核心信息、渠道策略和内容方案。",
+  },
+  {
+    id: "review",
+    label: "流程复盘",
     icon: ClipboardList,
-    goal: "我要对上一阶段的运营数据做复盘，目标是产出关键指标分析、增长归因、问题诊断、下一阶段优化建议和具体行动计划。",
+    goal: "我需要对上一阶段的工作进行复盘，总结成果、诊断问题、提炼经验教训、制定改进计划。",
+  },
+  {
+    id: "risk-check",
+    label: "风险检查",
+    icon: Shield,
+    goal: "我需要对当前计划进行风险评估，识别潜在问题、评估影响、给出应对方案和监控指标。",
+  },
+  {
+    id: "execution",
+    label: "执行清单",
+    icon: Play,
+    goal: "我需要将一个复杂任务拆解为详细的执行清单，含步骤、检查项和验收标准。",
+  },
+  {
+    id: "data-insight",
+    label: "数据洞察",
+    icon: BarChart3,
+    goal: "我需要从一组数据或指标中找到关键洞察、发现问题、给出行动建议。",
   },
 ]
 
 const examples = [
-  "帮我调研 AI 陪伴产品的市场机会，并给出第一版运营动作",
-  "给我的知识付费课程做一套小红书推广方案和落地页草稿",
-  "分析 5 个同类 SaaS 竞品，找出我们可以切入的差异化卖点",
-  "我要为一个手工银饰品牌做一次新品上线",
+  "帮我分析这个业务方向是否值得投入，给出策略判断和执行计划",
+  "设计一套用户增长的沟通触达方案",
+  "对上个月的工作做一次复盘，找到问题和改进方向",
+  "帮我生成一份项目提案文档",
 ]
 
 // Boss Lite agent icons
@@ -531,7 +555,7 @@ function extractAgentSummary(agentId: string, summary: string, so: Record<string
       if (op?.length) parts.push(`机会: ${valueToText(op[0])}`)
       const rk = so.risks as unknown[]
       if (rk?.length) parts.push(`风险: ${valueToText(rk[0])}`)
-      return parts.map(valueToText).join("；").slice(0, 120) || "市场调研完成"
+      return parts.map(valueToText).join("；").slice(0, 120) || "上下文整理完成"
     }
     case "marketing": {
       const parts: string[] = []
@@ -543,7 +567,7 @@ function extractAgentSummary(agentId: string, summary: string, so: Record<string
       if (cta) parts.push(`CTA: ${cta}`)
       const kw = so.keywords as unknown[]
       if (kw?.length) parts.push(`关键词: ${kw.slice(0, 3).map(valueToText).join("/")}`)
-      return parts.map(valueToText).join("；").slice(0, 120) || "营销方案完成"
+      return parts.map(valueToText).join("；").slice(0, 120) || "沟通表达完成"
     }
     case "image": {
       const parts: string[] = []
@@ -553,7 +577,7 @@ function extractAgentSummary(agentId: string, summary: string, so: Record<string
       if (st) parts.push(`风格: ${st}`)
       const cp = so.color_palette
       if (cp) parts.push(`色彩: ${valueToText(cp)}`)
-      return parts.map(valueToText).join("；").slice(0, 120) || "视觉方案完成"
+      return parts.map(valueToText).join("；").slice(0, 120) || "素材方向完成"
     }
     case "data": {
       const parts: string[] = []
@@ -565,19 +589,19 @@ function extractAgentSummary(agentId: string, summary: string, so: Record<string
       if (fn?.length) parts.push(`发现: ${valueToText(fn[0])}`)
       const rc = so.recommendations as unknown[]
       if (rc?.length) parts.push(`建议: ${valueToText(rc[0])}`)
-      return parts.map(valueToText).join("；").slice(0, 120) || "数据分析完成"
+      return parts.map(valueToText).join("；").slice(0, 120) || "数据洞察完成"
     }
     case "website": {
       const parts: string[] = []
       const pg = so.page_goal as string
       if (pg) parts.push(pg)
       const hero = so.hero as Record<string, unknown>
-      if (hero?.headline) parts.push(`首屏: ${hero.headline}`)
+      if (hero?.headline) parts.push(`核心: ${hero.headline}`)
       const sections = so.sections as Array<Record<string, unknown>>
       if (sections?.length) parts.push(`${sections.length} 个板块`)
       const seo = so.seo as Record<string, unknown>
-      if (seo?.title) parts.push(`SEO: ${seo.title}`)
-      return parts.map(valueToText).join("；").slice(0, 120) || "落地页方案完成"
+      if (seo?.title) parts.push(`检索展示: ${seo.title}`)
+      return parts.map(valueToText).join("；").slice(0, 120) || "交付物结构完成"
     }
     default:
       return summary || "执行完成"
@@ -616,22 +640,23 @@ function extractKeyFields(agentId: string, so: Record<string, unknown>): Array<{
       if (so.recommendations) fields.push({ label: "建议", value: listToText(so.recommendations, 3) })
       break
     case "website":
-      if (so.page_goal) fields.push({ label: "页面目标", value: String(so.page_goal) })
+      if (so.page_goal) fields.push({ label: "交付目标", value: String(so.page_goal) })
       {
         const hero = so.hero as Record<string, unknown> | undefined
-        if (hero?.headline) fields.push({ label: "首屏标题", value: String(hero.headline) })
-        if (hero?.cta) fields.push({ label: "首屏 CTA", value: String(hero.cta) })
+        if (hero?.headline) fields.push({ label: "核心标题", value: String(hero.headline) })
+        if (hero?.cta) fields.push({ label: "核心 CTA", value: String(hero.cta) })
       }
       if (so.sections) {
         const secs = so.sections as Array<Record<string, unknown>>
-        fields.push({ label: "页面板块", value: secs.slice(0, 5).map(s => s.title || s.name || "板块").join("、") })
+        fields.push({ label: "交付板块", value: secs.slice(0, 5).map(s => s.title || s.name || "板块").join("、") })
       }
       break
   }
   return fields
 }
 
-const DRAFT_STORAGE_KEY = "boss_graph_template_draft_v1"
+const DRAFT_STORAGE_KEY = "boss_graph_template_draft_v2"
+const DRAFT_STORAGE_KEY_V1 = "boss_graph_template_draft_v1"
 
 function validateGraphTemplateDraft(data: unknown): { valid: true; draft: GraphTemplateDraft } | { valid: false; error: string } {
   if (!data || typeof data !== "object" || Array.isArray(data)) {
@@ -702,8 +727,15 @@ export default function BossPage() {
   const [templates, setTemplates] = useState<MissionTemplate[]>([])
   const [showTemplates, setShowTemplates] = useState(false)
   const [selectedTemplate, setSelectedTemplate] = useState<MissionTemplate | null>(null)
+  const [inputValues, setInputValues] = useState<Record<string, string>>({})
+  const [showInputForm, setShowInputForm] = useState(false)
   const [allowBrowserAutomation, setAllowBrowserAutomation] = useState(false)
   const [exportToast, setExportToast] = useState<"json" | "markdown" | null>(null)
+  const [missionError, setMissionError] = useState<string | null>(null)
+
+  // 轮询 timer refs（Phase 6.15: 模块级进度轮询）
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pollFailCountRef = useRef(0)
 
   // Boss Lite state
   const [liteResult, setLiteResult] = useState<{
@@ -889,6 +921,7 @@ export default function BossPage() {
     edges: Array<{ from_node: string; to_node: string; handoff_type: string }>
     created_at: string
     updated_at: string
+    canvas_layout?: Record<string, { x: number; y: number }>
   }
   const [graphTemplates, setGraphTemplates] = useState<GraphTemplate[]>([])
   const [graphTemplatesLoading, setGraphTemplatesLoading] = useState(false)
@@ -899,12 +932,12 @@ export default function BossPage() {
 
   // Graph Template 创建表单状态
   const DEFAULT_DRAFT: GraphTemplateDraft = {
-    name: "新品上线协作图",
+    name: "调研到执行协作图",
     description: "research → marketing",
-    goal_hint: "为一个品牌做新品上线计划",
+    goal_hint: "围绕一个业务目标进行调研并产出执行方案",
     nodes: [
-      { id: "research", agent_id: "research", task_type: "research_brief", title: "市场调研", prompt: "调研目标市场、用户需求、竞品与机会" },
-      { id: "marketing", agent_id: "marketing", task_type: "copywriting", title: "营销文案", prompt: "基于上游洞察生成新品上线营销文案" },
+      { id: "research", agent_id: "research", task_type: "research_brief", title: "上下文整理", prompt: "围绕目标收集相关上下文、事实依据和参考案例" },
+      { id: "marketing", agent_id: "marketing", task_type: "copywriting", title: "沟通方案", prompt: "基于上游洞察设计沟通策略和内容方案" },
     ],
     edges: [
       { from_node: "research", to_node: "marketing", handoff_type: "context" },
@@ -917,12 +950,44 @@ export default function BossPage() {
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null)
   const [cloneSourceId, setCloneSourceId] = useState<string | null>(null)
 
+  // ── Phase 6.11: Debounced layout save to backend ────────────
+  const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const editingTemplateIdRef = useRef<string | null>(null)
+  // Keep ref in sync with state so debounced callback always reads current ID
+  useEffect(() => {
+    editingTemplateIdRef.current = editingTemplateId
+    // Cancel any pending layout save from previous template
+    if (layoutSaveTimerRef.current) {
+      clearTimeout(layoutSaveTimerRef.current)
+      layoutSaveTimerRef.current = null
+    }
+  }, [editingTemplateId])
+
+  const handleCanvasLayoutChange = useCallback(
+    (layout: Record<string, { x: number; y: number }>) => {
+      const templateId = editingTemplateIdRef.current
+      if (!templateId) return
+      if (layoutSaveTimerRef.current) clearTimeout(layoutSaveTimerRef.current)
+      layoutSaveTimerRef.current = setTimeout(async () => {
+        try {
+          await api.updateBossGraphTemplateLayout(templateId, layout)
+        } catch (err) {
+          console.warn("Failed to persist canvas layout:", err)
+        }
+      }, 800)
+    },
+    [],
+  )
+
   // ── Draft auto-save / restore (localStorage) ────────────────
   const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const suppressDraftSaveRef = useRef(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [pendingRestoreDraft, setPendingRestoreDraft] = useState<GraphTemplateDraft | null>(() => {
     try {
+      // Phase 6.24: 清理旧 v1 草稿缓存，避免用户看到旧文案"上下文调研"
+      try { localStorage.removeItem(DRAFT_STORAGE_KEY_V1) } catch { /* ignore */ }
+
       const raw = localStorage.getItem(DRAFT_STORAGE_KEY)
       if (raw) {
         const result = validateGraphTemplateDraft(JSON.parse(raw))
@@ -1238,11 +1303,12 @@ export default function BossPage() {
   const executeGraphTemplate = async (template: GraphTemplate) => {
     const effectiveGoal = goal.trim() || template.goal_hint.trim()
     if (!effectiveGoal) {
-      alert("请输入目标或选择有 goal_hint 的模板")
+      setMissionError("请输入目标或选择有 goal_hint 的模板")
       return
     }
     if (graphTemplateExecutingId) return
 
+    setMissionError(null)
     setGraphTemplateExecutingId(template.template_id)
     setGraphTemplateResult(null)
     try {
@@ -1255,7 +1321,7 @@ export default function BossPage() {
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : "执行失败"
       console.error("Execute graph template failed:", error)
-      alert(`按模板执行失败: ${errorMsg}`)
+      setMissionError(`按模板执行失败: ${errorMsg}`)
     } finally {
       setGraphTemplateExecutingId(null)
     }
@@ -1270,7 +1336,7 @@ export default function BossPage() {
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : "删除失败"
       console.error("Delete graph template failed:", error)
-      alert(`删除模板失败: ${errorMsg}`)
+      setMissionError(`删除模板失败: ${errorMsg}`)
     }
   }
 
@@ -1595,6 +1661,7 @@ export default function BossPage() {
     if (!trimmed || isRunning) return
 
     setIsRunning(true)
+    setMissionError(null)
     setLiteResult(null)
     setLiteProgressPhase(0)
 
@@ -1609,7 +1676,7 @@ export default function BossPage() {
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : "执行失败"
       console.error("Boss Lite execute failed:", error)
-      alert(`Boss Lite 执行失败: ${errorMsg}`)
+      setMissionError(`Boss Lite 执行失败: ${errorMsg}`)
     } finally {
       setIsRunning(false)
     }
@@ -1647,86 +1714,135 @@ export default function BossPage() {
     }
   }
 
+  // Phase 6.15: 停止轮询
+  const stopMissionPolling = useCallback(() => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current)
+      pollTimerRef.current = null
+    }
+    pollFailCountRef.current = 0
+  }, [])
+
+  // Phase 6.15: 启动轮询（每 1.5s 刷新 mission + events）
+  const startMissionPolling = useCallback((missionId: string) => {
+    stopMissionPolling()
+    pollFailCountRef.current = 0
+    pollTimerRef.current = setInterval(async () => {
+      try {
+        const [mission, eventsData] = await Promise.all([
+          api.getMission(missionId),
+          api.getMissionEvents(missionId),
+        ])
+        pollFailCountRef.current = 0
+        setCurrentMission({ ...mission, modules: mission.modules || [] })
+        setEvents(eventsData.events || [])
+        // 自动展开运行日志
+        if (eventsData.events?.length > 0) {
+          setShowEvents(true)
+        }
+        // 自动跳转到 running 模块
+        const runningMod = mission.modules?.find((m: ModuleResult) => m.status === "running")
+        if (runningMod) setActiveModule(runningMod.module_id)
+
+        // terminal → 停止轮询
+        const terminalStatuses = ["ready_for_review", "partial", "failed", "interrupted", "done"]
+        if (terminalStatuses.includes(mission.status)) {
+          stopMissionPolling()
+          setIsRunning(false)
+          loadRecentMissions()
+        }
+      } catch {
+        pollFailCountRef.current += 1
+        console.warn(`Poll failed (${pollFailCountRef.current})`)
+        if (pollFailCountRef.current >= 5) {
+          stopMissionPolling()
+          setIsRunning(false)
+        }
+      }
+    }, 1500)
+  }, [stopMissionPolling])
+
+  // Phase 6.15: 组件卸载时清理轮询
+  useEffect(() => {
+    return () => { stopMissionPolling() }
+  }, [stopMissionPolling])
+
   // v2: 两阶段流程 — 阶段1: 只创建计划
   const createPlan = async () => {
     const trimmed = goal.trim()
     if (!trimmed || isRunning) return
 
     setIsRunning(true)
+    setMissionError(null)
     setActiveModule("strategy")
 
     try {
-      console.log("Creating mission plan with goal:", trimmed, "modules:", enabledModules)
-      const mission = await api.createMission(trimmed, false, enabledModules, allowBrowserAutomation)
-      console.log("Mission plan created:", mission)
+      let mission
+      // Phase 6.19: 有 input_fields 的模板，使用 from-template 端点
+      if (selectedTemplate?.input_fields && selectedTemplate.input_fields.length > 0) {
+        mission = await api.createMissionFromTemplate(selectedTemplate.id, {
+          goal: trimmed,
+          enabledModules: enabledModules,
+          inputs: inputValues,
+          allowBrowserAutomation,
+        })
+      } else {
+        mission = await api.createMission(trimmed, false, enabledModules, allowBrowserAutomation)
+      }
       setCurrentMission({
         ...mission,
         modules: mission.modules || [],
       })
-      // 不自动执行，状态应为 pending_review
-      console.log("Plan ready for review, status:", mission.status)
+      setShowInputForm(false)
+      setShowTemplates(false)
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : "创建计划失败"
       console.error("Create plan failed:", error)
       if (errorMsg.includes("429") || errorMsg.includes("rate")) {
-        alert("请求太频繁，请稍后再试。")
+        setMissionError("请求太频繁，请稍后再试。")
       } else if (errorMsg.includes("400")) {
-        alert(`参数错误: ${errorMsg}`)
+        setMissionError(`参数错误: ${errorMsg}`)
       } else {
-        alert(`创建计划失败: ${errorMsg}`)
+        setMissionError(`创建计划失败: ${errorMsg}`)
       }
     } finally {
       setIsRunning(false)
     }
   }
 
-  // v2: 两阶段流程 — 阶段2: 确认执行（逐模块串行，每个120s超时）
+  // v2: 两阶段流程 — 阶段2: 确认执行（Phase 6.15: fire-and-poll 模式）
   const confirmRun = async () => {
     if (!currentMission || isRunning) return
 
+    stopMissionPolling()
     setIsRunning(true)
+    setMissionError(null)
+    // 立即显示 running 状态
+    setCurrentMission(prev => prev ? { ...prev, status: "running" } : prev)
 
-    const pendingModules = currentMission.modules.filter(
-      m => m.status !== "skipped" && m.status !== "done"
-    )
+    const missionId = currentMission.mission_id
+    startMissionPolling(missionId)
 
-    for (const mod of pendingModules) {
-      // 切换到当前正在执行的模块标签
-      setActiveModule(mod.module_id)
-
-      try {
-        // 120秒超时
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 120_000)
-
-        const updated = await api.runMissionModule(
-          currentMission.mission_id,
-          mod.module_id,
-          allowBrowserAutomation,
-          controller.signal
-        )
-        clearTimeout(timeoutId)
-
-        setCurrentMission({ ...updated, modules: updated.modules || [] })
-      } catch (err) {
-        console.error(`Module ${mod.module_id} failed:`, err)
-        // 刷新看部分结果
-        try {
-          const refreshed = await api.getMission(currentMission.mission_id)
-          setCurrentMission({ ...refreshed, modules: refreshed.modules || [] })
-        } catch { /* 静默 */ }
-      }
-    }
-
-    // 最终刷新事件日志
     try {
-      const final = await api.getMission(currentMission.mission_id)
-      setCurrentMission({ ...final, modules: final.modules || [] })
-      loadEvents(currentMission.mission_id)
-    } catch { /* 静默 */ }
-
-    setIsRunning(false)
-    loadRecentMissions()
+      await api.runMission(missionId, allowBrowserAutomation)
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "执行失败"
+      console.error("runMission failed:", err)
+      setMissionError(`执行失败: ${errorMsg}`)
+    } finally {
+      // 最终刷新一次（不覆盖轮询已拿到的较新数据）
+      try {
+        const [finalMission, finalEvents] = await Promise.all([
+          api.getMission(missionId),
+          api.getMissionEvents(missionId),
+        ])
+        setCurrentMission({ ...finalMission, modules: finalMission.modules || [] })
+        setEvents(finalEvents.events || [])
+      } catch { /* 静默 */ }
+      stopMissionPolling()
+      setIsRunning(false)
+      loadRecentMissions()
+    }
   }
 
   // 用户接受结果
@@ -1742,7 +1858,7 @@ export default function BossPage() {
       loadRecentMissions()
     } catch (error) {
       console.error("Accept mission failed:", error)
-      alert(`接受结果失败: ${error instanceof Error ? error.message : "未知错误"}`)
+      setMissionError(`接受结果失败: ${error instanceof Error ? error.message : "未知错误"}`)
     } finally {
       setIsRunning(false)
     }
@@ -1763,7 +1879,7 @@ export default function BossPage() {
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : "重跑失败"
       console.error("Module rerun failed:", error)
-      alert(`重跑模块失败: ${errorMsg}`)
+      setMissionError(`重跑模块失败: ${errorMsg}`)
     } finally {
       setIsRunning(false)
     }
@@ -1784,7 +1900,7 @@ export default function BossPage() {
       setShowHistory(false)
     } catch (error) {
       console.error("Load mission failed:", error)
-      alert(`加载历史任务失败: ${error instanceof Error ? error.message : "未知错误"}`)
+      setMissionError(`加载历史任务失败: ${error instanceof Error ? error.message : "未知错误"}`)
     }
   }
 
@@ -1798,7 +1914,7 @@ export default function BossPage() {
       setTimeout(() => setExportToast(null), 3000)
     } catch (error) {
       console.error("Export failed:", error)
-      alert(`导出失败: ${error instanceof Error ? error.message : "未知错误"}`)
+      setMissionError(`导出失败: ${error instanceof Error ? error.message : "未知错误"}`)
     }
   }
 
@@ -1817,6 +1933,7 @@ export default function BossPage() {
     if (status === "done") return <Badge variant="success">已完成</Badge>
     if (status === "ready_for_review") return <Badge variant="success">待审核</Badge>
     if (status === "partial") return <Badge variant="warning">部分结果</Badge>
+    if (status === "interrupted") return <Badge variant="warning">已中断</Badge>
     if (status === "pending_review") return <Badge variant="info">待确认</Badge>
     if (status === "failed") return <Badge variant="destructive">需处理</Badge>
     if (status === "blocked") return <Badge variant="warning">需授权</Badge>
@@ -1831,7 +1948,8 @@ export default function BossPage() {
       pending: "计划已生成，等待确认执行",
       running: "正在执行模块中...",
       ready_for_review: "已生成结果，等待人工审核",
-      partial: "证据不足，但已有可参考结果",
+      partial: "部分模块有结果，等待人工处理",
+      interrupted: "执行中断，可重跑未完成模块",
       done: "用户已确认完成",
       failed: "无有效结果",
     }
@@ -1995,6 +2113,31 @@ export default function BossPage() {
         </div>
       </motion.div>
 
+      {/* 全局错误横幅 */}
+      {missionError && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="p-4 rounded-2xl border border-red/30 bg-red/5"
+        >
+          <div className="flex items-start gap-3">
+            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-500" />
+            <div className="flex-1 min-w-0">
+              <span className="font-medium text-sm text-red-500">操作失败</span>
+              <p className="mt-1 text-sm text-red-500">{missionError}</p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setMissionError(null)}
+              className="h-6 px-2 text-xs text-red-500 hover:text-red-700"
+            >
+              关闭
+            </Button>
+          </div>
+        </motion.div>
+      )}
+
       {/* 历史面板 — only in command-center mode */}
       {mode === "command-center" && showHistory && (
         <div className="p-4 rounded-2xl border border-[#E5E5E5] bg-white">
@@ -2040,6 +2183,7 @@ export default function BossPage() {
               onChange={(event) => setGoal(event.target.value)}
               placeholder="例如：帮我调研 AI 陪伴产品的市场机会，并生成第一版运营行动包。"
               className="min-h-[120px] text-base bg-[#F4F3EF] border-[#E5E5E5] rounded-xl"
+              data-testid="boss-goal-input"
             />
             <div className="flex flex-wrap gap-2">
               {examples.map((example) => (
@@ -2098,7 +2242,7 @@ export default function BossPage() {
                         onChange={() => toggleModule(id)}
                         className="h-3.5 w-3.5 rounded border-border accent-primary"
                       />
-                      {id === "strategy" ? "战略" : id === "market" ? "市场" : id === "marketing" ? "营销" : id === "landing" ? "落地页" : "清单"}
+                      {id === "strategy" ? "策略" : id === "market" ? "上下文" : id === "marketing" ? "沟通" : id === "landing" ? "交付物" : "执行"}
                     </label>
                   ))}
                 </div>
@@ -2126,7 +2270,16 @@ export default function BossPage() {
                       setSelectedTemplate(tpl)
                       setGoal(tpl.default_goal)
                       setEnabledModules(tpl.default_modules)
-                      setShowTemplates(false)
+                      if (tpl.input_fields && tpl.input_fields.length > 0) {
+                        // Phase 6.19: 有 input_fields 的模板，显示表单
+                        const defaults: Record<string, string> = {}
+                        tpl.input_fields.forEach(f => { if (f.default) defaults[f.name] = f.default })
+                        setInputValues(defaults)
+                        setShowInputForm(true)
+                      } else {
+                        setShowInputForm(false)
+                        setShowTemplates(false)
+                      }
                     }}
                     className={cn(
                       "rounded-lg border p-3 text-left transition-all",
@@ -2146,6 +2299,62 @@ export default function BossPage() {
                     </div>
                   </button>
                 ))}
+              </div>
+            )}
+
+            {/* Phase 6.19: input_fields 表单 */}
+            {showInputForm && selectedTemplate?.input_fields && !currentMission && (
+              <div className="rounded-xl border border-[#E5E5E5] bg-[#F9F9F8] p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-medium text-[#0B0B0B]">{selectedTemplate.name} — 填写信息</h4>
+                  <button
+                    type="button"
+                    onClick={() => { setShowInputForm(false); setSelectedTemplate(null) }}
+                    className="text-xs text-[#8A8A8A] hover:text-[#0B0B0B]"
+                  >
+                    取消
+                  </button>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {selectedTemplate.input_fields.map((field) => (
+                    <div key={field.name}>
+                      <label className="block text-xs font-medium text-[#0B0B0B] mb-1">
+                        {field.label}
+                        {field.required && <span className="text-red-500 ml-0.5">*</span>}
+                      </label>
+                      {field.type === "select" ? (
+                        <select
+                          value={inputValues[field.name] || ""}
+                          onChange={(e) => setInputValues(prev => ({ ...prev, [field.name]: e.target.value }))}
+                          className="w-full rounded-lg border border-[#E5E5E5] bg-white px-3 py-2 text-sm text-[#0B0B0B] focus:border-[#0B0B0B] focus:outline-none"
+                        >
+                          <option value="">请选择</option>
+                          {(field.options || []).map(opt => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          value={inputValues[field.name] || ""}
+                          onChange={(e) => setInputValues(prev => ({ ...prev, [field.name]: e.target.value }))}
+                          placeholder={field.placeholder || ""}
+                          className="w-full rounded-lg border border-[#E5E5E5] bg-white px-3 py-2 text-sm text-[#0B0B0B] placeholder:text-[#B5B5B5] focus:border-[#0B0B0B] focus:outline-none"
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {selectedTemplate.expected_sections && selectedTemplate.expected_sections.length > 0 && (
+                  <div className="pt-2 border-t border-[#E5E5E5]">
+                    <p className="text-xs text-[#8A8A8A] mb-1.5">将生成以下内容：</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {selectedTemplate.expected_sections.map(s => (
+                        <span key={s} className="rounded-full bg-[#E5E5E5] px-2.5 py-0.5 text-[11px] text-[#0B0B0B]">{s}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -2201,6 +2410,7 @@ export default function BossPage() {
                     variant="default"
                     size="lg"
                     className="w-full lg:w-auto"
+                    data-testid="boss-create-plan-btn"
                   >
                     {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
                     生成计划
@@ -2213,6 +2423,7 @@ export default function BossPage() {
                       variant="default"
                       size="lg"
                       className="w-full lg:w-auto bg-green hover:bg-green/90"
+                      data-testid="boss-confirm-run-btn"
                     >
                       {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                       确认执行
@@ -2380,6 +2591,8 @@ export default function BossPage() {
                 errors={createFormError ? createFormError.split("\n") : []}
                 disabled={createSubmitting}
                 showCanvas
+                canvasLayout={editingTemplateId ? graphTemplates.find(t => t.template_id === editingTemplateId)?.canvas_layout : undefined}
+                onLayoutChange={handleCanvasLayoutChange}
               />
 
               {/* 操作按钮 */}
@@ -3455,7 +3668,7 @@ export default function BossPage() {
           <div className="space-y-3">
             {[
               "Boss 正在拆解目标",
-              "市场调研 / 营销 / 视觉 / 数据 / 落地页正在并行执行",
+              "上下文整理 / 沟通表达 / 素材方向 / 数据洞察 / 交付物结构正在协同执行",
               "Boss 正在汇总作战报告",
               "保存到交付中心",
             ].map((label, phase) => (
@@ -3494,11 +3707,13 @@ export default function BossPage() {
             "p-4 rounded-2xl border",
             currentMission.status === "ready_for_review" ? "border-green/30 bg-green/5" :
             currentMission.status === "partial" ? "border-yellow/30 bg-yellow/5" :
+            currentMission.status === "interrupted" ? "border-orange/30 bg-orange/5" :
             currentMission.status === "failed" ? "border-red/30 bg-red/5" :
             currentMission.status === "running" ? "border-blue/30 bg-blue/5" :
             currentMission.status === "done" ? "border-green/20 bg-green/2" :
             "border-[#E5E5E5] bg-white"
           )}
+          data-testid="boss-status-banner"
         >
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
@@ -3506,8 +3721,8 @@ export default function BossPage() {
                 <Loader2 className="h-5 w-5 animate-spin text-blue-500" />
               ) : currentMission.status === "ready_for_review" || currentMission.status === "done" ? (
                 <CheckCircle2 className="h-5 w-5 text-green" />
-              ) : currentMission.status === "partial" ? (
-                <AlertCircle className="h-5 w-5 text-yellow" />
+              ) : currentMission.status === "partial" || currentMission.status === "interrupted" ? (
+                <AlertCircle className="h-5 w-5 text-orange-500" />
               ) : currentMission.status === "failed" ? (
                 <AlertCircle className="h-5 w-5 text-red-500" />
               ) : (
@@ -3520,19 +3735,33 @@ export default function BossPage() {
                     {currentMission.metrics.succeeded_modules}/{currentMission.metrics.total_modules} 模块完成
                     {currentMission.metrics.warning_count > 0 && ` · ${currentMission.metrics.warning_count} 警告`}
                     {currentMission.metrics.failed_modules > 0 && ` · ${currentMission.metrics.failed_modules} 失败`}
+                    {(currentMission.metrics.interrupted_modules ?? 0) > 0 && ` · ${currentMission.metrics.interrupted_modules} 中断`}
                   </span>
+                )}
+                {currentMission.status === "interrupted" && (
+                  <p className="text-xs text-orange-600 mt-1">上次执行可能被中断，可重跑未完成模块</p>
+                )}
+                {/* Phase 6.15: 显示当前正在执行的模块名 */}
+                {currentMission.status === "running" && (
+                  <p className="text-xs text-blue-600 mt-1">
+                    {(() => {
+                      const runningMod = currentMission.modules?.find(m => m.status === "running")
+                      return runningMod ? `正在执行: ${runningMod.title}` : "正在执行模块中..."
+                    })()}
+                  </p>
                 )}
               </div>
             </div>
             <div className="flex items-center gap-2">
               {/* 接受结果按钮 */}
-              {(currentMission.status === "ready_for_review" || currentMission.status === "partial") && (
+              {(currentMission.status === "ready_for_review" || currentMission.status === "partial" || currentMission.status === "interrupted") && (
                 <Button
                   variant="default"
                   size="sm"
                   onClick={acceptMission}
                   disabled={isRunning}
                   className="gap-1 bg-green hover:bg-green/90"
+                  data-testid="boss-accept-btn"
                 >
                   <CheckCircle2 className="h-3.5 w-3.5" />
                   接受结果
@@ -3554,6 +3783,28 @@ export default function BossPage() {
             </div>
           </div>
         </motion.div>
+      )}
+
+      {/* Phase 6.19: 审核清单 — 仅在 command-center 审核阶段显示 */}
+      {mode === "command-center" && currentMission && selectedTemplate?.suggested_review_checklist && (
+        ["ready_for_review", "partial", "interrupted"].includes(currentMission.status) && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-xl border border-[#E5E5E5] bg-[#F9F9F8] p-4"
+            data-testid="boss-review-checklist"
+          >
+            <h4 className="text-sm font-medium text-[#0B0B0B] mb-2">📋 审核清单</h4>
+            <ul className="space-y-1.5">
+              {selectedTemplate.suggested_review_checklist.map((item, i) => (
+                <li key={i} className="flex items-start gap-2 text-xs text-[#5A5A5A]">
+                  <span className="mt-0.5 h-3.5 w-3.5 rounded border border-[#D4D4D4] bg-white flex-shrink-0" />
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </motion.div>
+        )
       )}
 
       {/* Boss Lite Results */}
@@ -3961,6 +4212,20 @@ export default function BossPage() {
                     </div>
                   )}
 
+                  {activeResult.status === "interrupted" && (
+                    <div className="rounded-lg border border-orange-300 bg-orange-50 p-4">
+                      <div className="flex items-start gap-3">
+                        <AlertCircle className="mt-0.5 h-5 w-5 text-orange-500" />
+                        <div>
+                          <h3 className="font-medium text-orange-700">执行中断</h3>
+                          <p className="mt-1 text-sm text-orange-600">
+                            上次执行可能被中断（服务重启、浏览器关闭或模型超时）。已有结果已保留，可重跑该模块。
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {activeResult.status === "failed" && activeResult.mode === "blocked" && (
                     <div className="rounded-lg border border-orange-300 bg-orange-50 p-4">
                       <div className="flex items-start gap-3">
@@ -4161,13 +4426,13 @@ export default function BossPage() {
 
                             {Array.isArray(competitors) && competitors.length > 0 && (
                               <div className="rounded-lg border border-border bg-background/60 p-4">
-                                <h4 className="mb-2 text-sm font-medium">竞品分析</h4>
+                                <h4 className="mb-2 text-sm font-medium">参考对象分析</h4>
                                 <div className="space-y-2">
                                   {competitors.map((c, i) => (
                                     <div key={i} className="rounded bg-background/40 p-2 text-sm">
                                       <span className="font-medium">{c.name || ""}</span>
-                                      {c.price && <span className="ml-2 text-muted-foreground">价格: {c.price}</span>}
-                                      {c.platform && <span className="ml-2 text-muted-foreground">平台: {c.platform}</span>}
+                                      {c.price && <span className="ml-2 text-muted-foreground">成本/价格: {c.price}</span>}
+                                      {c.platform && <span className="ml-2 text-muted-foreground">来源/渠道: {c.platform}</span>}
                                       {c.source_url && (
                                         <a href={c.source_url} target="_blank" rel="noopener noreferrer" className="ml-2 text-primary hover:underline">
                                           来源 ↗
@@ -4262,8 +4527,8 @@ export default function BossPage() {
         </div>
       )}
 
-      {/* 运行日志面板 — only in command-center mode */}
-      {mode === "command-center" && currentMission && events.length > 0 && (
+      {/* 运行日志面板 — only in command-center mode (Phase 6.15: running 时也显示) */}
+      {mode === "command-center" && currentMission && (events.length > 0 || currentMission.status === "running") && (
         <div className="p-4 rounded-2xl border border-[#E5E5E5] bg-white">
           <button
             type="button"
@@ -4319,7 +4584,7 @@ export default function BossPage() {
             <Briefcase className="mb-3 h-12 w-12 text-[#D4D4D4]" />
             <h3 className="text-lg font-medium text-[#0B0B0B]">输入业务目标开始</h3>
             <p className="mt-2 max-w-md text-sm text-[#8A8A8A]">
-              系统会先拆成 5 个模块（战略、市场、营销、落地页、执行清单）。您确认后逐一执行，并保存结果供人工审核。
+              系统会先拆成通用能力模块（目标判断、上下文整理、沟通方案、交付物结构、执行计划）。您确认后逐一执行，并保存结果供人工审核。
             </p>
           </div>
         </div>
@@ -4708,7 +4973,7 @@ export default function BossPage() {
             <Zap className="mb-3 h-12 w-12 text-[#D4D4D4]" />
             <h3 className="text-lg font-medium text-[#0B0B0B]">Boss Lite：一句话启动多 Agent 协同</h3>
             <p className="mt-2 max-w-md text-sm text-[#8A8A8A]">
-              输入业务目标，系统自动拆解为市场调研、营销方案、视觉方案、数据分析、落地页方案 5 个任务，由对应 Agent 依次执行，结果自动保存到交付中心。
+              输入业务目标，系统自动拆解为上下文整理、沟通表达、素材方向、数据洞察、交付物结构 5 类能力，由对应 Agent 依次执行，结果自动保存到交付中心。
             </p>
             <div className="mt-4 flex flex-wrap gap-2 justify-center">
               {["research", "marketing", "image", "data", "website"].map((id) => {
@@ -4716,7 +4981,7 @@ export default function BossPage() {
                 return (
                   <div key={id} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[#E5E5E5] text-xs text-[#8A8A8A]">
                     <Icon className="h-3.5 w-3.5" />
-                    {id === "research" ? "市场调研" : id === "marketing" ? "营销方案" : id === "image" ? "视觉方案" : id === "data" ? "数据分析" : "落地页"}
+                    {id === "research" ? "上下文整理" : id === "marketing" ? "沟通表达" : id === "image" ? "素材方向" : id === "data" ? "数据洞察" : "交付物结构"}
                   </div>
                 )
               })}
