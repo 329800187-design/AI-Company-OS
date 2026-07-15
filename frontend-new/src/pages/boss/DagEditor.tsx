@@ -38,6 +38,10 @@ export interface DagEditorProps {
   errors: string[]
   disabled?: boolean
   showCanvas?: boolean
+  /** Backend-persisted canvas layout. */
+  canvasLayout?: Record<string, { x: number; y: number }>
+  /** Called after a drag-stop layout change. Used to persist to backend. */
+  onLayoutChange?: (layout: Record<string, { x: number; y: number }>) => void
 }
 
 // ── Merge session tracking ───────────────────────────────────
@@ -127,7 +131,7 @@ function hashNodeIds(ids: string[]): string {
 
 // ── Component ─────────────────────────────────────────────────
 
-export function DagEditor({ draft, onChange, errors, disabled, showCanvas }: DagEditorProps) {
+export function DagEditor({ draft, onChange, errors, disabled, showCanvas, canvasLayout, onLayoutChange }: DagEditorProps) {
   const [editingNodeId, setEditingNodeId] = useState<number | null>(null)
   const [editingEdgeIdx, setEditingEdgeIdx] = useState<number | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null)
@@ -174,6 +178,20 @@ export function DagEditor({ draft, onChange, errors, disabled, showCanvas }: Dag
   /** DagCanvas onChange — commits canvas edits as undo checkpoints */
   const handleCanvasChange = useCallback(
     (nodes: GraphNodeDraft[], edges: GraphEdgeDraft[]) => {
+      endMergeSession()
+      history.set({ ...history.state, nodes, edges })
+    },
+    [history, endMergeSession],
+  )
+
+  /** DagCanvas batch delete — commits batch deletion as single undo checkpoint */
+  const handleBatchDelete = useCallback(
+    (selectedNodeIds: string[]) => {
+      const idSet = new Set(selectedNodeIds)
+      const nodes = history.state.nodes.filter((n) => !idSet.has(n.id.trim()))
+      const edges = history.state.edges.filter(
+        (e) => !idSet.has(e.from_node.trim()) && !idSet.has(e.to_node.trim()),
+      )
       endMergeSession()
       history.set({ ...history.state, nodes, edges })
     },
@@ -271,9 +289,13 @@ export function DagEditor({ draft, onChange, errors, disabled, showCanvas }: Dag
 
   const addNode = () => {
     endMergeSession()
+    // Generate a unique default ID (like DagCanvas's handleAddCanvasNode)
+    const existingIds = new Set(currentDraft.nodes.map((n) => n.id.trim()))
+    let n = currentDraft.nodes.length + 1
+    while (existingIds.has(`node_${n}`)) n++
     history.set({
       ...currentDraft,
-      nodes: [...currentDraft.nodes, { id: "", agent_id: "", task_type: "", title: "", prompt: "" }],
+      nodes: [...currentDraft.nodes, { id: `node_${n}`, agent_id: "", task_type: "", title: "", prompt: "" }],
     })
   }
 
@@ -412,7 +434,10 @@ export function DagEditor({ draft, onChange, errors, disabled, showCanvas }: Dag
             edges={currentDraft.edges}
             editable
             onChange={handleCanvasChange}
+            onBatchDelete={handleBatchDelete}
             layoutStorageKey={layoutStorageKeyRef.current}
+            canvasLayout={canvasLayout}
+            onLayoutChange={onLayoutChange}
           />
         </div>
       )}
@@ -425,6 +450,7 @@ export function DagEditor({ draft, onChange, errors, disabled, showCanvas }: Dag
           onClick={addNode}
           disabled={disabled}
           className="gap-1 text-xs h-7"
+          data-testid="dag-editor-add-node-btn"
         >
           <Plus className="h-3 w-3" />
           添加节点
@@ -435,6 +461,7 @@ export function DagEditor({ draft, onChange, errors, disabled, showCanvas }: Dag
           onClick={addEdge}
           disabled={disabled}
           className="gap-1 text-xs h-7"
+          data-testid="dag-editor-add-edge-btn"
         >
           <Plus className="h-3 w-3" />
           添加边

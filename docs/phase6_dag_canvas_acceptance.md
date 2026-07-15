@@ -1,7 +1,8 @@
 # Phase 6.10：DAG Canvas 验收文档
 
-> 阶段：Phase 6.10 — 前端图形化 DAG 编辑器
+> 阶段：Phase 6.10 — 前端图形化 DAG 编辑器 + Phase 6.11 布局后端持久化
 > 创建日期：2026-07-12
+> 更新日期：2026-07-13
 > 状态：**已完成**
 
 ---
@@ -22,11 +23,11 @@ cd frontend-new && npm run build
 cd frontend-new && npx playwright test e2e/dag-editor.spec.ts --grep "DAG Canvas"
 ```
 
-结果：✅ 43 个用例全部通过
+结果：✅ 46 个用例全部通过
 
 ---
 
-## 二、E2E 测试覆盖清单（43 个用例）
+## 二、E2E 测试覆盖清单（46 个用例）
 
 ### 2.1 DAG Canvas 预览（3 个）
 
@@ -141,6 +142,14 @@ cd frontend-new && npx playwright test e2e/dag-editor.spec.ts --grep "DAG Canvas
 | 42 | 新增节点后旧节点位置保留 | 拖拽 → 关闭重开 → 添加节点 → 旧节点位置不变 |
 | 43 | 布局保存不产生 undo 历史 | 拖拽 → undo 按钮仍 disabled → localStorage 有保存数据 |
 
+### 2.15 布局后端持久化（3 个）
+
+| # | 用例 | 说明 |
+|---|------|------|
+| 44 | 拖拽后 PATCH 到后端，重新编辑恢复布局 | 拖拽 → PATCH 200 → 关闭 → 重开 → 节点在拖拽位置 |
+| 45 | 自动布局清空后端布局，重开使用 dagre | 拖拽 → 自动布局 → PATCH 空对象 → 关闭 → 重开 → dagre 位置 |
+| 46 | 只读预览不触发 PATCH | 预览 Canvas → 拖拽不可用 → 无 PATCH 请求 |
+
 ---
 
 ## 三、校验规则总结
@@ -171,16 +180,22 @@ Canvas re-render (React Flow)
 draft → POST/PUT /boss/graph/templates (无 position 字段)
 ```
 
-布局数据流（独立于模板数据）：
+布局数据流（Phase 6.11 升级为后端持久化）：
 
 ```
 用户拖拽节点
     ↓
 React Flow onNodeDragStop
     ↓
-localStorage.setItem(`dag_layout_${draft.name}_${hash(sorted_node_ids)}`, nodeIdToPositionMap)
+setPositions → localStorage (即时保存)
+    ↓
+onLayoutChange(layout) 回调
+    ↓
+800ms 防抖 → PATCH /boss/graph/templates/{id}/layout
+    ↓
+后端 graph_template_store → canvas_layout 字段写入 JSON
     ↓ (重新打开时)
-DagCanvas useEffect → 从 localStorage 读取 → 应用到 React Flow nodes
+DagCanvas useEffect → 后端 canvas_layout 优先 → localStorage fallback → dagre 默认
 ```
 
 ---
@@ -189,12 +204,178 @@ DagCanvas useEffect → 从 localStorage 读取 → 应用到 React Flow nodes
 
 | 边界 | 当前状态 | 后续计划 |
 |------|----------|----------|
-| **布局仅 localStorage** | 节点拖拽位置存入浏览器 localStorage，不同设备/浏览器不共享 | P2：保存布局到后端模板 API |
-| **无批量选择** | Canvas 内只能单击选中单个节点/边 | P2：框选多个节点批量移动/删除 |
+| **布局已后端持久化** ✅ | Canvas 拖拽布局通过 PATCH API 持久化到模板 JSON | Phase 6.11 已完成 |
+| **批量选择** ✅ | 框选/Shift+拖拽多选节点，批量删除、批量拖动，undo/redo 正确恢复 | Phase 6.12 已完成 |
 | **无节点模板库** | 添加节点使用默认空配置 | P2：预置常用 Agent 节点配置，拖入画布即创建 |
-| **positions 不入模板 payload** | 提交模板时 nodes 无 position 字段，后端不存储布局 | 设计决策：布局与模板数据解耦，保持 API 简洁 |
 | **只读预览属性面板可查看** | Readonly Canvas 点击节点/边仍显示属性面板（但不可编辑） | 可选优化：隐藏只读模式的属性面板 |
 
 ---
 
-*Phase 6.10 DAG Canvas 验收文档 · 2026-07-12*
+## 六、Phase 6.11：布局后端持久化
+
+### 6.1 验收命令
+
+```bash
+# 后端测试（17 个新增）
+python -m pytest tests/test_graph_template_store.py -k "canvas_layout" -v
+
+# 全量测试（126 个通过）
+python -m pytest tests/test_graph_template_store.py -v
+
+# 前端构建
+cd frontend-new && npm run build
+
+# E2E 测试（46 个 Canvas 用例）
+cd frontend-new && npx playwright test e2e/dag-editor.spec.ts --grep "DAG Canvas"
+```
+
+### 6.2 数据结构
+
+模板 JSON 新增可选字段 `canvas_layout`：
+
+```json
+{
+  "template_id": "tpl_xxxxxxxxxxxx",
+  "name": "...",
+  "nodes": [...],
+  "edges": [...],
+  "canvas_layout": {
+    "research": {"x": 100, "y": 200},
+    "marketing": {"x": 300, "y": 200}
+  }
+}
+```
+
+- `canvas_layout` 是可选字段，旧模板不存在时自动 fallback
+- 布局格式：`{node_id: {x: number, y: number}}`（与 localStorage 格式一致）
+- 版本快照不包含 `canvas_layout`（布局是 per-template，非 per-version）
+
+### 6.3 API 端点
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| PATCH | `/boss/graph/templates/{id}/layout` | 专用布局更新（不创建版本快照） |
+| POST | `/boss/graph/templates` | 创建时可选传入 `canvas_layout` |
+| PUT | `/boss/graph/templates/{id}` | 更新时可选传入 `canvas_layout`，None 保留旧值 |
+| GET | `/boss/graph/templates/{id}` | 返回包含 `canvas_layout` |
+| GET | `/boss/graph/templates` | 列表返回包含 `canvas_layout` |
+
+### 6.4 前端数据流
+
+```
+用户拖拽节点
+    ↓
+React Flow onNodeDragStop
+    ↓
+setPositions → localStorage (即时)
+    ↓
+onLayoutChange(layout) 回调
+    ↓
+800ms 防抖 → PATCH /boss/graph/templates/{id}/layout
+```
+
+读取优先级：
+
+```
+编辑模板 → 后端 canvas_layout (最高优先级)
+         → localStorage fallback
+         → dagre 自动布局 (默认)
+```
+
+### 6.5 向后兼容性
+
+| 场景 | 行为 |
+|------|------|
+| 旧模板无 canvas_layout | 读取时无此字段 → fallback 到 localStorage → dagre |
+| 新模板有 canvas_layout | 优先使用后端布局，localStorage 作为即时缓存 |
+| 自动布局 | 清除后端布局 + localStorage，后续使用 dagre 默认 |
+| 版本回滚 | 不影响 canvas_layout（布局不在版本快照中） |
+
+### 6.6 测试覆盖（17 个新增）
+
+**Store 层（10 个）：**
+
+| # | 用例 | 说明 |
+|---|------|------|
+| 1 | save_template 保存 canvas_layout | 保存后读回一致 |
+| 2 | save_template 不传 canvas_layout | 字段不存在 |
+| 3 | update_template 保留 canvas_layout | 不传时保留旧值 |
+| 4 | update_template 覆盖 canvas_layout | 传入新值时覆盖 |
+| 5 | update_canvas_layout 专用函数 | 仅更新布局字段 |
+| 6 | update_canvas_layout 不存在模板 | 返回 None |
+| 7 | update_canvas_layout 不创建版本 | 版本列表为空 |
+| 8 | 版本快照不含 canvas_layout | 快照中无此字段 |
+| 9 | update_canvas_layout 过滤 NaN/Infinity | 非法浮点值被拒绝 |
+| 10 | update_canvas_layout 空字典清除布局 | 传空对象后布局为空 |
+
+**API 层（7 个）：**
+
+| # | 用例 | 说明 |
+|---|------|------|
+| 11 | PATCH /layout 更新成功 | 返回完整模板含布局 |
+| 12 | PATCH /layout 不存在返回 404 | 正确报错 |
+| 13 | GET 包含 canvas_layout | 单个模板读取正确 |
+| 14 | PATCH 不创建版本 | 版本列表为空 |
+| 15 | 列表包含 canvas_layout | 列表接口也返回布局 |
+| 16 | PATCH 空对象清除布局 | 清除后 canvas_layout 为空 |
+| 17 | PATCH null 返回 422 | Pydantic 校验拒绝 null |
+
+---
+
+*Phase 6.10 DAG Canvas 验收文档 + Phase 6.11 布局后端持久化 · 2026-07-13*
+
+---
+
+## 七、Phase 6.12：批量选择
+
+### 7.1 验收命令
+
+```bash
+# 前端构建
+cd frontend-new && npm run build
+
+# E2E 测试（51 个 Canvas 用例，含 5 个批量选择新增）
+cd frontend-new && npx playwright test e2e/dag-editor.spec.ts --grep "DAG Canvas"
+
+# 后端测试（126 个，无变化）
+python -m pytest tests/test_graph_template_store.py -v
+```
+
+### 7.2 功能说明
+
+在编辑模式的 DAG Canvas 内支持多节点批量操作：
+
+| 能力 | 说明 |
+|------|------|
+| **框选多选** | 按住 Shift 键在画布上拖拽，拉出选择框批量选中节点 |
+| **批量拖动** | 多个节点选中后，拖动其中任意一个，所有选中节点同步移动 |
+| **批量删除** | 选中多个节点后，底部出现浮动工具条，点击「批量删除」一次性移除所有选中节点及其关联边 |
+| **自动清理边** | 批量删除时自动移除所有与被删节点相关的边 |
+| **Undo/Redo** | 批量删除作为单次操作进入撤销历史，撤销恢复所有节点和边，重做再次删除 |
+| **只读隔离** | 只读预览模式不显示批量操作工具条，不可框选编辑 |
+
+### 7.3 UI 说明
+
+- **选择方式**：按住 Shift 键 + 在画布上拖拽，拉出蓝色选择框
+- **浮动工具条**：选中 ≥2 个节点后，在画布底部中央显示浮动工具条
+  - 显示「已选中 N 个节点」
+  - 显示「批量删除」按钮（红色，带垃圾桶图标）
+- **点击空白处**：取消所有选中状态，工具条消失
+
+### 7.4 E2E 测试覆盖（5 个新增）
+
+| # | 用例 | 说明 |
+|---|------|------|
+| 1 | 多选两个节点后显示批量操作工具条 | Shift+拖拽框选 → 工具条可见 → 显示「已选中 2 个节点」→ 删除按钮可见 |
+| 2 | 批量删除两个节点，相关边消失 | 框选 → 批量删除 → 0 节点 0 边 → 工具条消失 |
+| 3 | 批量删除后 undo/redo 恢复正确 | 删除 → 撤销 → 2 节点 1 边恢复 → 重做 → 0 节点 0 边 |
+| 4 | 只读预览不显示批量操作工具条 | 只读 Canvas 框选 → 工具条不可见 |
+| 5 | 批量拖动后节点位置改变 | 框选 → 拖动 → 节点坐标变化 > 20px |
+
+### 7.5 测试总计
+
+- **DAG Canvas E2E 测试**：51 个用例全部通过（46 个已有 + 5 个新增）
+- **后端测试**：126 个全部通过（无变化）
+- **前端构建**：✅ 通过
+
+*Phase 6.12 批量选择 · 2026-07-13*

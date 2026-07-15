@@ -14,6 +14,7 @@ import {
   BaseEdge,
   getBezierPath,
   useReactFlow,
+  useOnSelectionChange,
   type Connection,
   type FinalConnectionState,
   type OnConnectStartParams,
@@ -47,6 +48,12 @@ export interface DagCanvasProps {
   onChange?: (nodes: DagCanvasNode[], edges: DagCanvasEdge[]) => void
   /** localStorage key for persisting node positions (view-only). Omit to disable persistence. */
   layoutStorageKey?: string
+  /** Backend-persisted canvas layout (takes priority over localStorage). */
+  canvasLayout?: Record<string, { x: number; y: number }>
+  /** Called after a drag-stop layout change (debounced). Used to persist to backend. */
+  onLayoutChange?: (layout: Record<string, { x: number; y: number }>) => void
+  /** Called when the user batch-deletes selected nodes. */
+  onBatchDelete?: (selectedNodeIds: string[]) => void
 }
 
 type SelectedInfo =
@@ -67,7 +74,12 @@ function computeDagrePositions(
   g.setDefaultEdgeLabel(() => ({}))
   g.setGraph({ rankdir: "LR", nodesep: 60, ranksep: 80 })
   for (const n of rawNodes) g.setNode(n.id, { width: NODE_WIDTH, height: NODE_HEIGHT })
-  for (const e of rawEdges) g.setEdge(e.from_node, e.to_node)
+  const nodeIds = new Set(rawNodes.map((n) => n.id))
+  for (const e of rawEdges) {
+    if (e.from_node && e.to_node && nodeIds.has(e.from_node) && nodeIds.has(e.to_node)) {
+      g.setEdge(e.from_node, e.to_node)
+    }
+  }
   dagre.layout(g)
   const posMap = new Map<string, { x: number; y: number }>()
   for (const n of rawNodes) {
@@ -90,8 +102,11 @@ function computeLayout(
   for (const n of rawNodes) {
     g.setNode(n.id, { width: NODE_WIDTH, height: NODE_HEIGHT })
   }
+  const nodeIds = new Set(rawNodes.map((n) => n.id))
   for (const e of rawEdges) {
-    g.setEdge(e.from_node, e.to_node)
+    if (e.from_node && e.to_node && nodeIds.has(e.from_node) && nodeIds.has(e.to_node)) {
+      g.setEdge(e.from_node, e.to_node)
+    }
   }
 
   dagre.layout(g)
@@ -442,7 +457,7 @@ function EditableDetailRow({
 
 // ── Main component ────────────────────────────────────────────
 
-function DagCanvasInner({ nodes, edges, className, editable, onChange, layoutStorageKey }: DagCanvasProps) {
+function DagCanvasInner({ nodes, edges, className, editable, onChange, layoutStorageKey, canvasLayout, onLayoutChange }: DagCanvasProps) {
   const [selected, setSelected] = useState<SelectedInfo | null>(null)
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -456,6 +471,10 @@ function DagCanvasInner({ nodes, edges, className, editable, onChange, layoutSto
   const dragStartPosRef = useRef<{ x: number; y: number } | null>(null)
   const dragClickSuppressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const locateSkipFitRef = useRef(false)
+
+  // ── Multi-select state (for batch operations) ──
+  const flowSelectedNodeIdsRef = useRef<string[]>([])
+  const [flowSelectedNodeIds, setFlowSelectedNodeIds] = useState<string[]>([])
 
   const showError = useCallback((msg: string) => {
     setConnectionError(msg)
@@ -485,16 +504,55 @@ function DagCanvasInner({ nodes, edges, className, editable, onChange, layoutSto
     })
   }, [nodes, edges])
 
-  // Restore saved positions from localStorage on mount / key change
+  // Restore saved positions: backend layout (priority) → localStorage (fallback)
   const storageKeyRef = useRef(layoutStorageKey)
+  const prevCanvasLayoutJsonRef = useRef(canvasLayout ? JSON.stringify(canvasLayout) : null)
   useEffect(() => {
-    if (!layoutStorageKey) return
     storageKeyRef.current = layoutStorageKey
+  }, [layoutStorageKey])
+
+  // Apply backend canvasLayout when it changes (highest priority)
+  // Uses JSON deep-equal to avoid re-applying after PATCH returns same values in new object
+  useEffect(() => {
+    if (!canvasLayout || Object.keys(canvasLayout).length === 0) return
+    const json = JSON.stringify(canvasLayout)
+    if (prevCanvasLayoutJsonRef.current === json) return
+    prevCanvasLayoutJsonRef.current = json
+    const nodeIds = new Set(nodes.map((n) => n.id))
+    setPositions((prev) => {
+      const next = new Map(prev)
+      for (const [id, pos] of Object.entries(canvasLayout)) {
+        if (nodeIds.has(id) && typeof pos?.x === "number" && typeof pos?.y === "number") {
+          next.set(id, pos)
+        }
+      }
+      return next
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvasLayout, nodes.length])
+
+  // On mount / key change: apply backend layout first, then localStorage fallback
+  useEffect(() => {
+    const nodeIds = new Set(nodes.map((n) => n.id))
+    // Priority 1: backend layout
+    if (canvasLayout && Object.keys(canvasLayout).length > 0) {
+      setPositions((prev) => {
+        const next = new Map(prev)
+        for (const [id, pos] of Object.entries(canvasLayout)) {
+          if (nodeIds.has(id) && typeof pos?.x === "number" && typeof pos?.y === "number") {
+            next.set(id, pos)
+          }
+        }
+        return next
+      })
+      return
+    }
+    // Priority 2: localStorage fallback
+    if (!layoutStorageKey) return
     try {
       const raw = localStorage.getItem(layoutStorageKey)
       if (!raw) return
       const saved = JSON.parse(raw) as Record<string, { x: number; y: number }>
-      const nodeIds = new Set(nodes.map((n) => n.id))
       setPositions((prev) => {
         const next = new Map(prev)
         for (const [id, pos] of Object.entries(saved)) {
@@ -517,18 +575,20 @@ function DagCanvasInner({ nodes, edges, className, editable, onChange, layoutSto
     const height = Math.max(256, Math.min(600, result.layoutHeight + 120))
     const selectedNodeId = selected?.type === "node" ? selected.node.id : null
     const selectedEdge = selected?.type === "edge" ? selected.edge : null
-    const selectedNodes = result.nodes.map((node) => ({
+    // Preserve React Flow's internal multi-selection (set via onSelectionChange)
+    // while also highlighting the detail-panel-selected node/edge
+    const styledNodes = result.nodes.map((node) => ({
       ...node,
-      selected: node.id === selectedNodeId,
+      selected: node.selected || node.id === selectedNodeId,
     }))
-    const selectedEdges = result.edges.map((edge) => {
+    const styledEdges = result.edges.map((edge) => {
       const raw = edge.data?.rawEdge as DagCanvasEdge | undefined
       return {
         ...edge,
-        selected: !!selectedEdge && raw?.from_node === selectedEdge.from_node && raw?.to_node === selectedEdge.to_node,
+        selected: edge.selected || (!!selectedEdge && raw?.from_node === selectedEdge.from_node && raw?.to_node === selectedEdge.to_node),
       }
     })
-    return { flowNodes: selectedNodes, flowEdges: selectedEdges, canvasHeight: height }
+    return { flowNodes: styledNodes, flowEdges: styledEdges, canvasHeight: height }
     // layoutCounter forces recompute when auto-layout is triggered
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges, editable, positions, layoutCounter, selected])
@@ -571,10 +631,16 @@ function DagCanvasInner({ nodes, edges, className, editable, onChange, layoutSto
             localStorage.setItem(key, JSON.stringify(obj))
           } catch { /* quota exceeded — ignore */ }
         }
+        // Notify parent for backend persistence
+        if (onLayoutChange) {
+          const layoutObj: Record<string, { x: number; y: number }> = {}
+          for (const [id, pos] of next) layoutObj[id] = pos
+          onLayoutChange(layoutObj)
+        }
         return next
       })
     },
-    [],
+    [onLayoutChange],
   )
 
   // ── Auto-layout (reset all positions to dagre, clear saved layout) ──
@@ -588,7 +654,11 @@ function DagCanvasInner({ nodes, edges, className, editable, onChange, layoutSto
     if (key) {
       try { localStorage.removeItem(key) } catch { /* ignore */ }
     }
-  }, [nodes, edges])
+    // Notify parent: clear backend layout (empty object = use dagre defaults)
+    if (onLayoutChange) {
+      onLayoutChange({})
+    }
+  }, [nodes, edges, onLayoutChange])
 
   // ── Node locate (center + select from dropdown) ──
 
@@ -634,6 +704,30 @@ function DagCanvasInner({ nodes, edges, className, editable, onChange, layoutSto
     [edges, nodeMap],
   )
 
+  // ── Multi-select change handler ──
+
+  useOnSelectionChange({
+    onChange: ({ nodes: selNodes }) => {
+      const ids = selNodes.map((n) => n.id)
+      flowSelectedNodeIdsRef.current = ids
+      setFlowSelectedNodeIds([...ids])
+    },
+  })
+
+  // ── Batch delete handler ──
+
+  const handleBatchDelete = useCallback(() => {
+    const ids = flowSelectedNodeIdsRef.current
+    if (ids.length <= 1 || !onChange) return
+    const idSet = new Set(ids)
+    const newNodes = nodes.filter((n) => !idSet.has(n.id))
+    const newEdges = edges.filter((e) => !idSet.has(e.from_node) && !idSet.has(e.to_node))
+    onChange(newNodes, newEdges)
+    flowSelectedNodeIdsRef.current = []
+    setFlowSelectedNodeIds([])
+    setSelected(null)
+  }, [onChange, nodes, edges])
+
   const handleEdgeClick = useCallback(
     (_event: MouseEvent, edge: Edge) => {
       // Read from stored raw edge data instead of parsing the ID
@@ -653,6 +747,8 @@ function DagCanvasInner({ nodes, edges, className, editable, onChange, layoutSto
 
   const handlePaneClick = useCallback(() => {
     setSelected(null)
+    flowSelectedNodeIdsRef.current = []
+    setFlowSelectedNodeIds([])
   }, [])
 
   const handleClose = useCallback(() => {
@@ -974,6 +1070,26 @@ function DagCanvasInner({ nodes, edges, className, editable, onChange, layoutSto
             className="absolute bottom-14 left-1/2 -translate-x-1/2 z-10 rounded-md bg-red-50 border border-red/20 px-3 py-1.5 text-xs text-red-500 shadow-sm max-w-[80%] text-center"
           >
             {connectionError}
+          </div>
+        )}
+        {editable && onChange && flowSelectedNodeIds.length > 1 && (
+          <div
+            data-testid="canvas-batch-toolbar"
+            className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 rounded-lg border border-[#E5E5E5] bg-white px-3 py-1.5 shadow-sm"
+          >
+            <span className="text-[11px] text-[#5A5A5A]" data-testid="canvas-batch-count">
+              已选中 {flowSelectedNodeIds.length} 个节点
+            </span>
+            <span className="text-[#E5E5E5]">|</span>
+            <button
+              type="button"
+              data-testid="canvas-batch-delete-btn"
+              onClick={handleBatchDelete}
+              className="flex items-center gap-1 text-[11px] text-red-500 hover:text-red-700 transition-colors"
+            >
+              <Trash2 className="h-3 w-3" />
+              批量删除
+            </button>
           </div>
         )}
       </div>

@@ -47,6 +47,7 @@ export interface MissionMetrics {
   succeeded_modules: number
   failed_modules: number
   skipped_modules: number
+  interrupted_modules?: number
   duration_ms: number
   warning_count: number
   next_action_count: number
@@ -81,6 +82,24 @@ export interface Template {
   default_modules: string[]
   suggested_inputs: string[]
   expected_outputs: string[]
+  // Phase 6.20: 通用业务流程模板协议扩展字段（均 optional，向后兼容）
+  protocol_version?: string
+  template_type?: string
+  domain_lock?: boolean
+  context_schema?: Record<string, unknown>
+  review_checklist?: string[]
+  input_fields?: Array<{
+    name: string
+    label: string
+    type: string
+    required: boolean
+    placeholder?: string
+    options?: string[]
+    default?: string
+  }>
+  output_schema?: Record<string, unknown>
+  prompt_overrides?: Record<string, string>
+  aliased_to?: string
 }
 
 // ── Config / Provider ───────────────────────────────────────────────────────

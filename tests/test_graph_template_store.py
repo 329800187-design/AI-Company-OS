@@ -25,6 +25,7 @@ from backend.services.graph_template_store import (
     list_versions,
     get_version,
     delete_versions_for_template,
+    update_canvas_layout,
 )
 
 
@@ -773,6 +774,166 @@ class TestTemplateStore:
 
         diff = compare_versions(tid, vid, "ver_nonexistent")
         assert diff is None
+
+    # ── Phase 6.11: Canvas Layout 测试 ──────────────────────────
+
+    def test_save_template_with_canvas_layout(self):
+        """save_template 保存 canvas_layout"""
+        layout = {"research": {"x": 100, "y": 200}, "marketing": {"x": 300, "y": 200}}
+        template = save_template(
+            name="布局测试",
+            nodes=self._sample_nodes(),
+            edges=self._sample_edges(),
+            canvas_layout=layout,
+        )
+        assert template["canvas_layout"] == layout
+        # 读回来也一致
+        loaded = get_template(template["template_id"])
+        assert loaded["canvas_layout"] == layout
+
+    def test_save_template_without_canvas_layout(self):
+        """save_template 不传 canvas_layout 时字段不存在"""
+        template = save_template(
+            name="无布局测试",
+            nodes=self._sample_nodes(),
+            edges=self._sample_edges(),
+        )
+        assert "canvas_layout" not in template
+
+    def test_update_template_preserves_canvas_layout(self):
+        """update_template 不传 canvas_layout 时保留旧值"""
+        layout = {"research": {"x": 10, "y": 20}}
+        template = save_template(
+            name="保留布局",
+            nodes=self._sample_nodes(),
+            edges=self._sample_edges(),
+            canvas_layout=layout,
+        )
+        tid = template["template_id"]
+        # 更新时不传 canvas_layout
+        updated = update_template(
+            template_id=tid,
+            name="保留布局-更新",
+            nodes=self._sample_nodes(),
+            edges=self._sample_edges(),
+        )
+        assert updated["canvas_layout"] == layout
+
+    def test_update_template_overwrites_canvas_layout(self):
+        """update_template 传入新 canvas_layout 时覆盖"""
+        old_layout = {"research": {"x": 10, "y": 20}}
+        template = save_template(
+            name="覆盖布局",
+            nodes=self._sample_nodes(),
+            edges=self._sample_edges(),
+            canvas_layout=old_layout,
+        )
+        tid = template["template_id"]
+        new_layout = {"research": {"x": 999, "y": 888}}
+        updated = update_template(
+            template_id=tid,
+            name="覆盖布局-更新",
+            nodes=self._sample_nodes(),
+            edges=self._sample_edges(),
+            canvas_layout=new_layout,
+        )
+        assert updated["canvas_layout"] == new_layout
+
+    def test_update_canvas_layout(self):
+        """update_canvas_layout 仅更新布局字段"""
+        from backend.services.graph_template_store import update_canvas_layout
+        template = save_template(
+            name="专用布局更新",
+            nodes=self._sample_nodes(),
+            edges=self._sample_edges(),
+        )
+        tid = template["template_id"]
+        layout = {"research": {"x": 50, "y": 60}, "marketing": {"x": 250, "y": 60}}
+        updated = update_canvas_layout(tid, layout)
+        assert updated is not None
+        assert updated["canvas_layout"] == layout
+        # 名称等字段不变
+        assert updated["name"] == "专用布局更新"
+
+    def test_update_canvas_layout_nonexistent(self):
+        """update_canvas_layout 对不存在的模板返回 None"""
+        from backend.services.graph_template_store import update_canvas_layout
+        result = update_canvas_layout("tpl_nonexistent", {"a": {"x": 0, "y": 0}})
+        assert result is None
+
+    def test_update_canvas_layout_does_not_create_version(self):
+        """update_canvas_layout 不创建版本快照"""
+        from backend.services.graph_template_store import update_canvas_layout
+        template = save_template(
+            name="布局无版本",
+            nodes=self._sample_nodes(),
+            edges=self._sample_edges(),
+        )
+        tid = template["template_id"]
+        update_canvas_layout(tid, {"research": {"x": 1, "y": 2}})
+        versions = list_versions(tid)
+        assert len(versions) == 0
+
+    def test_canvas_layout_not_in_version_snapshot(self):
+        """版本快照不包含 canvas_layout（布局是 per-template，不是 per-version）"""
+        layout = {"research": {"x": 100, "y": 200}}
+        template = save_template(
+            name="版本不含布局",
+            nodes=self._sample_nodes(),
+            edges=self._sample_edges(),
+            canvas_layout=layout,
+        )
+        tid = template["template_id"]
+        # 触发版本快照
+        update_template(
+            template_id=tid,
+            name="版本不含布局-更新",
+            nodes=self._sample_nodes(),
+            edges=[],
+        )
+        versions = list_versions(tid)
+        assert len(versions) == 1
+        # 快照中不含 canvas_layout（save_version_snapshot 不复制该字段）
+        version = get_version(tid, versions[0]["version_id"])
+        assert "canvas_layout" not in version
+
+    def test_update_canvas_layout_sanitizes_nan_inf(self):
+        """update_canvas_layout 过滤 NaN 和 Infinity 值"""
+        template = save_template(
+            name="NaN过滤",
+            nodes=self._sample_nodes(),
+            edges=self._sample_edges(),
+        )
+        tid = template["template_id"]
+        bad_layout = {
+            "research": {"x": float("nan"), "y": 100},
+            "marketing": {"x": 200, "y": float("inf")},
+            "cto": {"x": 300, "y": 400},
+        }
+        updated = update_canvas_layout(tid, bad_layout)
+        assert updated is not None
+        # NaN/Infinity entries should be filtered out
+        assert "research" not in updated["canvas_layout"]
+        assert "marketing" not in updated["canvas_layout"]
+        # Valid entry should survive
+        assert updated["canvas_layout"]["cto"] == {"x": 300.0, "y": 400.0}
+
+    def test_update_canvas_layout_clears_with_empty_dict(self):
+        """update_canvas_layout 传空字典清除布局"""
+        layout = {"research": {"x": 100, "y": 200}}
+        template = save_template(
+            name="清除布局",
+            nodes=self._sample_nodes(),
+            edges=self._sample_edges(),
+            canvas_layout=layout,
+        )
+        tid = template["template_id"]
+        updated = update_canvas_layout(tid, {})
+        assert updated is not None
+        assert updated["canvas_layout"] == {}
+        # 读回来也是空
+        loaded = get_template(tid)
+        assert loaded["canvas_layout"] == {}
 
 
 # ── API 集成测试 ──────────────────────────────────────────────
@@ -2315,3 +2476,154 @@ class TestGraphTemplateAPI:
         client = TestClient(app)
         audit_resp = client.get("/boss/graph/templates/tpl_neverexist123/audit")
         assert audit_resp.status_code == 404
+
+    # ── Phase 6.11: Canvas Layout API 测试 ──────────────────────
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_patch_layout_updates_canvas(self, mock_guard, mock_rate):
+        """PATCH /layout 更新 canvas_layout 并返回完整模板"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        resp = client.post("/boss/graph/templates", json={
+            "name": "布局API测试",
+            "nodes": _sample_api_nodes(),
+            "edges": _sample_api_edges(),
+        })
+        tid = resp.json()["template"]["template_id"]
+
+        layout = {"research": {"x": 100, "y": 200}, "marketing": {"x": 300, "y": 200}}
+        patch_resp = client.patch(f"/boss/graph/templates/{tid}/layout", json={
+            "canvas_layout": layout,
+        })
+        assert patch_resp.status_code == 200
+        data = patch_resp.json()
+        assert data["ok"] is True
+        assert data["template"]["canvas_layout"] == layout
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_patch_layout_nonexistent_404(self, mock_guard, mock_rate):
+        """PATCH /layout 对不存在的模板返回 404"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        resp = client.patch("/boss/graph/templates/tpl_nonexistent/layout", json={
+            "canvas_layout": {"a": {"x": 0, "y": 0}},
+        })
+        assert resp.status_code == 404
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_get_template_includes_canvas_layout(self, mock_guard, mock_rate):
+        """GET 模板包含 canvas_layout 字段"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        layout = {"research": {"x": 50, "y": 60}}
+        resp = client.post("/boss/graph/templates", json={
+            "name": "GET布局测试",
+            "nodes": _sample_api_nodes(),
+            "edges": _sample_api_edges(),
+            "canvas_layout": layout,
+        })
+        tid = resp.json()["template"]["template_id"]
+
+        get_resp = client.get(f"/boss/graph/templates/{tid}")
+        assert get_resp.status_code == 200
+        assert get_resp.json()["template"]["canvas_layout"] == layout
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_patch_layout_does_not_create_version(self, mock_guard, mock_rate):
+        """PATCH /layout 不创建版本快照"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        resp = client.post("/boss/graph/templates", json={
+            "name": "布局无版本API",
+            "nodes": _sample_api_nodes(),
+            "edges": _sample_api_edges(),
+        })
+        tid = resp.json()["template"]["template_id"]
+
+        client.patch(f"/boss/graph/templates/{tid}/layout", json={
+            "canvas_layout": {"research": {"x": 1, "y": 2}},
+        })
+
+        ver_resp = client.get(f"/boss/graph/templates/{tid}/versions")
+        assert ver_resp.status_code == 200
+        assert len(ver_resp.json()["versions"]) == 0
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_list_templates_includes_canvas_layout(self, mock_guard, mock_rate):
+        """列表接口也包含 canvas_layout"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        layout = {"research": {"x": 10, "y": 20}}
+        client.post("/boss/graph/templates", json={
+            "name": "列表布局测试",
+            "nodes": _sample_api_nodes(),
+            "edges": _sample_api_edges(),
+            "canvas_layout": layout,
+        })
+
+        list_resp = client.get("/boss/graph/templates")
+        assert list_resp.status_code == 200
+        templates = list_resp.json()["templates"]
+        found = [t for t in templates if t["name"] == "列表布局测试"]
+        assert len(found) == 1
+        assert found[0]["canvas_layout"] == layout
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_patch_layout_clear_with_empty_object(self, mock_guard, mock_rate):
+        """PATCH /layout 传空对象清除布局"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        layout = {"research": {"x": 100, "y": 200}}
+        resp = client.post("/boss/graph/templates", json={
+            "name": "清除布局API",
+            "nodes": _sample_api_nodes(),
+            "edges": _sample_api_edges(),
+            "canvas_layout": layout,
+        })
+        tid = resp.json()["template"]["template_id"]
+
+        # Clear with empty object
+        patch_resp = client.patch(f"/boss/graph/templates/{tid}/layout", json={
+            "canvas_layout": {},
+        })
+        assert patch_resp.status_code == 200
+        assert patch_resp.json()["template"]["canvas_layout"] == {}
+
+    @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
+    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    def test_patch_layout_null_rejects_422(self, mock_guard, mock_rate):
+        """PATCH /layout 传 null 返回 422"""
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        client = TestClient(app)
+        resp = client.post("/boss/graph/templates", json={
+            "name": "null布局API",
+            "nodes": _sample_api_nodes(),
+            "edges": _sample_api_edges(),
+        })
+        tid = resp.json()["template"]["template_id"]
+
+        # null should be rejected by Pydantic
+        patch_resp = client.patch(f"/boss/graph/templates/{tid}/layout", json={
+            "canvas_layout": None,
+        })
+        assert patch_resp.status_code == 422

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import shutil
 import uuid
@@ -500,6 +501,7 @@ def save_template(
     description: str = "",
     goal_hint: str = "",
     template_id: Optional[str] = None,
+    canvas_layout: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """保存 graph template 到文件系统。
 
@@ -510,6 +512,7 @@ def save_template(
         description: 模板描述
         goal_hint: 目标提示
         template_id: 可选，指定 ID（用于更新）
+        canvas_layout: 可选，Canvas 节点布局 {node_id: {x, y}}
 
     Returns:
         完整的 template dict
@@ -531,6 +534,9 @@ def save_template(
         "created_at": now,
         "updated_at": now,
     }
+
+    if canvas_layout is not None:
+        template["canvas_layout"] = canvas_layout
 
     file_path = _template_path(template_id)
     if file_path is None:
@@ -596,6 +602,7 @@ def update_template(
     description: str = "",
     goal_hint: str = "",
     skip_version_snapshot: bool = False,
+    canvas_layout: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """更新已有的 graph template。
 
@@ -607,6 +614,7 @@ def update_template(
         description: 模板描述
         goal_hint: 目标提示
         skip_version_snapshot: 跳过版本快照（回滚时由调用方自行保存）
+        canvas_layout: 可选，Canvas 节点布局 {node_id: {x, y}}。None 表示不修改。
 
     Returns:
         完整的 template dict，不存在或 ID 非法返回 None
@@ -634,6 +642,12 @@ def update_template(
         "created_at": existing.get("created_at", now),
         "updated_at": now,
     }
+
+    # Phase 6.11: 保留 canvas_layout（None 时保留旧值）
+    if canvas_layout is not None:
+        template["canvas_layout"] = canvas_layout
+    elif "canvas_layout" in existing:
+        template["canvas_layout"] = existing["canvas_layout"]
 
     file_path = _template_path(template_id)
     if file_path is None:
@@ -671,3 +685,52 @@ def delete_template(template_id: str) -> bool:
     except OSError as e:
         logger.error("Failed to delete template %s: %s", template_id, e)
         raise
+
+
+def update_canvas_layout(
+    template_id: str,
+    canvas_layout: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """仅更新模板的 Canvas 布局（不创建版本快照）。
+
+    Args:
+        template_id: 模板 ID
+        canvas_layout: Canvas 节点布局 {node_id: {x: float, y: float}}
+
+    Returns:
+        更新后的 template dict，不存在返回 None
+    """
+    if not _is_valid_template_id(template_id):
+        return None
+
+    file_path = _template_path(template_id)
+    if file_path is None or not file_path.exists():
+        return None
+
+    # Validate layout entries: reject NaN/Infinity, coerce to float
+    sanitized: Dict[str, Dict[str, float]] = {}
+    for node_id, pos in canvas_layout.items():
+        if not isinstance(pos, dict):
+            continue
+        x, y = pos.get("x"), pos.get("y")
+        if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+            continue
+        if math.isnan(x) or math.isnan(y) or math.isinf(x) or math.isinf(y):
+            continue
+        sanitized[str(node_id)] = {"x": float(x), "y": float(y)}
+
+    try:
+        data = json.loads(file_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    data["canvas_layout"] = sanitized
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    file_path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    logger.info("Updated canvas layout for template: %s", template_id)
+    return data
