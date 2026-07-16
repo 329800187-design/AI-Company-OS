@@ -927,7 +927,20 @@ class BossCommandCenterService:
             logger.info(f"BossCommandCenter: Cleaned {stale_count} stale modules before running mission {mission_id}")
             mission = self.get_mission(mission_id)
 
-        self._update_mission_status(mission_id, "running")
+        # Phase 6.28: 原子 CAS 确保同一 mission 不会被并发执行
+        # 只有 status != 'running' 时才能转为 'running'
+        now = datetime.now().isoformat()
+        with get_db() as db:
+            cursor = db.execute(
+                "UPDATE boss_missions SET status = 'running', updated_at = ? WHERE mission_id = ? AND status != 'running'",
+                (now, mission_id)
+            )
+            db.commit()
+            if cursor.rowcount == 0:
+                # 已经在 running — 并发冲突
+                logger.warning(f"BossCommandCenter: Mission {mission_id} already running, skipping duplicate run_mission")
+                return self.get_mission(mission_id)
+
         self._log_event(mission_id, "mission_started", "开始执行任务")
 
         for module in mission["modules"]:

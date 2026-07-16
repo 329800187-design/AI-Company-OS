@@ -1,4 +1,5 @@
 """Boss Router — 老板运营指挥台 API"""
+import logging
 import uuid
 import json
 import time
@@ -18,6 +19,8 @@ from backend.services.collaboration_graph import (
     validate_graph,
 )
 from backend.security import input_validator, rate_limiter
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/boss", tags=["Boss / 老板指挥台"])
 
@@ -137,6 +140,25 @@ def list_missions(limit: int = 20, offset: int = 0):
     return {"missions": missions, "total": len(missions)}
 
 
+class CleanupStaleRequest(BaseModel):
+    """清理超时 running 模块请求"""
+    timeout_minutes: int = Field(default=30, ge=1, le=1440, description="超时阈值（分钟），默认 30")
+
+
+@router.post("/missions/cleanup-stale", summary="清理超时 running 模块")
+def cleanup_stale_missions(request: CleanupStaleRequest = CleanupStaleRequest()):
+    """清理超时的 running 状态模块和任务
+
+    规则：
+    - running 超过 timeout_minutes 的模块标记为 partial（有结果）或 interrupted（无结果）
+    - 写入 warning 提示用户人工检查
+    - 不删除任何数据，不自动重跑
+    """
+    service = get_boss_command_center()
+    result = service.cleanup_stale_running_missions(timeout_minutes=request.timeout_minutes)
+    return result
+
+
 @router.get("/missions/{mission_id}", summary="Mission 详情")
 def get_mission(mission_id: str):
     """返回 Mission 详情（含各模块结果）"""
@@ -237,25 +259,6 @@ def accept_mission(mission_id: str, request: MissionAcceptRequest = MissionAccep
 
     mission = service.accept_mission(mission_id, comment=request.comment)
     return mission
-
-
-class CleanupStaleRequest(BaseModel):
-    """清理超时 running 模块请求"""
-    timeout_minutes: int = Field(default=30, ge=1, le=1440, description="超时阈值（分钟），默认 30")
-
-
-@router.post("/missions/cleanup-stale", summary="清理超时 running 模块")
-def cleanup_stale_missions(request: CleanupStaleRequest = CleanupStaleRequest()):
-    """清理超时的 running 状态模块和任务
-
-    规则：
-    - running 超过 timeout_minutes 的模块标记为 partial（有结果）或 interrupted（无结果）
-    - 写入 warning 提示用户人工检查
-    - 不删除任何数据，不自动重跑
-    """
-    service = get_boss_command_center()
-    result = service.cleanup_stale_running_missions(timeout_minutes=request.timeout_minutes)
-    return result
 
 
 @router.get("/modules/definitions", summary="模块定义")
@@ -811,8 +814,9 @@ def boss_lite_execute(request: BossLiteRequest):
             )
             delivery_task_id = task_id
         except Exception as e:
-            # 保存失败不影响返回结果
-            pass
+            # Phase 6.28: 记录持久化失败，不再静默吞掉
+            logger.warning(f"Boss Lite 交付持久化失败: {e}", exc_info=True)
+            delivery_task_id = None
 
     return {
         "ok": succeeded > 0,
@@ -1251,8 +1255,10 @@ def boss_graph_execute(request: BossGraphExecuteRequest):
                 encoding="utf-8",
             )
             delivery_task_id = task_id
-        except Exception:
-            pass
+        except Exception as e:
+            # Phase 6.28: 记录持久化失败，不再静默吞掉
+            logger.warning(f"Boss Graph 交付持久化失败: {e}", exc_info=True)
+            delivery_task_id = None
 
     return {
         "ok": succeeded > 0,

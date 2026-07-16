@@ -299,6 +299,7 @@ class EcommerceCompetitorAnalysisExecutor(ModuleExecutor):
 
     def execute(self, goal: str, module_id: str,
                 mission_id: str, context: Dict[str, Any] = None) -> ExecutionResult:
+        context = context or {}
         # 从上下文获取市场调研结果
         prev_results = context.get("prev_results", {})
         market_data = prev_results.get("market", {}).get("structured_output", {})
@@ -528,10 +529,12 @@ class EcommerceListingPackExecutor(ModuleExecutor):
 
     def execute(self, goal: str, module_id: str,
                 mission_id: str, context: Dict[str, Any] = None) -> ExecutionResult:
+        context = context or {}
         prev_results = context.get("prev_results", {})
-        competitor_data = prev_results.get("competitor_analysis", {}).get("structured_output", {})
-        competitors = competitor_data.get("competitors", [])
-        pricing = competitor_data.get("pricing", {})
+        # Phase 6.28: fix — 模块 ID 是 "market" 不是 "competitor_analysis"
+        market_data = prev_results.get("market", {}).get("structured_output", {})
+        competitors = market_data.get("competitors", [])
+        pricing = market_data.get("pricing", {})
 
         # 获取浏览器自动化审批状态
         allow_browser_automation = context.get("allow_browser_automation", False)
