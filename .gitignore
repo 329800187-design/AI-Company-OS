@@ -35,6 +35,7 @@ build/
 *.sqlite-wal
 *.sqlite-shm
 backend/database/context_store.json
+backend/database/backups/*.gz
 
 # Logs
 logs/
