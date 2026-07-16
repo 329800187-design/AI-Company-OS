@@ -1,11 +1,22 @@
 """Tests conftest — 测试环境配置
 
 提供:
+- init_db 建表（CI 空库环境下自动创建 sessions/steps/tasks 等表）
 - Boss 表数据清理（测试隔离，autouse）
 - Governance Guard 测试绕过（opt-in fixture）
 """
 import os
 import pytest
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _ensure_db_initialized():
+    """Session 级别: 确保数据库表已创建。
+
+    CI 环境无预存 SQLite 文件，必须在所有测试前调用 init_db()。
+    """
+    from backend.database.database import init_db
+    init_db()
 
 
 @pytest.fixture(autouse=True, scope="function")
