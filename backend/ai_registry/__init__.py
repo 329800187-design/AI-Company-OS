@@ -1,0 +1,1 @@
+from backend.ai_registry.registry import AIRegistry, get_registry

@@ -1,0 +1,11 @@
+{
+  "id": "data",
+  "name": "数据分析",
+  "version": "1.0.0",
+  "entrypoint": "agents.data_agent.agent:DataAgent",
+  "capabilities": ["data", "pandas", "visualization", "csv", "excel"],
+  "task_types": ["data_load", "data_explore", "data_clean", "data_analyze", "data_viz", "data_export"],
+  "risk_level": "low",
+  "enabled": true,
+  "description": "数据分析、清洗、可视化，支持 CSV/Excel/JSON/Parquet 多格式"
+}

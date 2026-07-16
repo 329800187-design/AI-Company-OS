@@ -1,0 +1,11 @@
+{
+  "id": "image",
+  "name": "图片生成",
+  "version": "1.0.0",
+  "entrypoint": "agents.image_agent.agent:ImageAgent",
+  "capabilities": ["image", "dalle", "vision"],
+  "task_types": ["image_generate", "image_analyze"],
+  "risk_level": "low",
+  "enabled": true,
+  "description": "多 provider 图片生成与视觉分析，支持 DALL-E、DeepSeek Janus、CC Switch"
+}

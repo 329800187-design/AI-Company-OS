@@ -1,0 +1,38 @@
+# AI Company OS v1.5.0 — Python 依赖
+# pip install -r requirements.txt
+
+# Web Framework
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+python-dotenv>=1.0.0
+httpx>=0.27.0
+lark-oapi>=1.4.0
+python-multipart>=0.0.6
+
+# Desktop App
+pywebview>=5.0.0
+
+# Data & Validation
+pydantic>=2.0.0
+pandas>=2.0.0
+openpyxl>=3.1.0
+matplotlib>=3.8.0
+
+# Agents
+playwright>=1.40.0
+
+# Logging (可选, 降级到 stdlib)
+loguru>=0.7.0
+
+# YAML (skills, workflows)
+pyyaml>=6.0
+
+# Payments (可选)
+stripe>=7.0.0
+
+# Database
+# SQLite is built-in (Python stdlib)
+# PostgreSQL (可选): psycopg2-binary>=2.9
+
+# Development
+pytest>=8.0.0

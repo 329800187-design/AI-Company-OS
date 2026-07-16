@@ -1,0 +1,12 @@
+{
+  "id": "research",
+  "name": "Research 调研",
+  "version": "1.0.0",
+  "entrypoint": "agents.research_agent.agent:ResearchAgent",
+  "capabilities": ["research", "brief", "analysis"],
+  "task_types": ["research_brief", "market_research", "competitor_analysis"],
+  "risk_level": "low",
+  "enabled": true,
+  "description": "文本调研框架智能体 — 生成结构化调研简报（无联网能力）",
+  "author": "AI Company OS"
+}

@@ -1,0 +1,11 @@
+{
+  "id": "marketing",
+  "name": "营销内容",
+  "version": "1.0.0",
+  "entrypoint": "agents.marketing_agent.agent:MarketingAgent",
+  "capabilities": ["copywriting", "social_media", "seo", "email", "brand"],
+  "task_types": ["copywriting", "social_media", "seo_article", "email_campaign", "brand_strategy", "campaign_plan"],
+  "risk_level": "low",
+  "enabled": true,
+  "description": "生成各平台营销文案，支持小红书、抖音、邮件等多渠道"
+}

@@ -1,0 +1,12 @@
+{
+  "id": "website",
+  "name": "网站落地页",
+  "version": "1.0.0",
+  "entrypoint": "agents.website_agent.agent:WebsiteAgent",
+  "capabilities": ["website_draft", "landing_page", "product_page", "squeeze_page"],
+  "task_types": ["website_draft", "landing_page", "product_page", "squeeze_page", "coming_soon"],
+  "risk_level": "low",
+  "enabled": true,
+  "description": "生成结构化落地页文案和页面方案，不执行真实建站或部署",
+  "author": "AI Company OS"
+}

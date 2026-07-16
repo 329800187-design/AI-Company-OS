@@ -1,0 +1,11 @@
+{
+  "id": "example_echo",
+  "name": "Example Echo Agent",
+  "version": "0.1.0",
+  "entrypoint": "agents.installed.example_echo_agent.agent:ExampleEchoAgent",
+  "capabilities": ["echo", "copywriting"],
+  "task_types": ["echo", "copywriting"],
+  "risk_level": "low",
+  "enabled": true,
+  "description": "最小可运行第三方 Agent 示例 — 回声 + 简易文案"
+}
