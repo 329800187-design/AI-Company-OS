@@ -1,0 +1,12 @@
+{
+  "current": "deepseek",
+  "enabled": {
+    "deepseek": true,
+    "mimo": true,
+    "claude": true,
+    "openai": true,
+    "ollama": true,
+    "lm_studio": true,
+    "cc_switch": true
+  }
+}

@@ -1,57 +1,629 @@
 # AI Company OS
 
-这是一个私有项目：一人公司 AI 操作系统。
+**一人公司 AI 操作系统 · 多智能体协作平台 · 版本 1.5.0**
 
-## 最初目标
+## 项目愿景
 
-这个项目不是普通聊天机器人，而是希望做成一个“AI 公司操作系统”：
+这个项目不是普通聊天机器人，而是希望做成一个"AI 公司操作系统"：
 
 - 用户只说目标，系统负责理解、拆解、分配、执行、验收和归档。
-- 不同业务入口对应不同“部门”：市场、图片、数据、调研、网站、老板工作台。
+- 不同业务入口对应不同"部门"：市场、图片、数据、调研、网站、老板工作台。
 - Agent 不只是聊天回复，而要产出可保存、可预览、可下载的交付物。
 - 普通业务 Agent 直接生产，高风险任务由 Governance 做风控。
 - Boss 工作台只是高层入口，不是整个系统本体。
 
-## 当前完整代码在哪里
+---
 
-完整项目进度已推送到分支：
+## 最新状态（2026-07-14）
 
-`codex/current-progress-20260705`
+### Phase 6.19：通用业务流程执行协议 ✅ 已完成
 
-完整代码链接：
+Boss Command Center 从"某些具体业务模板"纠偏为"通用业务流程执行系统"：
 
-https://github.com/329800187-design/AI-Company-OS/tree/codex/current-progress-20260705
+- ✅ **通用模板机制**：8 个通用业务流程模板（目标到计划、调研到决策、交付物生成、沟通方案、流程复盘、风险检查、执行清单、数据洞察）
+- ✅ **模板协议标准化**：每个模板包含 `protocol_version`、`template_type`、`domain_lock`、`context_schema`、`review_checklist`
+- ✅ **模块定义通用化**：5 个模块改为通用能力描述（目标理解与策略判断、上下文与证据整理、沟通与触达方案、交付物结构、执行计划）
+- ✅ **旧模板兼容**：旧业务模板 ID 通过 `TEMPLATE_ALIASES` 映射到通用模板
+- ✅ **前端入口通用化**：Boss Lite 常用入口改为通用业务流程
+- ✅ **核心原则**：业务不写死在核心代码里，业务只作为用户输入、模板参数、上下文 schema、审核标准进入
 
-## 当前进度
+### Phase 6.10：DAG Canvas（前端图形化 DAG 编辑器） ✅ 已完成
 
-截至 2026-07-05，项目推进到：
+- ✅ **Canvas 预览**：模板卡片点击预览按钮打开 React Flow 画布，渲染节点/边/MiniMap/Controls
+- ✅ **节点选择与详情**：点击节点弹出属性面板（id / agent_id / title / prompt / 入边出边数）
+- ✅ **边选择与详情**：点击边弹出属性面板（from_node / to_node / handoff_type），支持含连字符节点 ID
+- ✅ **属性编辑**：节点 title / agent_id / prompt 和边 handoff_type 可在面板内编辑，修改即时同步到画布
+- ✅ **节点/边删除**：面板内删除按钮 + 确认对话框；选中后 Delete 键删除，自动清理关联边
+- ✅ **键盘安全**：输入框聚焦时 Backspace 不触发删除
+- ✅ **拖拽连线**：从 source handle 拖到 target handle 创建新边；自环 / 重复边 / cycle 三重校验并 toast 提示
+- ✅ **新增节点**：Canvas 工具栏「添加节点」按钮，自动生成唯一 ID
+- ✅ **节点拖拽**：editable 模式下节点可自由拖拽，只读预览不可拖拽
+- ✅ **自动布局**：dagre 算法自动排列，点击按钮一键恢复
+- ✅ **布局持久化**：拖拽位置存入 localStorage，关闭重开表单后恢复；自动布局后清除旧位置
+- ✅ **节点定位**：下拉选择节点自动定位并高亮，只读预览不显示定位控件
+- ✅ **Undo/Redo 集成**：编辑 title、删除节点/边、新增节点/边均支持撤销/重做；拖拽不产生历史
+- ✅ **只读预览隔离**：模板卡片的预览 Canvas 无「添加节点」按钮、handle 隐藏、节点不可拖拽
+- ✅ **小屏适配**：480px 宽度下工具栏不遮挡节点，详情面板输入框无水平溢出
+- ✅ **批量选择**：Shift+拖拽框选多节点、批量拖动、批量删除（含关联边自动清理）、undo/redo 正确恢复、只读预览不暴露批量操作
+- ✅ **E2E 测试**：51 个 Canvas 专项用例全部通过（`npx playwright test e2e/dag-editor.spec.ts --grep "DAG Canvas"`）
 
-> 前端展示验收 + 业务 Agent 链路打通阶段
+### Phase 6.11：DAG Canvas 布局后端持久化 ✅ 已完成
+
+- ✅ **后端布局存储**：`canvas_layout` 字段写入模板 JSON（`{node_id: {x, y}}`），不影响现有 nodes/edges 结构
+- ✅ **PATCH 布局 API**：`PATCH /boss/graph/templates/{id}/layout` 专用端点，不创建版本快照
+- ✅ **前端优先级**：后端布局 > localStorage > dagre 自动布局
+- ✅ **拖拽自动保存**：节点拖拽后 800ms 防抖自动 PATCH 到后端，跨设备/浏览器同步
+- ✅ **自动布局联动**：点击「自动布局」清除后端布局和 localStorage，后续打开使用 dagre 默认
+- ✅ **向后兼容**：旧模板无 `canvas_layout` 字段时自动 fallback 到 localStorage → dagre
+- ✅ **版本快照不含布局**：`canvas_layout` 是 per-template 属性，不进入版本快照
+- ✅ **create/update 透传**：`canvas_layout` 可通过 POST/PUT 传入，也可通过 PATCH 单独更新
+- ✅ **17 个新增测试**：10 个 store 层 + 7 个 API 层，覆盖保存/读取/更新/不存在/不创版本/列表包含/清除布局/NaN过滤/null拒绝等场景
+- ✅ **全量测试通过**：126 个 graph template 测试全部通过
+
+### Phase 6.9：Graph Template Audit Retention Policy ✅ 已完成
+
+- ✅ **审计存储查询**：`GET /boss/graph/audit/storage` 返回文件数、总大小、最早/最新事件时间
+- ✅ **审计日志清理**：`POST /boss/graph/audit/cleanup` 支持 `retention_days` + `dry_run` 参数
+- ✅ **安全设计**：默认 `dry_run=True` 只预览不删除，只清理已删除模板的审计文件
+- ✅ **清理脚本**：`scripts/cleanup_graph_audit.py` 支持 `--retention-days`、`--dry-run`、`--apply`、`--json`
+- ✅ **前端 UI**：Audit Storage 信息块 + 预览清理按钮
+- ✅ **测试覆盖**：13 个测试场景，覆盖存储统计、清理逻辑、API 端点
+
+### Phase 6.8：Graph Template Audit Log + Pin/Unpin ✅ 已完成
+
+- ✅ **审计日志系统**：记录模板全生命周期 9 种事件（create / clone / update / delete / execute / restore / metadata_update / pin / unpin）
+- ✅ **安全特性**：敏感字段自动过滤（api_key/token/secret/password/authorization），长文本截断（200 字符）
+- ✅ **删除后可追溯**：模板删除后审计日志保留，API 返回 `deleted: true`
+- ✅ **版本 Pin/Unpin**：固定版本不会被自动裁剪（20 版本上限只对未固定版本生效）
+- ✅ **前端审计面板**：事件类型筛选、颜色编码（9 种颜色）、时间线展示
+- ✅ **前端 Pin UI**：版本列表显示固定/取消固定按钮，固定版本显示琥珀色「固定」徽章
+- ✅ **测试覆盖**：28 个测试场景，包含审计写入/查询/过滤/安全/pin 存活裁剪/删除后保留
+
+### 第一阶段：业务部门 MVP 闭环 ✅ 已完成
+
+五个业务页 + MiniDelivery 交付中心端到端闭环验收完成。
+
+### 第二阶段：Boss Lite ✅ 已完成
+
+> 一句话目标 → 5 个 Agent 并行执行（含 Handoff） → 可读作战报告 → 自动保存交付中心 → 历史工作台可查可复用
+
+当前推荐入口：**http://localhost:5173/app?page=boss**
+
+当前分支：`codex/current-progress-20260705`
+
+### 第四阶段：真实能力接入 ✅ 核心闭环完成
+
+Phase 4.1 已完成 Research Agent 联网搜索 MVP：
+
+- 新增 `backend/services/web_search_service.py`，提供可替换搜索服务层。
+- `Research Agent` 执行前会调用搜索服务，并把搜索结果注入 LLM prompt。
+- `structured_output.sources` 会保留搜索来源，MiniDelivery 的 `artifact.md` 会展示「信息来源」。
+- 默认无 API key 时使用 `MockSearchProvider`，方便本地开发和测试。
+- 支持通过环境变量切换真实 provider：
+  - `WEB_SEARCH_PROVIDER=auto|mock|serpapi|bing`
+  - `SERPAPI_API_KEY=...`
+  - `BING_SEARCH_API_KEY=...`
+
+Phase 4.4 已完成 Data Agent 真实数据源 MVP：
+
+- 新增 `backend/services/data_source_service.py`，统一读取 CSV / JSON / inline / URL 数据。
+- `Data Agent` 会优先检测真实数据源；有数据时走 pandas 分析路径，无数据时保持原有 LLM-first / template fallback。
+- 返回 metadata 增量字段：`data_source_type`、`sample_rows`。
+- MiniDelivery 的 Data artifact 会展示「数据来源」和「样本行数」。
+- URL 数据源读取带 `timeout=15s` 和 `10MB` 响应大小限制。
+
+Phase 4.8 已完成 Image Generation Provider 骨架：
+
+- 新增 `backend/services/image_generation_service.py`，提供可替换图片生成 Provider 接口。
+- 默认使用 `MockImageProvider` 返回占位图，可通过 `OPENAI_API_KEY` 启用 `OpenAIImageProvider`（DALL-E 3）。
+- `Image Agent` 返回 `metadata.image_provider` 和 `structured_output.generated_images`。
+- MiniDelivery 的 Image artifact 会展示生成图片、provider 和 URL。
+- 前端 Image 页面展示生成图片卡片。
+
+Phase 4 能力状态：
+
+- ✅ **真实能力已验收**：CSV / JSON / inline / URL 核心数据源读取
+- ⚙️ **服务层支持**：TSV / Parquet 数据源读取
+- ⚠️ **Provider 骨架（代码就绪，真实 key 未验收）**：SerpAPI / Bing 搜索、OpenAI DALL-E 图片生成
+- 📝 **Mock 能力**：MockSearchProvider、MockImageProvider
+
+详细验收文档见：`docs/phase4_real_capabilities_acceptance.md`
+
+Boss Lite 已完成能力：
+
+- 一句话目标输入，支持 8 个常用作战模板一键填入
+- **人工确认执行流**：创建 → pending_review → 人工确认 → 执行 → 人工审核 accept → done
+- 自动拆解为 5 个业务 Agent：research / marketing / image / data / website
+- 5 个 Agent 并行执行（ThreadPoolExecutor，max_workers=5）
+- **模块级 Timeout**：每个模块独立超时（60-90s），超时后 interrupted，后续模块不执行
+- **Stale Cleanup**：全局/单任务两层清理，保留已有结果，不删除数据
+- **Late Result CAS 保护**：防止晚返回结果覆盖 interrupted 状态
+- **Agent Handoff v1 已完成**：research / data 上游洞察自动传递给 marketing / image / website
+- 前端已可视化 handoff 状态：Summary Banner 显示 handoff flow，下游 Agent 卡片显示「已参考上游洞察」，详情页显示 handoff 来源
+- 可读的 Boss 作战报告（Markdown 格式，含各部门结论和 Boss 建议）
+- 自动保存到 MiniDelivery（artifact.md + raw_agent_result.json + result.json）
+- Delivery 搜索/预览/详情/下载全部可用
+- 进度 UI（4 阶段动画）
+- 总耗时 + 单 Agent 耗时统计
+- **Boss Lite 历史工作台**：搜索/排序/加载更多/隐藏/恢复/复制目标/复用目标/查看交付物
+- **历史复盘 Badge**：成功率、耗时、Handoff 标记、execution_mode
+- **第二阶段核心闭环完成**：一句话目标 → 多 Agent 协同（含 handoff） → 作战报告 → 自动保存 → 历史可查可复用
+
+已验证 task_id 示例：`boss_91329f9f810d`、`boss_9c21dac31fae`、`boss_932d0b352f0e`、`boss_c7dba8f25408`、`boss_27654a577ba5`、`boss_b8241c004c4d`、`boss_0fbb4623b07b`、`boss_d93dae73ab76`
+
+### 第五阶段：产品化收口 ✅ 已完成
+
+Phase 5 聚焦产品化、运维增强和验收工具，不新增业务能力：
+
+- ✅ **Phase 5.1 PDF 导出**：`pdf_service.py` Markdown → PDF 引擎（reportlab + CJK），`GET /minidelivery/tasks/{task_id}/pdf`，前端详情页一键下载。
+- ✅ **Phase 5.2 Mission 对比**：`POST /minidelivery/tasks/compare` 两个任务结构化对比，前端 Boss 历史工作台集成。
+- ✅ **Phase 5.3 Provider Health 面板**：`GET /config/providers/health` 返回 search/image provider 状态，前端 Settings 页展示。
+- ⚠️ **Phase 5.4 真实 Provider E2E 验收**：`scripts/verify_real_providers.py` 自动检测 API Key，有 key 跑真实调用，没 key 跳过。
+- ✅ **Phase 5.5 本地部署体检**：`scripts/healthcheck_local.py` 一次性检查后端 + 前端 + 交付物 + PDF + provider 状态。
+
+详细验收文档：`docs/phase5_productization_acceptance.md`
+
+最近验证：
+
+```bash
+python -c "import backend.app; print('ok')"  # ✅ 通过
+cd frontend-new && npm run build              # ✅ 通过
+```
+
+详细进度见：
+
+- `docs/phase2_boss_lite_acceptance.md` — 第二阶段 Boss Lite 验收清单
+- `docs/phase1_acceptance_checklist.md` — 第一阶段验收清单
+- `docs/phase3_collaboration_graph_design.md` — 第三阶段 CollaborationGraph 设计 + 验收
+- `docs/phase4_research_web_search.md` — 第四阶段 Research 联网搜索 MVP 验收
+- `docs/phase4_data_source_mvp.md` — 第四阶段 Data Agent 真实数据源 MVP 验收
+- `docs/phase4_image_generation_provider.md` — 第四阶段 Image Generation Provider 骨架验收
+- `docs/phase4_real_capabilities_acceptance.md` — 第四阶段真实能力接入最终验收文档
+- `docs/phase5_productization_acceptance.md` — 第五阶段产品化收口验收文档
+- `docs/phase6_dag_canvas_acceptance.md` — Phase 6.10 DAG Canvas 验收文档 + Phase 6.11 布局后端持久化 + Phase 6.12 批量选择
+- `docs/phase6_boss_execution_flow.md` — Phase 6.13-6.16 Boss 执行闭环审计（状态机/人工确认/timeout/stale cleanup/CAS 保护）
+- `docs/business_pages_user_guide.md` — 业务页面使用说明
+- `docs/project_progress_snapshot_2026-07-06.md` — 详细进度快照
+- `docs/VISION.md` — 项目愿景
+
+> 你告诉它"要做什么"，它生成计划、等你确认、执行任务、等你审核，最后给你总结报告。
+
+## 项目初心
+
+这个项目最初的想法不是做一个普通聊天机器人，也不是堆一堆 Agent 名字，而是做一个“一人公司操作系统”：
+
+> 用户只需要说清楚目标，系统像一家公司一样理解任务、分配部门、产出结果、检查质量、保存交付物。
+
+更具体一点，它想解决的是：
+
+- 一个人也能拥有“市场部、设计部、数据部、研究部、网站部、技术部、老板办公室”。
+- 不把所有事情都塞进一个聊天框，而是让不同业务入口承担不同工作。
+- Agent 不只是回答文字，而要形成可保存、可预览、可下载的交付物。
+- 系统需要有秩序：普通业务 Agent 直接生产，高风险执行交给 Governance 风控。
+- Boss 工作台只是高层入口，不是整个系统本身。
+
+当前类比是“大汉式 AI Company OS”：
+
+| 模块 | 类比 | 当前职责 |
+|------|------|----------|
+| Boss Lite | 一句话指挥台 | 一句话目标 → 5 Agent 并行 → 作战报告 → 自动保存 |
+| Marketing Agent | 市场文案部 | 产出文案、品牌策略、活动方案 |
+| Image Agent | 美术总监部 | 产出图片提示词 + 图片生成 Provider 接口 |
+| Data Agent | 数据分析部 | 真实数据源读取 + 数据分析报告 |
+| Research Agent | 情报研究部 | 产出结构化研究简报 |
+| Deliverable Agent | 交付物结构 | 产出交付物框架、核心内容和检索展示建议 |
+| MiniDelivery | 后勤归档 | 保存、预览、下载交付物 |
+| Governance | 风控/审计 | 拦截危险或不受控任务 |
+| Boss 指挥台 | 董事长办公室 | 人工确认执行流，支持模块选择、timeout 保护和浏览器授权 |
+
+## 当前进度快照
+
+最后保存时间：2026-07-13
+
+当前项目已推进到：
+
+> Phase 6.16 Boss 执行闭环审计完成，人工确认执行流 + timeout + stale cleanup + late result CAS 保护全部就绪
 
 已经完成：
 
-- MiniDelivery v1 已冻结：保存、列表、详情、预览、下载、归档。
-- Marketing / Image / Data / Research / Website 五个业务 Agent 已完成 LLM-first + template fallback。
-- 前端五个业务页开始按 structured_output 展示结构化产物。
-- 保存到交付中心的 404 已修复。
-- Marketing 页已从“小红书/抖音平台限制”扩展为文案类型选择。
-- 普通业务 Agent 已避免被 Governance Guard 误拦截。
+- **第一阶段（业务 Agent MVP）** ✅ 已完成
+  - `MiniDelivery v1` 已冻结：保存、列表、详情、预览、下载、归档。
+  - `Marketing / Image / Data / Research / Website` 五个业务 Agent 已完成 `LLM-first + template fallback`。
+  - 前端五个业务页按 `structured_output` 做结构化展示。
+  - `/agents/{agent_id}/execute` 统一端点，普通业务 Agent 跳过 Governance Guard。
 
-## 下一步
+- **第二阶段（Boss Lite）** ✅ 已完成
+  - Boss 页面默认 Boss Lite 模式，一句话目标 → 5 Agent 并行执行。
+  - Agent Handoff v1：先执行 research / data，再把上游洞察传递给下游 Agent。
+  - 8 个通用业务流程模板（目标到计划、调研到决策、交付物生成、沟通方案、流程复盘、风险检查、执行清单、数据洞察）。
+  - 并行执行 + 进度 UI + 总耗时/单 Agent 耗时统计。
+  - 可读 Markdown 作战报告，自动保存到 MiniDelivery。
+  - Delivery 搜索/预览/详情/下载已验证。
+  - **Boss Lite 历史工作台**：搜索/排序/加载更多/隐藏/恢复/复制目标/复用目标/查看交付物/复盘 Badge。
 
-下一步不是扩新功能，而是端到端验收：
+- **第三阶段（CollaborationGraph）** ✅ 已完成
+  - ✅ `collaboration_graph.py` 通用 DAG 数据结构 + 拓扑排序（wave 划分）。
+  - ✅ Boss Lite 执行路径已从硬编码 wave 重构为 Graph 驱动（`build_boss_lite_graph → topological_waves`）。
+  - ✅ 支持 partial agents 自动裁剪子图，handoff_sources 从图上游依赖动态计算。
+  - ✅ 5 个真实 API 场景验收通过（默认5agent、research+marketing、data+website、marketing only、research+data）。
+  - ✅ MiniDelivery 搜索/详情/预览/下载全部验证通过。
+  - ✅ 新增 `POST /boss/graph/execute` 自定义 DAG API 最小版，支持调用方传入 nodes/edges 后按图执行。
+  - ✅ Boss 页面新增「协作图 / Collaboration Graph」可视化卡片，展示 waves、edges、节点状态和 handoff 来源。
+  - ✅ Graph Template 持久化：`POST /boss/graph/templates` 创建、`GET` 列表、`GET/{id}` 获取、`DELETE/{id}` 删除、`POST/{id}/execute` 按模板执行。
+  - ✅ Boss 页面新增 Graph Templates 面板：模板列表、目标填充、按模板执行、删除模板、结果可视化。
+  - ✅ Boss 页面新增模板创建表单：基础信息、节点/边编辑、前端校验、保存后刷新列表。
+  - ✅ Graph Template 克隆 UI：点击「克隆」自动填入创建表单，name 追加「副本」，保存为新模板。
+  - ✅ Graph Template 更新：`PUT /boss/graph/templates/{id}` 更新已有模板，前端编辑模式，保留 created_at。
+  - ✅ **Phase 6.8 Graph Template Audit Log**：9 种事件类型、敏感字段过滤、长文本截断、删除后保留、前端审计面板 + 事件筛选 + Pin UI。
+  - ✅ **Phase 6.9 Audit Retention Policy**：审计存储查询、安全清理机制（dry_run 默认）、清理脚本、前端 Audit Storage UI。
+  - ✅ **Phase 6.10 DAG Canvas**：React Flow 图形化编辑器，支持预览/选择详情/属性编辑/节点边删除/拖拽连线/新增节点/拖拽布局/自动布局/布局持久化/节点定位/undo-redo/只读隔离/小屏适配/批量选择。
+  - ✅ **Phase 6.11 DAG Canvas 布局后端持久化**：Canvas 拖拽布局通过 PATCH API 持久化到模板 JSON，跨设备同步，后端布局优先 → localStorage fallback → dagre 自动布局。
+  - ✅ **Phase 6.12 DAG Canvas 批量选择**：Shift+拖拽框选多节点、批量拖动、批量删除（含关联边自动清理）、undo/redo 正确恢复、只读预览不暴露批量操作。
+  - ✅ **Phase 6.13 人工确认执行流**：create_mission → pending_review → 人工确认 → run_mission → 人工审核 accept → done，auto_run 废弃。
+  - ✅ **Phase 6.14 Stale Running Cleanup**：全局/单任务两层清理机制，保留已有结果，不删除数据。
+  - ✅ **Phase 6.15 执行进度轮询**：前端轮询 terminal 状态后停止。
+  - ✅ **Phase 6.16 模块级 Timeout**：独立超时 + interrupted 标记 + 后续模块中断 + ThreadPoolExecutor 快速返回。
+  - ✅ **Phase 6.16.1 Late Result CAS 保护**：expected_status 条件更新，防止晚返回结果覆盖 interrupted 状态。
+  - ✅ **Phase 6.16.2 ThreadPoolExecutor shutdown 修复**：timeout 后 shutdown(wait=False) 不阻塞请求。
+  - Graph Template 闭环：创建 → 列表 → 编辑 → 克隆 → 删除 → 按模板执行 → 结果可视化 → 审计日志 → 版本固定 → 审计保留/清理 → 图形化 Canvas 编辑 → 布局后端持久化 → **批量选择** → **人工确认执行流** → **timeout/stale cleanup/CAS 保护**。
 
-1. 逐页测试 Marketing / Image / Data / Research / Website。
-2. 确认每页能生成、能展示结构化字段、能显示 fallback/source/warnings。
-3. 每页点击“保存到交付中心”。
-4. 到 Delivery 页面确认预览和下载内容没有丢关键字段。
-5. 如果保存后的 Markdown 丢字段，只修字段映射，不扩 MiniDelivery 功能。
+- **第四阶段（真实能力接入）** ✅ 核心闭环完成
+  - ✅ **Phase 4.1 Research Web Search**：`web_search_service.py` 可替换搜索服务层，Mock / SerpAPI / Bing 三 provider。
+  - ✅ **Phase 4.4 Data Real Data Source**：`data_source_service.py` 统一数据源读取，CSV / JSON / inline / URL 核心路径已验收，TSV / Parquet 服务层支持。
+  - ✅ **Phase 4.8 Image Generation Provider**：`image_generation_service.py` 图片生成 Provider 骨架，Mock / OpenAI DALL-E 3。
+  - ✅ 三条主线均采用 Provider 模式：统一接口 + 可替换实现 + mock 默认 fallback。
+  - ✅ 真实能力已验收：CSV / JSON / inline / URL 数据源读取。
+  - ⚙️ 服务层支持：TSV / Parquet 数据源读取。
+  - ⚠️ Provider 骨架（代码就绪，真实 key 未验收）：SerpAPI / Bing 搜索、OpenAI DALL-E 图片生成。
+  - ✅ 前端 Research / Data / Image 页面均已适配新能力展示。
+  - ✅ MiniDelivery artifact 展示：sources / 数据来源 / 生成图片。
 
-## 关键文档
+- **第五阶段（产品化收口）** ✅ 已完成
+  - ✅ **Phase 5.1 PDF 导出**：Markdown → PDF（reportlab + CJK），前端详情页一键下载。
+  - ✅ **Phase 5.2 Mission 对比**：两个任务结构化对比，前端 Boss 历史工作台集成。
+  - ✅ **Phase 5.3 Provider Health 面板**：search/image provider 状态可视化，前端 Settings 页集成。
+  - ⚠️ **Phase 5.4 E2E 验收脚本**：`verify_real_providers.py`，有 key 跑真实调用，没 key 跳过。
+  - ✅ **Phase 5.5 本地体检脚本**：`healthcheck_local.py`，无需任何 key 即可运行。
+  - ✅ **Phase 5.6 产品化收口文档**：验收文档 + README 更新。
 
-完整分支中重点看：
+## 下一步计划
 
-- `docs/project_progress_snapshot_2026-07-05.md`
-- `docs/project_progress_snapshot_2026-07-04.md`
-- `docs/VISION.md`
-- `README.md`
+Phase 1–5 已全部完成。Phase 6.16（Boss 执行闭环审计）已完成。下一步建议继续 **Phase 6：平台化**：
+
+1. ~~**前端 DAG 编辑器（P1）**~~ ✅ 已完成 — DAG Canvas 图形化编辑器
+2. ~~**保存布局到后端（P2）**~~ ✅ 已完成 — Canvas 布局通过 PATCH API 持久化
+3. ~~**批量选择（P2）**~~ ✅ 已完成 — 框选多节点、批量拖动、批量删除、undo/redo 恢复
+4. **节点模板库（P2）** — 预置常用 Agent 节点配置，拖入画布即创建
+5. **多用户权限（P1）** — 用户认证、团队协作
+6. **Docker 生产配置（P2）** — docker-compose.prod.yml、CI/CD
+7. **跨 Mission 协作（P2）** — 图模板跨任务数据传递
+
+当前边界：
+
+- Research 已接入可替换 Web Search Service；当前不做浏览器爬虫/OpenClaw 深度抓取。
+- 不让 Governance 接管普通业务 Agent 的生产链路。
+- 不把 template fallback 伪装成真实 LLM 产出。
+- 真实 Provider（SerpAPI/Bing/OpenAI DALL-E）需配置 API Key 才能跑完整 E2E 验收。
+
+## ✨ 核心特性
+
+- 🤖 **10个AI智能体** — CEO/Codex/OpenClaw/QA/System/CTO/Image/Marketing/Video/Data
+- ⚡ **Boss Lite 一句话执行** — 一句话目标 → 人工确认 → 5 Agent 并行 → 作战报告 → 人工审核接受
+- 🧠 **智能任务编排** — 自动拆解复杂目标，多Agent协作执行
+- 🎨 **科技感UI** — React + TypeScript + Tailwind CSS 4
+- 🔌 **多Provider支持** — DeepSeek/OpenAI/Claude 一键切换
+- 🔒 **安全可靠** — 输入验证、速率限制、敏感信息脱敏
+- 📊 **数据分析** — 上传Excel/CSV，自动分析生成报告
+- 🌐 **联网搜索** — Research Agent 接入可替换 Web Search Service（SerpAPI/Bing）
+- 🖼️ **图片生成** — Image Agent 接入可替换图片生成 Provider（OpenAI DALL-E 3）
+- 📄 **PDF 导出** — 产物一键导出 PDF（reportlab + CJK 中文字体）
+- 🔍 **Mission 对比** — 两个任务结构化对比分析
+- 🩺 **部署体检** — 本地服务全量体检脚本
+- 📋 **模板审计日志** — 9 种事件类型、敏感字段过滤、删除后可追溯
+- 📌 **版本固定** — Pin 版本防止自动裁剪
+- 🎨 **DAG Canvas** — 图形化 DAG 编辑器（拖拽连线、属性编辑、自动布局、布局后端持久化、批量选择）
+
+## 🚀 快速开始
+
+### 方式一：一键启动（推荐）
+
+```bash
+# Windows
+双击 start.bat
+
+# Linux/macOS
+chmod +x start.sh && ./start.sh
+```
+
+### 方式二：手动启动
+
+```bash
+# 1. 克隆项目
+git clone <repo-url>
+cd AI-company-os
+
+# 2. 创建虚拟环境
+python -m venv .venv
+source .venv/bin/activate  # Linux/macOS
+# .venv\Scripts\activate   # Windows
+
+# 3. 安装依赖
+pip install -r requirements.txt
+
+# 4. 配置环境变量
+cp .env.example .env
+# 编辑 .env 文件，填入你的 API Key
+
+# 5. 启动服务
+python -m uvicorn backend.app:app --host 0.0.0.0 --port 8000
+```
+
+### 方式三：Docker
+
+```bash
+# 构建镜像
+docker compose build
+
+# 启动服务
+docker compose up -d
+
+# 查看日志
+docker compose logs -f
+```
+
+### 本地开发注意事项
+
+```bash
+# 后端（端口 8000）
+python -m uvicorn backend.app:app --reload --port 8000
+
+# 前端开发模式（端口 5173）
+cd frontend-new
+npm install
+npm run dev
+```
+
+- 后端运行在 `localhost:8000`，前端 Vite dev server 运行在 `localhost:5173`。
+- Vite 代理默认指向 `http://localhost:8000`（见 `frontend-new/vite.config.ts`）。
+- 如需临时指向其他后端，启动前端时指定环境变量：
+  ```bash
+  # macOS/Linux/Git Bash：指向 8001 端口的后端（临时调试用）
+  VITE_BACKEND_TARGET=http://localhost:8001 npm run dev
+  ```
+  ```powershell
+  # Windows PowerShell
+  $env:VITE_BACKEND_TARGET="http://localhost:8001"; npm run dev
+  ```
+  ```cmd
+  :: Windows cmd
+  set VITE_BACKEND_TARGET=http://localhost:8001&& npm run dev
+  ```
+- 如遇到 API 返回异常或列表为空，先重启后端和 Vite dev server。
+- 前端构建（`npm run build`）如遇内存不足，使用：`NODE_OPTIONS="--max-old-space-size=4096" npm run build`。
+- 业务页统一使用 `/agents/{agent_id}/execute` 端点。旧端点 `/agents/{agent_id}/run` 仍存在但不推荐使用。
+
+**验证代理是否指向正确后端：**
+
+```bash
+# 应看到 total_duration_ms / handoff_enabled / execution_mode 字段
+curl "http://localhost:5173/minidelivery/tasks?agent_id=boss&limit=1"
+```
+
+如果看不到复盘字段，说明 5173 代理到了旧后端。解决方法：
+1. 确认后端在 8000 端口启动（不是 8001）
+2. 重启 Vite dev server（`npm run dev`）
+3. 或临时把前端代理指向 `8001` 后重新启动 Vite：
+   - macOS/Linux/Git Bash：`VITE_BACKEND_TARGET=http://localhost:8001 npm run dev`
+   - Windows PowerShell：`$env:VITE_BACKEND_TARGET="http://localhost:8001"; npm run dev`
+
+详细使用说明见：`docs/business_pages_user_guide.md`
+
+## 📖 使用指南
+
+### 访问界面
+
+| 界面 | 地址 | 说明 |
+|------|------|------|
+| Boss Lite（推荐） | http://localhost:5173/app?page=boss | 一句话目标 → 多 Agent 协同 |
+| 新版UI | http://localhost:8000/app | React科技感界面 |
+| 前端开发模式 | http://localhost:5173 | Vite dev server（热更新） |
+| 旧版UI | http://localhost:8000/ui | 经典界面 |
+| API文档 | http://localhost:8000/docs | Swagger文档 |
+| 健康检查 | http://localhost:8000/health | 服务状态 |
+
+### 配置AI Provider
+
+编辑 `.env` 文件：
+
+```bash
+# 选择Provider: deepseek / openai / claude
+AI_PROVIDER=deepseek
+
+# DeepSeek配置
+DEEPSEEK_API_KEY=your_api_key_here
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-chat
+
+# OpenAI配置
+OPENAI_API_KEY=your_api_key_here
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-4o
+
+# Claude配置
+CLAUDE_API_KEY=your_api_key_here
+CLAUDE_BASE_URL=https://api.anthropic.com
+CLAUDE_MODEL=claude-sonnet-4-20250514
+```
+
+### 获取API Key
+
+| Provider | 获取地址 | 价格 |
+|----------|----------|------|
+| DeepSeek | https://platform.deepseek.com | ¥0.1-0.3/千次 |
+| OpenAI | https://platform.openai.com | $0.005-0.03/千token |
+| Claude | https://console.anthropic.com | $0.003-0.015/千token |
+
+## 🏗️ 架构设计
+
+```
+AI Company OS
+├── backend/           # FastAPI后端
+│   ├── app.py         # 主应用入口
+│   ├── config.py      # 配置中心
+│   ├── security.py    # 安全模块
+│   ├── performance.py # 性能优化
+│   ├── logger.py      # 日志系统
+│   ├── error_handler.py # 错误处理
+│   ├── routers/       # API路由
+│   ├── database/      # 数据库
+│   └── middleware/    # 中间件
+├── agents/            # AI智能体
+│   ├── ceo_agent/     # 目标拆解
+│   ├── codex_agent/   # 代码执行
+│   ├── marketing_agent/ # 沟通表达
+│   └── ...
+├── core/              # 核心模块
+│   ├── skills/        # 技能系统
+│   ├── memory/        # 记忆系统
+│   └── workflow/      # 工作流引擎
+├── frontend-new/      # React前端
+│   ├── src/
+│   └── dist/
+└── docs/              # 文档
+```
+
+### 技术栈
+
+| 层 | 技术 |
+|----|------|
+| 后端 | FastAPI + Python 3.11+ |
+| 前端 | React 19 + TypeScript + Tailwind CSS 4 |
+| 数据库 | SQLite (WAL模式) |
+| AI | DeepSeek / OpenAI / Claude |
+| 部署 | Docker Compose |
+
+## 📚 API文档
+
+### 核心接口
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/commander/chat/send` | POST | AI对话（支持上下文） |
+| `/commander/run` | POST | 同步执行任务 |
+| `/commander/run-async` | POST | 异步执行任务 |
+| `/agents/{agent}/execute` | POST | 调用指定Agent（推荐） |
+| `/agents/{agent}/run` | POST | 调用指定Agent（旧版，不推荐） |
+| `/data/upload` | POST | 上传数据文件 |
+| `/config/save` | POST | 保存配置 |
+
+### 示例：AI对话
+
+```bash
+curl -X POST http://localhost:8000/commander/chat/send \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "帮我写一条朋友圈文案，推广手工耳环",
+    "history": []
+  }'
+```
+
+### 示例：上传数据
+
+```bash
+curl -X POST http://localhost:8000/data/upload \
+  -F "file=@sales_data.csv"
+```
+
+## 🔒 安全特性
+
+- ✅ 输入验证（长度、类型、格式）
+- ✅ SQL注入防护（参数化查询）
+- ✅ 文件上传安全检查（扩展名、内容、大小）
+- ✅ XSS防护（输入清理）
+- ✅ 速率限制（防止滥用）
+- ✅ 敏感信息脱敏（API Key、Token）
+- ✅ CORS配置
+- ✅ 认证中间件
+
+## 🧪 测试
+
+```bash
+# 运行测试
+pytest
+
+# 运行测试并生成覆盖率报告
+pytest --cov=backend --cov-report=html
+```
+
+## 📦 部署
+
+### 生产环境部署
+
+```bash
+# 1. 设置环境变量
+export ENV=production
+export AUTH_TOKEN=your_secure_token
+
+# 2. 启动服务
+python -m uvicorn backend.app:app \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --workers 4 \
+  --log-level info
+```
+
+### Docker部署
+
+```bash
+# 构建并启动
+docker compose -f docker-compose.prod.yml up -d
+
+# 查看状态
+docker compose ps
+
+# 查看日志
+docker compose logs -f
+```
+
+## 🤝 贡献指南
+
+1. Fork 项目
+2. 创建功能分支 (`git checkout -b feature/xxx`)
+3. 提交更改 (`git commit -m 'Add feature xxx'`)
+4. 推送到分支 (`git push origin feature/xxx`)
+5. 创建 Pull Request
+
+### 代码规范
+
+- Python: 遵循 PEP 8
+- TypeScript: 遵循 ESLint 规则
+- 提交信息: 使用中文，格式为 `[类型] 描述`
+
+### 类型说明
+
+- `[功能]` 新功能
+- `[修复]` Bug修复
+- `[文档]` 文档更新
+- `[重构]` 代码重构
+- `[测试]` 测试相关
+- `[配置]` 配置更新
+
+## 📄 许可证
+
+MIT License
+
+## 🙏 致谢
+
+- [FastAPI](https://fastapi.tiangolo.com/)
+- [React](https://react.dev/)
+- [Tailwind CSS](https://tailwindcss.com/)
+- [DeepSeek](https://deepseek.com/)
+- [OpenAI](https://openai.com/)
+- [Anthropic](https://anthropic.com/)
+
+## 📞 支持
+
+- 📧 Email: support@example.com
+- 💬 微信群: 添加微信 xxx 拉群
+- 📖 文档: https://docs.example.com
+- 🐛 Issue: https://github.com/xxx/ai-company-os/issues

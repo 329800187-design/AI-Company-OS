@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Governance 主入口测试</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #f5f5f5; padding: 24px; color: #333; }
+    h1 { font-size: 20px; margin-bottom: 16px; }
+    .card { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+    textarea, select { width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+    textarea { height: 80px; resize: vertical; }
+    .row { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+    .row > * { flex: 1; }
+    .checkbox-row { display: flex; align-items: center; gap: 8px; }
+    .checkbox-row input { width: auto; }
+    button { background: #2563eb; color: #fff; border: none; padding: 10px 24px; border-radius: 4px; font-size: 14px; cursor: pointer; }
+    button:hover { background: #1d4ed8; }
+    button:disabled { background: #94a3b8; cursor: not-allowed; }
+    pre { background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 4px; overflow-x: auto; font-size: 13px; white-space: pre-wrap; word-break: break-all; max-height: 500px; overflow-y: auto; }
+    .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; margin-top: 12px; }
+    .field { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px 12px; }
+    .field .key { font-size: 12px; color: #64748b; }
+    .field .val { font-size: 14px; font-weight: 600; word-break: break-all; }
+    .note { font-size: 12px; color: #64748b; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Governance 主入口测试</h1>
+
+  <div class="card">
+    <label for="goal">目标 (goal)</label>
+    <textarea id="goal">帮我为手工耳环生成小红书种草文案</textarea>
+
+    <div class="row" style="margin-top: 12px;">
+      <div>
+        <label for="platform">平台 (platform)</label>
+        <select id="platform">
+          <option value="xiaohongshu" selected>xiaohongshu</option>
+          <option value="douyin">douyin</option>
+        </select>
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <div class="checkbox-row">
+          <input type="checkbox" id="execute" checked>
+          <label for="execute" style="margin: 0;">execute (执行)</label>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top: 16px;">
+      <button id="runBtn" onclick="runGovernance()">POST /governance/run</button>
+      <span class="note" style="margin-left: 12px;">推荐主入口</span>
+    </div>
+  </div>
+
+  <div class="card" id="resultFields" style="display: none;">
+    <label>关键字段</label>
+    <div class="fields" id="fieldsGrid"></div>
+    <div style="margin-top: 12px; display: none;" id="artifactSection">
+      <button id="readArtifactBtn" onclick="readArtifact()">读取产物</button>
+      <span class="note" style="margin-left: 12px;">读取 Markdown 原文内容</span>
+    </div>
+  </div>
+
+  <div class="card" id="artifactContent" style="display: none;">
+    <label>产物内容 (Markdown)</label>
+    <pre id="artifactJson">等待读取...</pre>
+  </div>
+
+  <div class="card">
+    <label>响应 JSON</label>
+    <pre id="resultJson">等待请求...</pre>
+  </div>
+
+  <div class="note" style="margin-top: 16px;">
+    底层兼容入口：POST /minidelivery/copy-pack | POST /minidelivery/xhs-copy-pack（不推荐优先调用）
+  </div>
+
+  <script>
+    const BASE = window.location.origin && window.location.origin.startsWith('http')
+      ? window.location.origin
+      : 'http://127.0.0.1:8000';
+
+    let currentRunId = null;
+
+    async function runGovernance() {
+      const btn = document.getElementById('runBtn');
+      const pre = document.getElementById('resultJson');
+      const fieldsCard = document.getElementById('resultFields');
+      const fieldsGrid = document.getElementById('fieldsGrid');
+      const artifactSection = document.getElementById('artifactSection');
+      const artifactContent = document.getElementById('artifactContent');
+
+      const goal = document.getElementById('goal').value.trim();
+      if (!goal) { pre.textContent = '请输入 goal'; return; }
+
+      btn.disabled = true;
+      btn.textContent = '请求中...';
+      pre.textContent = '等待响应...';
+      fieldsCard.style.display = 'none';
+      artifactSection.style.display = 'none';
+      artifactContent.style.display = 'none';
+      currentRunId = null;
+
+      const body = {
+        goal: goal,
+        platform: document.getElementById('platform').value,
+        execute: document.getElementById('execute').checked,
+      };
+
+      try {
+        const resp = await fetch(BASE + '/governance/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await resp.json();
+        pre.textContent = JSON.stringify(data, null, 2);
+
+        // Show key fields
+        const keys = ['run_id', 'status', 'artifact_path', 'json_path', 'task_id', 'mode', 'summary'];
+        fieldsGrid.innerHTML = '';
+        for (const k of keys) {
+          if (data[k] !== undefined) {
+            const div = document.createElement('div');
+            div.className = 'field';
+            div.innerHTML = '<div class="key">' + k + '</div><div class="val">' + escHtml(String(data[k])) + '</div>';
+            fieldsGrid.appendChild(div);
+          }
+        }
+        if (data.result && data.result.ok !== undefined) {
+          const div = document.createElement('div');
+          div.className = 'field';
+          div.innerHTML = '<div class="key">result.ok</div><div class="val">' + data.result.ok + '</div>';
+          fieldsGrid.appendChild(div);
+        }
+        fieldsCard.style.display = 'block';
+
+        // 如果有 artifact_path，显示读取产物按钮
+        if (data.artifact_path && data.status === 'succeeded') {
+          currentRunId = data.run_id;
+          artifactSection.style.display = 'block';
+        }
+      } catch (e) {
+        pre.textContent = '请求失败: ' + e.message + '\n\n请确保后端服务已启动 (uvicorn backend.app:app)';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'POST /governance/run';
+      }
+    }
+
+    async function readArtifact() {
+      if (!currentRunId) {
+        alert('没有可读取的 run_id');
+        return;
+      }
+
+      const btn = document.getElementById('readArtifactBtn');
+      const pre = document.getElementById('artifactJson');
+      const artifactContent = document.getElementById('artifactContent');
+
+      btn.disabled = true;
+      btn.textContent = '读取中...';
+      pre.textContent = '等待响应...';
+      artifactContent.style.display = 'block';
+
+      try {
+        const resp = await fetch(BASE + '/governance/runs/' + currentRunId + '/artifact');
+        const data = await resp.json();
+
+        if (resp.ok) {
+          pre.textContent = data.content;
+        } else {
+          pre.textContent = '读取失败: ' + (data.detail || '未知错误');
+        }
+      } catch (e) {
+        pre.textContent = '请求失败: ' + e.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '读取产物';
+      }
+    }
+
+    function escHtml(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+  </script>
+</body>
+</html>
