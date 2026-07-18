@@ -1522,7 +1522,7 @@ class TestListTasks:
                      artifact_type: str = "", source_page: str = "",
                      created_at: str = ""):
         """在指定目录下创建模拟任务目录和 result.json"""
-        task_dir = base / "minidelivery" / task_id
+        task_dir = base / task_id
         task_dir.mkdir(parents=True, exist_ok=True)
         result = {
             "task_id": task_id,
@@ -1605,7 +1605,7 @@ class TestListTasks:
             # 正常任务
             self._create_task(tmp_path, "t1", "正常", "marketing")
             # 损坏的任务
-            bad_dir = tmp_path / "minidelivery" / "t_bad"
+            bad_dir = tmp_path / "t_bad"
             bad_dir.mkdir(parents=True, exist_ok=True)
             (bad_dir / "result.json").write_text("NOT VALID JSON {{{", encoding="utf-8")
             resp = client.get("/minidelivery/tasks")
@@ -1800,7 +1800,7 @@ class TestListTasks:
         """搜索不读取 artifact.md 全文也能通过测试"""
         with patch("backend.routers.minidelivery_router.OUTPUT_ROOT", tmp_path):
             # 创建任务但不写 artifact.md
-            task_dir = tmp_path / "minidelivery" / "t_no_md"
+            task_dir = tmp_path / "t_no_md"
             task_dir.mkdir(parents=True, exist_ok=True)
             result = {
                 "task_id": "t_no_md",
