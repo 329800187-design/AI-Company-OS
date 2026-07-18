@@ -70,6 +70,7 @@ class TestBrowserAutomationApprovalGate:
     def _setup_hermes_provider(self, monkeypatch):
         """设置 BOSS_EXECUTION_PROVIDER=hermes 并重置 registry"""
         monkeypatch.setenv("BOSS_EXECUTION_PROVIDER", "hermes")
+        monkeypatch.setenv("ACO_ENABLE_LEGACY_BUSINESS_EXECUTORS", "true")
         # 确保浏览器自动化审批闸门生效（.env 可能有 BROWSER_AUTOMATION_APPROVED=true）
         monkeypatch.setenv("BROWSER_AUTOMATION_REQUIRE_APPROVAL", "true")
         monkeypatch.setenv("BROWSER_AUTOMATION_APPROVED", "false")
@@ -80,8 +81,16 @@ class TestBrowserAutomationApprovalGate:
         monkeypatch.setattr(cfg, "BROWSER_AUTOMATION_APPROVED", False)
         import backend.services.boss_execution_providers as provider_module
         provider_module._registry = None
-        # 清除 executor 的 provider 缓存
+        # 注册 legacy executors（需要浏览器自动化审批闸门的执行器）
+        # 注意：ecommerce_product_research 是 research_to_decision 的别名
+        # 需要同时注册两个 template_id 的执行器
         import backend.services.boss_module_executors as executor_module
+        for tpl_id, module_map in executor_module._LEGACY_EXECUTOR_MAP.items():
+            executor_module._EXECUTOR_REGISTRY[tpl_id] = {mod_id: cls() for mod_id, cls in module_map.items()}
+        # 也为别名目标注册（ecommerce_product_research → research_to_decision）
+        if "ecommerce_product_research" in executor_module._EXECUTOR_REGISTRY:
+            executor_module._EXECUTOR_REGISTRY["research_to_decision"] = executor_module._EXECUTOR_REGISTRY["ecommerce_product_research"]
+        # 清除 executor 的 provider 缓存
         for template_executors in executor_module._EXECUTOR_REGISTRY.values():
             for executor in template_executors.values():
                 executor._provider = None
