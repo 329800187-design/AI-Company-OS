@@ -15,7 +15,7 @@ jobs:
         with: { python-version: "3.12" }
       - run: pip install -r requirements.txt pytest
       - run: pip install playwright && playwright install --with-deps chromium
-      - run: python -m pytest tests/test_agents_quick.py tests/test_commander.py tests/test_dag_workflow.py tests/test_security_rbac.py -v
+      - run: python -m pytest tests/test_agents_quick.py tests/test_commander.py tests/test_dag_workflow.py tests/test_security_rbac.py tests/test_boss_command_center.py tests/test_graph_template_store.py -v
 
   docker:
     needs: test
