@@ -145,6 +145,20 @@ class TestMemoryRouter:
 class TestBossRouterBasics:
     """boss_router 基础功能测试（不执行 mission）"""
 
+    @pytest.fixture(autouse=True)
+    def _bypass_governance(self, monkeypatch):
+        """绕过 governance guard，让 mission 创建不被拦截"""
+        from backend.governance import guard
+        monkeypatch.setattr(guard, "guard_payload", lambda payload: (False, None))
+
+    @pytest.fixture(autouse=True)
+    def _bypass_rate_limit(self):
+        """绕过 rate limiter"""
+        from unittest.mock import patch
+        with patch("backend.routers.boss_router.rate_limiter") as mock_rl:
+            mock_rl.check.return_value = (True, "")
+            yield
+
     def test_list_missions(self, client):
         """GET /boss/missions 返回 missions 列表"""
         resp = client.get("/boss/missions?limit=10&offset=0")

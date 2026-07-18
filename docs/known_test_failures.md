@@ -1,20 +1,20 @@
 # 已知测试失败清单
 
-> 更新日期：2026-07-18（Phase 7C-2a 口径修正）
-> 范围：本地全量 pytest 测试（3 轮验证）
+> 更新日期：2026-07-18（Phase 7C-3 boss 端点修复）
+> 范围：本地全量 pytest 测试
 
 ---
 
 ## 当前基线
 
-| 指标 | Phase 7C-1 | Phase 7C-2（当前） | 变化 |
-|------|------------|-------------------|------|
-| 通过 | 1437 | 1510 | +73 |
-| 失败 | 130 | 66 | -64 |
-| 跳过 | 6 | 6 | 0 |
-| 警告 | 2 | 2 | 0 |
+| 指标 | Phase 7C-1 | Phase 7C-2 | Phase 7C-3（当前） | 变化 |
+|------|------------|------------|-------------------|------|
+| 通过 | 1437 | 1510 | 1521 | +11 |
+| 失败 | 130 | 66 | 55 | -11 |
+| 跳过 | 6 | 6 | 6 | 0 |
+| 警告 | 2 | 2 | 2 | 0 |
 
-> 注：Phase 7C-2 修复了 governance_router 注册（+64 通过），另有 9 个此前计数偏差的用例修正。
+> Phase 7C-3 修复了 boss 端点 404（分类 A，11 个）：mock governance guard + 启用 legacy executors。
 
 ---
 
@@ -31,24 +31,23 @@ CI（GitHub Actions）运行以下 6 个测试文件：
 | `tests/test_boss_command_center.py` | ✅ 158 通过（1 flaky） |
 | `tests/test_graph_template_store.py` | ✅ 126 通过 |
 
-CI 未覆盖的测试文件包含 66 个失败。
+CI 未覆盖的测试文件包含 55 个失败。
 
 ---
 
-## 失败分类总览（Phase 7C-2a 口径修正）
+## 失败分类总览（Phase 7C-3 更新）
 
-> 修正说明：原分类 A 错误包含 boss_hermes_smoke 的 18 个 AgentRouter 失败，C 多计 1 个。
-> 已按实际根因重新归类，分类合计 = 总数 = 66。
+> Phase 7C-3 修复了分类 A（boss 端点 404，11 个），剩余 55 个失败。
 
-| 分类 | 失败数 | 根因 | 优先级 |
-|------|--------|------|--------|
-| A. boss 端点 404 | 11 | boss_router 部分端点未正确注册或路径变更 | 高 |
-| B. minidelivery task listing | 18 | TestListTasks 的 _create_task() helper 与当前数据格式不匹配 | 中 |
-| C. vague goal guard 不拦截 | 4 | guard 不再拦截模糊目标，测试期望被拦截 | 中 |
-| D. feishu_router 未注册 | 7 | 飞书路由未在 app.py 注册 | 低 |
-| E. AgentRouter 无候选 | 21 | boss_hermes_smoke(18) + v15_stability(3) 的 data/image 类型无匹配 agent | 中 |
-| F. 断言不匹配 | 5 | openclaw browser + image_llm 输出结构变化 | 低 |
-| **合计** | **66** | | |
+| 分类 | 失败数 | 根因 | 优先级 | 状态 |
+|------|--------|------|--------|------|
+| ~~A. boss 端点 404~~ | ~~11~~ | ~~boss_router 部分端点未正确注册或路径变更~~ | ~~高~~ | ✅ 已修复 |
+| B. minidelivery task listing | 18 | TestListTasks 的 _create_task() helper 与当前数据格式不匹配 | 中 | 待处理 |
+| C. vague goal guard 不拦截 | 4 | guard 不再拦截模糊目标，测试期望被拦截 | 中 | 待处理 |
+| D. feishu_router 未注册 | 7 | 飞书路由未在 app.py 注册 | 低 | 待处理 |
+| E. AgentRouter 无候选 | 21 | boss_hermes_smoke(18) + v15_stability(3) 的 data/image 类型无匹配 agent | 中 | 待处理 |
+| F. 断言不匹配 | 5 | openclaw browser + image_llm 输出结构变化 | 低 | 待处理 |
+| **合计** | **55** | | | |
 
 ---
 
@@ -75,36 +74,17 @@ Phase 7C-1 原始分类存在重叠计数：
 
 ---
 
-## 分类 A：boss 端点 404（11 个失败）
+## ~~分类 A：boss 端点 404~~（Phase 7C-3 已修复）
 
-**根因：** boss_router 部分端点返回 404。
+**✅ 已修复（2026-07-18）**
 
-**失败文件及用例：**
+**实际根因：**
+- A1（5 个）：Governance guard 拦截了 `POST /boss/missions`，测试目标被分类为不支持的复杂任务
+- A2（6 个）：Legacy executors 需要 `ACO_ENABLE_LEGACY_BUSINESS_EXECUTORS=true` 环境变量才会注册，没有它浏览器自动化审批闸门不生效
 
-### A1. test_memory_and_boss_basics.py（5 个）
-
-| 测试 | 说明 |
-|------|------|
-| `test_create_and_get_mission` | mission CRUD 端点 404 |
-| `test_export_mission_json` | export 端点 404 |
-| `test_export_mission_markdown` | export 端点 404 |
-| `test_mission_events` | events 端点 404 |
-| `test_mission_metrics` | metrics 端点 404 |
-
-### A2. test_browser_automation_approval.py（6 个）
-
-| 测试 | 说明 |
-|------|------|
-| `test_allow_browser_automation_true_calls_hermes` | approval gate 端点 404 |
-| `test_auto_run_does_not_bypass_approval` | 同上 |
-| `test_blocked_output_has_correct_structure` | 同上 |
-| `test_competitor_analysis_blocked_without_approval` | 同上 |
-| `test_default_config_blocks_browser_automation` | 同上 |
-| `test_marketing_listing_pack_blocked_without_approval` | 同上 |
-
-**建议处理：**
-- 检查 boss_router 中 mission CRUD、export、events、metrics 端点是否正确注册
-- 检查 browser automation approval gate 端点路径
+**修复方案：**
+- A1：在 `test_memory_and_boss_basics.py` 的 `TestBossRouterBasics` 中添加 `_bypass_governance` fixture mock governance guard
+- A2：在 `test_browser_automation_approval.py` 的 `_setup_hermes_provider` fixture 中启用 legacy executors 并注册到正确的 template_id
 
 ---
 
@@ -222,13 +202,13 @@ assert 0 == 3
 
 ## 处理优先级建议
 
-| 优先级 | 分类 | 操作 | 预期减少失败数 |
-|--------|------|------|---------------|
-| P0 | E | 检查 AgentRegistry 中 data/image agent 注册 | 21 |
-| P1 | B | 修复 minidelivery _create_task() helper | 18 |
-| P2 | A | 检查 boss_router 端点注册 | 11 |
-| P3 | D | 注册 feishu_router 或标记 skip | 7 |
-| P4 | C+F | 更新 guard 断言 + 更新 openclaw/image_llm 断言 | 9 |
+| 优先级 | 分类 | 操作 | 预期减少失败数 | 状态 |
+|--------|------|------|---------------|------|
+| ~~P0~~ | ~~A~~ | ~~检查 boss_router 端点注册~~ | ~~11~~ | ✅ 已修复 |
+| P0 | E | 检查 AgentRegistry 中 data/image agent 注册 | 21 | 待处理 |
+| P1 | B | 修复 minidelivery _create_task() helper | 18 | 待处理 |
+| P2 | D | 注册 feishu_router 或标记 skip | 7 | 待处理 |
+| P3 | C+F | 更新 guard 断言 + 更新 openclaw/image_llm 断言 | 9 | 待处理 |
 
 ---
 
