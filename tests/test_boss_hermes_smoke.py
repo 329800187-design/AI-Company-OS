@@ -93,15 +93,18 @@ class TestHermesProviderSmokeTest:
 
     @pytest.fixture(autouse=True)
     def _setup_hermes_provider(self, monkeypatch):
-        """设置 BOSS_EXECUTION_PROVIDER=hermes"""
+        """设置 BOSS_EXECUTION_PROVIDER=hermes + 启用旧业务执行器"""
         monkeypatch.setenv("BOSS_EXECUTION_PROVIDER", "hermes")
+        monkeypatch.setenv("ACO_ENABLE_LEGACY_BUSINESS_EXECUTORS", "true")
         import importlib
         import backend.config
         importlib.reload(backend.config)
         # 清除 provider registry 缓存，使其重新创建
         import backend.services.boss_execution_providers as provider_module
         provider_module._registry = None
+        # 重新加载执行器注册表（启用旧业务执行器）
         import backend.services.boss_module_executors as executor_module
+        importlib.reload(executor_module)
         for template_executors in executor_module._EXECUTOR_REGISTRY.values():
             for executor in template_executors.values():
                 executor._provider = None
@@ -347,20 +350,18 @@ class TestEvidenceGate:
 
     @pytest.fixture(autouse=True)
     def _setup_hermes_provider(self, monkeypatch):
-        """设置 BOSS_EXECUTION_PROVIDER=hermes"""
+        """设置 BOSS_EXECUTION_PROVIDER=hermes + 启用旧业务执行器"""
         monkeypatch.setenv("BOSS_EXECUTION_PROVIDER", "hermes")
+        monkeypatch.setenv("ACO_ENABLE_LEGACY_BUSINESS_EXECUTORS", "true")
         import importlib
         import backend.config
         importlib.reload(backend.config)
         # 清除 provider registry 缓存
         import backend.services.boss_execution_providers as provider_module
         provider_module._registry = None
+        # 重新加载执行器注册表（启用旧业务执行器）
         import backend.services.boss_module_executors as executor_module
-        for template_executors in executor_module._EXECUTOR_REGISTRY.values():
-            for executor in template_executors.values():
-                executor._provider = None
-        # 清除 executor 的 provider 缓存
-        import backend.services.boss_module_executors as executor_module
+        importlib.reload(executor_module)
         for template_executors in executor_module._EXECUTOR_REGISTRY.values():
             for executor in template_executors.values():
                 executor._provider = None
@@ -669,12 +670,15 @@ class TestHermesProviderAPI:
     @pytest.fixture(autouse=True)
     def _setup_hermes_provider(self, monkeypatch):
         monkeypatch.setenv("BOSS_EXECUTION_PROVIDER", "hermes")
+        monkeypatch.setenv("ACO_ENABLE_LEGACY_BUSINESS_EXECUTORS", "true")
+        monkeypatch.setenv("ACO_TEST_BYPASS_GOVERNANCE", "true")
         import importlib
         import backend.config
         importlib.reload(backend.config)
         import backend.services.boss_execution_providers as provider_module
         provider_module._registry = None
         import backend.services.boss_module_executors as executor_module
+        importlib.reload(executor_module)
         for template_executors in executor_module._EXECUTOR_REGISTRY.values():
             for executor in template_executors.values():
                 executor._provider = None
@@ -739,12 +743,14 @@ class TestHermesTimeoutFallback:
     @pytest.fixture(autouse=True)
     def _setup_hermes_provider(self, monkeypatch):
         monkeypatch.setenv("BOSS_EXECUTION_PROVIDER", "hermes")
+        monkeypatch.setenv("ACO_ENABLE_LEGACY_BUSINESS_EXECUTORS", "true")
         import importlib
         import backend.config
         importlib.reload(backend.config)
         import backend.services.boss_execution_providers as provider_module
         provider_module._registry = None
         import backend.services.boss_module_executors as executor_module
+        importlib.reload(executor_module)
         for template_executors in executor_module._EXECUTOR_REGISTRY.values():
             for executor in template_executors.values():
                 executor._provider = None
