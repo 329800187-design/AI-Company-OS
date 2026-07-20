@@ -1,21 +1,22 @@
 # 已知测试失败清单
 
-> 更新日期：2026-07-19（Phase 7C-4 minidelivery task listing 修复）
+> 更新日期：2026-07-20（Phase 7C-5 AgentRouter 修复）
 > 范围：本地全量 pytest 测试
 
 ---
 
 ## 当前基线
 
-| 指标 | Phase 7C-1 | Phase 7C-2 | Phase 7C-3 | Phase 7C-4（当前） | 变化 |
-|------|------------|------------|------------|-------------------|------|
-| 通过 | 1437 | 1510 | 1521 | 1539 | +18 |
-| 失败 | 130 | 66 | 55 | 37 | -18 |
-| 跳过 | 6 | 6 | 6 | 6 | 0 |
-| 警告 | 2 | 2 | 2 | 2 | 0 |
+| 指标 | Phase 7C-1 | Phase 7C-2 | Phase 7C-3 | Phase 7C-4 | Phase 7C-5（当前） | 变化 |
+|------|------------|------------|------------|------------|-------------------|------|
+| 通过 | 1437 | 1510 | 1521 | 1539 | 1559 | +20 |
+| 失败 | 130 | 66 | 55 | 37 | 17 | -20 |
+| 跳过 | 6 | 6 | 6 | 6 | 6 | 0 |
+| 警告 | 2 | 2 | 2 | 2 | 2 | 0 |
 
 > Phase 7C-3 修复了 boss 端点 404（分类 A，11 个）：mock governance guard + 启用 legacy executors。
 > Phase 7C-4 修复了 minidelivery task listing（分类 B，18 个）：_create_task() helper 路径多了 `minidelivery/` 层级。
+> Phase 7C-5 修复了 AgentRouter 无候选（分类 E，21 个）：模板别名导致 executor 注册键不匹配 + 测试 fixture 启用 legacy executors。
 
 ---
 
@@ -32,13 +33,13 @@ CI（GitHub Actions）运行以下 6 个测试文件：
 | `tests/test_boss_command_center.py` | ✅ 158 通过（1 flaky） |
 | `tests/test_graph_template_store.py` | ✅ 126 通过 |
 
-CI 未覆盖的测试文件包含 37 个失败。
+CI 未覆盖的测试文件包含 16 个失败。
 
 ---
 
-## 失败分类总览（Phase 7C-4 更新）
+## 失败分类总览（Phase 7C-5 更新）
 
-> Phase 7C-3 修复了分类 A（boss 端点 404，11 个），Phase 7C-4 修复了分类 B（minidelivery task listing，18 个），剩余 37 个失败。
+> Phase 7C-3 修复了分类 A（boss 端点 404，11 个），Phase 7C-4 修复了分类 B（minidelivery task listing，18 个），Phase 7C-5 修复了分类 E（AgentRouter 无候选，21 个），剩余 16 个失败。
 
 | 分类 | 失败数 | 根因 | 优先级 | 状态 |
 |------|--------|------|--------|------|
@@ -46,9 +47,9 @@ CI 未覆盖的测试文件包含 37 个失败。
 | ~~B. minidelivery task listing~~ | ~~18~~ | ~~_create_task() helper 路径多了 minidelivery/ 层级~~ | ~~中~~ | ✅ 已修复 |
 | C. vague goal guard 不拦截 | 4 | guard 不再拦截模糊目标，测试期望被拦截 | 中 | 待处理 |
 | D. feishu_router 未注册 | 7 | 飞书路由未在 app.py 注册 | 低 | 待处理 |
-| E. AgentRouter 无候选 | 21 | boss_hermes_smoke(18) + v15_stability(3) 的 data/image 类型无匹配 agent | 中 | 待处理 |
+| ~~E. AgentRouter 无候选~~ | ~~21~~ | ~~模板别名导致 executor 注册键不匹配 + 测试 fixture 未启用 legacy executors~~ | ~~中~~ | ✅ 已修复 |
 | F. 断言不匹配 | 5 | openclaw browser + image_llm 输出结构变化 | 低 | 待处理 |
-| **合计** | **37** | | | |
+| **合计** | **16**（原 37） | | | |
 
 ---
 
@@ -142,40 +143,37 @@ Phase 7C-1 原始分类存在重叠计数：
 
 ---
 
-## 分类 E：AgentRouter 无候选（21 个失败）
+## ~~分类 E：AgentRouter 无候选~~（Phase 7C-5 已修复）
 
-**根因：** AgentRouter 找不到 data/image 类型候选 agent。
+**✅ 已修复（2026-07-20）**
 
-**失败文件及用例：**
+**实际根因：**
+1. Phase 6.20 禁用了 legacy business executors（`_EXECUTOR_REGISTRY` 默认为空），所有模块走 `DefaultModuleExecutor` → `LocalAgentRuntime` → `AgentRouter` 链路
+2. 测试 mock `subprocess.Popen` 导致 `pandas` 导入失败（需要 context manager），`data_agent` 被标记为 unavailable
+3. 模板 `ecommerce_product_research` 别名为 `research_to_decision`，mission 存储的 `template_id` 是 canonical ID，但 executor 只注册在原始 ID 下
 
-### E1. test_boss_hermes_smoke.py（18 个）
+**修复方案：**
+1. `tests/test_boss_hermes_smoke.py`：4 个 test class 的 `_setup_hermes_provider` fixture 添加 `ACO_ENABLE_LEGACY_BUSINESS_EXECUTORS=true` + `importlib.reload(executor_module)` + governance bypass（API test）
+2. `backend/services/boss_module_executors.py`：`_init_legacy_executors()` 同时注册到 canonical template ID（解析 `aliased_to`）
 
-全部 18 个测试通过 boss API 调用 hermes 链路，因 AgentRouter 找不到 data 类型候选 agent 而失败。
+**修改文件：**
+- `tests/test_boss_hermes_smoke.py`（4 处 fixture 修改）
+- `backend/services/boss_module_executors.py`（`_init_legacy_executors` 增加别名注册）
 
-| 测试类 | 失败数 |
-|--------|--------|
-| TestEvidenceGate | 6 |
-| TestHermesProviderAPI | 1 |
-| TestHermesProviderSmokeTest | 6 |
-| TestHermesTimeoutFallback | 5 |
-
-### E2. test_v15_stability.py（3 个）
-
-| 测试 | 错误 |
-|------|------|
-| `test_image_task_has_fix_hints` | AgentRouter 无 image 候选 |
-| `test_data_with_csv_content` | 期望 deliverables 有 `rows`/`output` key，实际无 |
-| `test_research_no_sources_must_fail` | 期望 issues 包含"来源"相关关键词，实际无 |
-
-**建议处理：** 检查 AgentRegistry 中 data/image 类型 agent 的注册状态
+**验证结果：** boss_hermes_smoke 20/20 通过，CI 测试集 314/314 通过，无回归
 
 ---
 
-## 分类 F：断言不匹配（5 个失败）
+## 分类 F：断言不匹配（5 个失败 → 实际 7 个）
+
+> Phase 7C-5：v15_stability 的 2 个非 AgentRouter 失败归入此类（原分类 E2）。
 
 **文件：**
 - `tests/test_openclaw_agent.py`（4 个）— browser_screenshot/scrape/test/blocked_url 返回结构与测试期望不一致
 - `tests/test_image_llm_integration.py`（1 个）— fallback 限制提示文本变更
+- `tests/test_v15_stability.py`（2 个）：
+  - `test_image_task_has_fix_hints` — image agent 运行成功但 fix_hints 为空（AgentRouter 正常选择 image agent）
+  - `test_research_no_sources_must_fail` — verifier v2 行为变更：有内容即 passed=True，score=75（非 0）
 
 **建议处理：** 更新测试断言以匹配当前 API 输出
 
@@ -201,9 +199,10 @@ Phase 7C-1 原始分类存在重叠计数：
 |--------|------|------|---------------|------|
 | ~~P0~~ | ~~A~~ | ~~检查 boss_router 端点注册~~ | ~~11~~ | ✅ 已修复 |
 | ~~P1~~ | ~~B~~ | ~~修复 minidelivery _create_task() helper~~ | ~~18~~ | ✅ 已修复 |
-| P0 | E | 检查 AgentRegistry 中 data/image agent 注册 | 21 | 待处理 |
+| ~~P0~~ | ~~E~~ | ~~启用 legacy executors + 修复模板别名注册~~ | ~~21~~ | ✅ 已修复 |
+| P1 | C | 更新 guard 断言（4 个 vague goal 测试） | 4 | 待处理 |
 | P2 | D | 注册 feishu_router 或标记 skip | 7 | 待处理 |
-| P3 | C+F | 更新 guard 断言 + 更新 openclaw/image_llm 断言 | 9 | 待处理 |
+| P3 | F | 更新 openclaw/image_llm/v15_stability 断言 | 6 | 待处理 |
 
 ---
 

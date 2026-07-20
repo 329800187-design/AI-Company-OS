@@ -796,6 +796,17 @@ def _init_legacy_executors():
     if os.environ.get("ACO_ENABLE_LEGACY_BUSINESS_EXECUTORS", "").lower() == "true":
         for tpl_id, module_map in _LEGACY_EXECUTOR_MAP.items():
             _EXECUTOR_REGISTRY[tpl_id] = {mod_id: cls() for mod_id, cls in module_map.items()}
+            # 同时注册到 canonical template ID（模板别名解析后的 ID）
+            try:
+                from backend.services.boss_command_center import get_boss_command_center
+                service = get_boss_command_center()
+                template = service.get_template(tpl_id)
+                if template and template.get("aliased_to"):
+                    canonical = template["aliased_to"]
+                    if canonical not in _EXECUTOR_REGISTRY:
+                        _EXECUTOR_REGISTRY[canonical] = _EXECUTOR_REGISTRY[tpl_id]
+            except Exception:
+                pass
         logger.info("Legacy business executors enabled via ACO_ENABLE_LEGACY_BUSINESS_EXECUTORS")
 
 
