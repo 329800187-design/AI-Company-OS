@@ -1,22 +1,23 @@
 # 已知测试失败清单
 
-> 更新日期：2026-07-20（Phase 7C-5 AgentRouter 修复）
+> 更新日期：2026-07-20（Phase 7C-6 feishu router 注册）
 > 范围：本地全量 pytest 测试
 
 ---
 
 ## 当前基线
 
-| 指标 | Phase 7C-1 | Phase 7C-2 | Phase 7C-3 | Phase 7C-4 | Phase 7C-5（当前） | 变化 |
-|------|------------|------------|------------|------------|-------------------|------|
-| 通过 | 1437 | 1510 | 1521 | 1539 | 1559 | +20 |
-| 失败 | 130 | 66 | 55 | 37 | 17 | -20 |
-| 跳过 | 6 | 6 | 6 | 6 | 6 | 0 |
-| 警告 | 2 | 2 | 2 | 2 | 2 | 0 |
+| 指标 | Phase 7C-1 | Phase 7C-2 | Phase 7C-3 | Phase 7C-4 | Phase 7C-5 | Phase 7C-6（当前） | 变化 |
+|------|------------|------------|------------|------------|------------|-------------------|------|
+| 通过 | 1437 | 1510 | 1521 | 1539 | 1559 | 1566 | +7 |
+| 失败 | 130 | 66 | 55 | 37 | 16 | 9 | -7 |
+| 跳过 | 6 | 6 | 6 | 6 | 6 | 6 | 0 |
+| 警告 | 2 | 2 | 2 | 2 | 2 | 2 | 0 |
 
 > Phase 7C-3 修复了 boss 端点 404（分类 A，11 个）：mock governance guard + 启用 legacy executors。
 > Phase 7C-4 修复了 minidelivery task listing（分类 B，18 个）：_create_task() helper 路径多了 `minidelivery/` 层级。
 > Phase 7C-5 修复了 AgentRouter 无候选（分类 E，21 个）：模板别名导致 executor 注册键不匹配 + 测试 fixture 启用 legacy executors。
+> Phase 7C-6 修复了 feishu_router 未注册（分类 D，7 个）：在 app.py 注册 feishu_router。
 
 ---
 
@@ -33,23 +34,23 @@ CI（GitHub Actions）运行以下 6 个测试文件：
 | `tests/test_boss_command_center.py` | ✅ 158 通过（1 flaky） |
 | `tests/test_graph_template_store.py` | ✅ 126 通过 |
 
-CI 未覆盖的测试文件包含 16 个失败。
+CI 未覆盖的测试文件包含 9 个失败。
 
 ---
 
-## 失败分类总览（Phase 7C-5 更新）
+## 失败分类总览（Phase 7C-6 更新）
 
-> Phase 7C-3 修复了分类 A（boss 端点 404，11 个），Phase 7C-4 修复了分类 B（minidelivery task listing，18 个），Phase 7C-5 修复了分类 E（AgentRouter 无候选，21 个），剩余 16 个失败。
+> Phase 7C-3 修复了分类 A（boss 端点 404，11 个），Phase 7C-4 修复了分类 B（minidelivery task listing，18 个），Phase 7C-5 修复了分类 E（AgentRouter 无候选，21 个），Phase 7C-6 修复了分类 D（feishu_router 未注册，7 个），剩余 9 个失败。
 
 | 分类 | 失败数 | 根因 | 优先级 | 状态 |
 |------|--------|------|--------|------|
 | ~~A. boss 端点 404~~ | ~~11~~ | ~~boss_router 部分端点未正确注册或路径变更~~ | ~~高~~ | ✅ 已修复 |
 | ~~B. minidelivery task listing~~ | ~~18~~ | ~~_create_task() helper 路径多了 minidelivery/ 层级~~ | ~~中~~ | ✅ 已修复 |
 | C. vague goal guard 不拦截 | 4 | guard 不再拦截模糊目标，测试期望被拦截 | 中 | 待处理 |
-| D. feishu_router 未注册 | 7 | 飞书路由未在 app.py 注册 | 低 | 待处理 |
+| ~~D. feishu_router 未注册~~ | ~~7~~ | ~~feishu_router 未在 app.py 注册~~ | ~~低~~ | ✅ 已修复 |
 | ~~E. AgentRouter 无候选~~ | ~~21~~ | ~~模板别名导致 executor 注册键不匹配 + 测试 fixture 未启用 legacy executors~~ | ~~中~~ | ✅ 已修复 |
 | F. 断言不匹配 | 5 | openclaw browser + image_llm 输出结构变化 | 低 | 待处理 |
-| **合计** | **16**（原 37） | | | |
+| **合计** | **9**（原 37） | | | |
 
 ---
 
@@ -127,19 +128,17 @@ Phase 7C-1 原始分类存在重叠计数：
 
 ---
 
-## 分类 D：feishu_router 未注册（7 个失败）
+## ~~分类 D：feishu_router 未注册~~（Phase 7C-6 已修复）
 
-**文件：** `tests/test_feishu_bot.py`
+**✅ 已修复（2026-07-20）**
 
-**路由文件：** `backend/routers/feishu_router.py`（prefix: `/integrations/feishu`）
+**根因：** `feishu_router` 在 `backend/routers/feishu_router.py` 中定义，但未在 `backend/app.py` 中 import 和 `include_router`。
 
-**失败端点：**
-- `GET /integrations/feishu/health` → 404
-- `POST /integrations/feishu/events` → 404
+**修复：** 在 `app.py` 添加 `from backend.routers.feishu_router import router as feishu_router` 和 `app.include_router(feishu_router)`。
 
-**建议处理：**
-- 方案 1：注册路由 + 标记 `@pytest.mark.skipif` 检查环境变量
-- 方案 2：直接跳过，飞书集成不是核心功能
+**产品决策：** feishu_router 是产品功能（飞书机器人事件回调），应默认注册。router 层不依赖真实飞书凭据——`feishu_bot_service.enabled()` 在 handler 内部检查凭据，health/events 端点不发起外部请求。
+
+**验证：** test_feishu_bot.py 7/7 通过，CI 314/314 通过。
 
 ---
 
@@ -200,9 +199,9 @@ Phase 7C-1 原始分类存在重叠计数：
 | ~~P0~~ | ~~A~~ | ~~检查 boss_router 端点注册~~ | ~~11~~ | ✅ 已修复 |
 | ~~P1~~ | ~~B~~ | ~~修复 minidelivery _create_task() helper~~ | ~~18~~ | ✅ 已修复 |
 | ~~P0~~ | ~~E~~ | ~~启用 legacy executors + 修复模板别名注册~~ | ~~21~~ | ✅ 已修复 |
+| ~~P1~~ | ~~D~~ | ~~注册 feishu_router~~ | ~~7~~ | ✅ 已修复 |
 | P1 | C | 更新 guard 断言（4 个 vague goal 测试） | 4 | 待处理 |
-| P2 | D | 注册 feishu_router 或标记 skip | 7 | 待处理 |
-| P3 | F | 更新 openclaw/image_llm/v15_stability 断言 | 6 | 待处理 |
+| P2 | F | 更新 openclaw/image_llm 断言 | 5 | 待处理 |
 
 ---
 
