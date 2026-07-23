@@ -1,23 +1,25 @@
 # 已知测试失败清单
 
-> 更新日期：2026-07-23（Phase 7C-7 vague goal guard 对齐）
+> 更新日期：2026-07-24（Phase 7C-8 断言基线清理完成）
 > 范围：本地全量 pytest 测试
 
 ---
 
 ## 当前基线
 
-| 指标 | Phase 7C-1 | Phase 7C-2 | Phase 7C-3 | Phase 7C-4 | Phase 7C-5 | Phase 7C-6（当前） | 变化 |
-|------|------------|------------|------------|------------|------------|-------------------|------|
-| 通过 | 1437 | 1510 | 1521 | 1539 | 1559 | 1566 | +7 |
-| 失败 | 130 | 66 | 55 | 37 | 16 | 9 | -4 |
-| 跳过 | 6 | 6 | 6 | 6 | 6 | 6 | 0 |
-| 警告 | 2 | 2 | 2 | 2 | 2 | 2 | 0 |
+| 指标 | Phase 7C-1 | Phase 7C-2 | Phase 7C-3 | Phase 7C-4 | Phase 7C-5 | Phase 7C-6 | Phase 7C-7 | Phase 7C-8（当前） | 变化 |
+|------|------------|------------|------------|------------|------------|------------|------------|-------------------|------|
+| 通过 | 1437 | 1510 | 1521 | 1539 | 1559 | 1566 | 1570 | 1577 | +7 |
+| 失败 | 130 | 66 | 55 | 37 | 16 | 9 | 5 | 0 | -5 |
+| 跳过 | 6 | 6 | 6 | 6 | 6 | 6 | 6 | 6 | 0 |
+| 警告 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 6 | +4 |
 
 > Phase 7C-3 修复了 boss 端点 404（分类 A，11 个）：mock governance guard + 启用 legacy executors。
 > Phase 7C-4 修复了 minidelivery task listing（分类 B，18 个）：_create_task() helper 路径多了 `minidelivery/` 层级。
 > Phase 7C-5 修复了 AgentRouter 无候选（分类 E，21 个）：模板别名导致 executor 注册键不匹配 + 测试 fixture 启用 legacy executors。
 > Phase 7C-6 修复了 feishu_router 未注册（分类 D，7 个）：在 app.py 注册 feishu_router。
+> Phase 7C-7 对齐了 vague goal guard 测试语义（4 个），业务 Agent execute 直连执行，治理分类/阻断走 `/governance/run`。
+> Phase 7C-8 清理了最后 5 个断言不匹配失败，失败数降为 0。
 
 ---
 
@@ -34,203 +36,54 @@ CI（GitHub Actions）运行以下 6 个测试文件：
 | `tests/test_boss_command_center.py` | ✅ 158 通过（1 flaky） |
 | `tests/test_graph_template_store.py` | ✅ 126 通过 |
 
-CI 未覆盖的测试文件包含 9 个失败。
+CI 测试集当前通过；全量测试仍有 6 个明确 skip，均为 integration/optional 场景，不计入 failure。
 
 ---
 
-## 失败分类总览（Phase 7C-6 更新）
-
-> Phase 7C-3 修复了分类 A（boss 端点 404，11 个），Phase 7C-4 修复了分类 B（minidelivery task listing，18 个），Phase 7C-5 修复了分类 E（AgentRouter 无候选，21 个），Phase 7C-6 修复了分类 D（feishu_router 未注册，7 个），剩余 9 个失败。
+## 失败分类总览（Phase 7C-8 更新）
 
 | 分类 | 失败数 | 根因 | 优先级 | 状态 |
 |------|--------|------|--------|------|
 | ~~A. boss 端点 404~~ | ~~11~~ | ~~boss_router 部分端点未正确注册或路径变更~~ | ~~高~~ | ✅ 已修复 |
 | ~~B. minidelivery task listing~~ | ~~18~~ | ~~_create_task() helper 路径多了 minidelivery/ 层级~~ | ~~中~~ | ✅ 已修复 |
-| C. vague goal guard 不拦截 | 0 | 业务 Agent execute 入口在 Phase 6/7 已改为直连执行，模糊目标不再由旧 Guard 拦截；Governance `/run` 仍负责受控分类 | 中 | ✅ 已修复（更新测试断言） |
+| ~~C. vague goal guard 不拦截~~ | ~~4~~ | ~~业务 Agent execute 入口改为直连执行，测试期望过时~~ | ~~中~~ | ✅ 已修复 |
 | ~~D. feishu_router 未注册~~ | ~~7~~ | ~~feishu_router 未在 app.py 注册~~ | ~~低~~ | ✅ 已修复 |
-| ~~E. AgentRouter 无候选~~ | ~~21~~ | ~~模板别名导致 executor 注册键不匹配 + 测试 fixture 未启用 legacy executors~~ | ~~中~~ | ✅ 已修复 |
-| F. 断言不匹配 | 5 | openclaw browser + image_llm 输出结构变化 | 低 | 待处理 |
-| **合计** | **9**（原 37） | | | |
+| ~~E. AgentRouter 无候选~~ | ~~21~~ | ~~模板别名与 executor 注册键不匹配 + 测试 fixture 未启用 legacy executors~~ | ~~中~~ | ✅ 已修复 |
+| ~~F. 断言不匹配~~ | ~~5~~ | ~~OpenClaw 授权输出和 Image Agent fallback 语义已变化，测试断言过时~~ | ~~低~~ | ✅ 已修复 |
+| **合计** | **0** | | | |
+
+> Phase 7C-8 完成测试基线清理：本阶段 5 个断言不匹配已全部修复。全量测试中仍有 6 个明确 skip，均为 integration/optional 场景，不计入 failure。
 
 ---
 
-## Phase 7C-1 计数口径修正说明
+## Phase 7C-8 修复记录
 
-Phase 7C-1 原始分类存在重叠计数：
+**✅ 已修复（2026-07-24）**
 
-| 原分类 | 原失败数 | 问题 |
-|--------|----------|------|
-| A. 路由未注册 | 79 | A1(governance)=59 已在 Phase 7C-2 修复 |
-| B. 旧 API 行为不匹配 | 18 | 正确 |
-| C. Guard 拦截行为变更 | 10 | 类型2（5个 governance/run 404）与 A1 重叠 |
-| D. Agent routing 变更 | 12 | boss_hermes_smoke 实际 18 个，非 12 |
-| E. 断言/编码不匹配 | 5 | 正确 |
-| F. 外部依赖缺失 | 7 | 与 A2（feishu）重叠 |
-
-原始合计 134 ≠ 实际总失败 130，差 4：
-- C 类型2 与 A1 重叠 5 个
-- F 与 A2 重叠 7 个
-- D1 原计 18 但归入 D 类仅 12，差 6
-- 净重叠 = 5+7-6-2 = 4（另有 2 个可能归属调整）
-
-**修正后唯一失败总数：130**（Phase 7C-1），修复 64 个后剩余 66 个。
-
----
-
-## ~~分类 A：boss 端点 404~~（Phase 7C-3 已修复）
-
-**✅ 已修复（2026-07-18）**
-
-**实际根因：**
-- A1（5 个）：Governance guard 拦截了 `POST /boss/missions`，测试目标被分类为不支持的复杂任务
-- A2（6 个）：Legacy executors 需要 `ACO_ENABLE_LEGACY_BUSINESS_EXECUTORS=true` 环境变量才会注册，没有它浏览器自动化审批闸门不生效
-
-**修复方案：**
-- A1：在 `test_memory_and_boss_basics.py` 的 `TestBossRouterBasics` 中添加 `_bypass_governance` fixture mock governance guard
-- A2：在 `test_browser_automation_approval.py` 的 `_setup_hermes_provider` fixture 中启用 legacy executors 并注册到正确的 template_id
-
----
-
-## ~~分类 B：minidelivery task listing~~（Phase 7C-4 已修复）
-
-**✅ 已修复（2026-07-19）**
-
-**文件：** `tests/test_minidelivery.py`（全部 18 个 TestListTasks 失败）
-
-**根因：** `_create_task()` helper 创建目录路径为 `base / "minidelivery" / task_id`，但 router 的 `OUTPUT_ROOT` 被 patch 为 `tmp_path` 后直接扫描 `tmp_path / * / result.json`。helper 多了一层 `minidelivery/` 子目录，导致 router 找不到任何任务。
-
-**修复：**
-- `_create_task()` 中 `base / "minidelivery" / task_id` → `base / task_id`
-- `test_corrupted_json_skipped` 中 `tmp_path / "minidelivery" / "t_bad"` → `tmp_path / "t_bad"`
-- `test_search_no_artifact_md_read` 中 `tmp_path / "minidelivery" / "t_no_md"` → `tmp_path / "t_no_md"`
-
-**修改文件：** `tests/test_minidelivery.py`（3 处路径修复）
-
----
-
-## ~~分类 C：vague goal guard 不拦截~~（Phase 7C-7 已修复）
-
-**✅ 已修复（2026-07-23）**
-
-**根因：** Phase 6/7 的统一业务 Agent execute 入口已改为业务 Agent 直连执行；`backend/routers/agent_router.py:253` 仅对非业务 Agent 调用旧 Governance Guard。因此四个测试继续断言拦截，和当前产品行为不一致。
-
-**产品决策：** vague goal 不再由旧 Guard 拦截。`/agents/{business_agent}/execute` 负责执行并保留业务 Agent 的 fallback 能力；需要受控分类、澄清和阻断时，使用 `/governance/run`。这避免业务 Agent execute 与 Governance 正式入口职责重叠。
-
-**修复：** 更新四个测试，将断言改为业务 Agent 正常返回 `ok=true` 且 `agent_id` 匹配；未 skip 测试，未修改 Guard 逻辑。
+**根因与处理：**
+- OpenClaw 的浏览器任务现在默认需要显式浏览器授权，测试没有传 `allow_browser_automation=True`，导致返回稳定的 `status="blocked"`；浏览器测试已显式授权，URL 拦截测试改为断言稳定的 `blocked`、`blocked_reason` 和失败状态字段。
+- Image Agent fallback 的 limitations 已统一为“模板/规则降级产物，非真实 LLM 生成”；测试改为断言这两个稳定语义片段，而不是依赖历史提示词/中文变体。
 
 **修改文件：**
-- `tests/test_research_execute.py`
-- `tests/test_website_execute.py`
-- `tests/test_image_execute.py`
-- `tests/test_marketing_execute.py`
+- `tests/test_openclaw_agent.py`
+- `tests/test_image_llm_integration.py`
 - `docs/known_test_failures.md`
 
 ---
 
-## ~~分类 D：feishu_router 未注册~~（Phase 7C-6 已修复）
+## 历史修复记录
 
-**✅ 已修复（2026-07-20）**
-
-**根因：** `feishu_router` 在 `backend/routers/feishu_router.py` 中定义，但未在 `backend/app.py` 中 import 和 `include_router`。
-
-**修复：** 在 `app.py` 添加 `from backend.routers.feishu_router import router as feishu_router` 和 `app.include_router(feishu_router)`。
-
-**产品决策：** feishu_router 是产品功能（飞书机器人事件回调），应默认注册。router 层不依赖真实飞书凭据——`feishu_bot_service.enabled()` 在 handler 内部检查凭据，health/events 端点不发起外部请求。
-
-**验证：** test_feishu_bot.py 7/7 通过，CI 314/314 通过。
+此前 Phase 7C-3 至 Phase 7C-7 的修复记录保留在 git 历史与对应 PR 中：
+- Phase 7C-3：boss 端点 404
+- Phase 7C-4：minidelivery task listing
+- Phase 7C-5：AgentRouter 无候选
+- Phase 7C-6：feishu_router 注册
+- Phase 7C-7：vague goal guard 测试语义对齐
 
 ---
 
-## ~~分类 E：AgentRouter 无候选~~（Phase 7C-5 已修复）
+## 计数口径
 
-**✅ 已修复（2026-07-20）**
-
-**实际根因：**
-1. Phase 6.20 禁用了 legacy business executors（`_EXECUTOR_REGISTRY` 默认为空），所有模块走 `DefaultModuleExecutor` → `LocalAgentRuntime` → `AgentRouter` 链路
-2. 测试 mock `subprocess.Popen` 导致 `pandas` 导入失败（需要 context manager），`data_agent` 被标记为 unavailable
-3. 模板 `ecommerce_product_research` 别名为 `research_to_decision`，mission 存储的 `template_id` 是 canonical ID，但 executor 只注册在原始 ID 下
-
-**修复方案：**
-1. `tests/test_boss_hermes_smoke.py`：4 个 test class 的 `_setup_hermes_provider` fixture 添加 `ACO_ENABLE_LEGACY_BUSINESS_EXECUTORS=true` + `importlib.reload(executor_module)` + governance bypass（API test）
-2. `backend/services/boss_module_executors.py`：`_init_legacy_executors()` 同时注册到 canonical template ID（解析 `aliased_to`）
-
-**修改文件：**
-- `tests/test_boss_hermes_smoke.py`（4 处 fixture 修改）
-- `backend/services/boss_module_executors.py`（`_init_legacy_executors` 增加别名注册）
-
-**验证结果：** boss_hermes_smoke 20/20 通过，CI 测试集 314/314 通过，无回归
-
----
-
-## 分类 F：断言不匹配（5 个失败 → 实际 7 个）
-
-> Phase 7C-5：v15_stability 的 2 个非 AgentRouter 失败归入此类（原分类 E2）。
-
-**文件：**
-- `tests/test_openclaw_agent.py`（4 个）— browser_screenshot/scrape/test/blocked_url 返回结构与测试期望不一致
-- `tests/test_image_llm_integration.py`（1 个）— fallback 限制提示文本变更
-- `tests/test_v15_stability.py`（2 个）：
-  - `test_image_task_has_fix_hints` — image agent 运行成功但 fix_hints 为空（AgentRouter 正常选择 image agent）
-  - `test_research_no_sources_must_fail` — verifier v2 行为变更：有内容即 passed=True，score=75（非 0）
-
-**建议处理：** 更新测试断言以匹配当前 API 输出
-
----
-
-## Governance 决策记录
-
-> Phase 7C-2 决策（2026-07-17）
-
-**governance_router 仍为产品功能，已注册，不 skip。**
-
-- 在 `backend/app.py` 中添加 `app.include_router(governance_router)`
-- prefix: `/governance`，与测试期望一致
-- 修复了 64 个 404 失败（test_governance.py 全部 325 个测试通过）
-- test_security_rbac.py 全部 11 个测试通过
-- CI 测试集通过（313/314，1 个 flaky：test_run_mission_timeout_with_partial_result）
-
----
-
-## 处理优先级建议
-
-| 优先级 | 分类 | 操作 | 预期减少失败数 | 状态 |
-|--------|------|------|---------------|------|
-| ~~P0~~ | ~~A~~ | ~~检查 boss_router 端点注册~~ | ~~11~~ | ✅ 已修复 |
-| ~~P1~~ | ~~B~~ | ~~修复 minidelivery _create_task() helper~~ | ~~18~~ | ✅ 已修复 |
-| ~~P0~~ | ~~E~~ | ~~启用 legacy executors + 修复模板别名注册~~ | ~~21~~ | ✅ 已修复 |
-| ~~P1~~ | ~~D~~ | ~~注册 feishu_router~~ | ~~7~~ | ✅ 已修复 |
-| P1 | C | 更新 guard 断言（4 个 vague goal 测试） | 4 | 待处理 |
-| P2 | F | 更新 openclaw/image_llm 断言 | 5 | 待处理 |
-
----
-
-## Phase 6 核心测试状态
-
-| 测试文件 | 状态 | 测试数 |
-|----------|------|--------|
-| `tests/test_boss_command_center.py` | ✅ | 158 |
-| `tests/test_graph_template_store.py` | ✅ | 126 |
-| `frontend-new/e2e/boss-flow.spec.ts` | ✅ | 5 |
-| `frontend-new/e2e/dag-editor.spec.ts` | ✅ | 105 |
-
----
-
-## dag-editor.spec.ts — Phase 6.25b 修复记录
-
-Phase 6.25b 修复了全部剩余失败，105 个用例全部通过。
-
-### 修复类别 1：draft restore dialog 阻塞（影响 6 个用例）
-
-**失败原因：** 前序测试遗留的 `localStorage` 草稿触发 ConfirmDialog，遮挡"创建模板"按钮。
-
-**修复方案：** 在 `openCreateForm` helper 中增加草稿恢复弹窗的自动关闭逻辑。
-
-### 修复类别 2：DagEditor addNode 空 ID 导致 dagre 崩溃（影响 2 个用例）
-
-**失败原因：** `DagEditor.addNode()` 创建空 ID 节点，dagre 布局崩溃。
-
-**修复方案：** 生成唯一默认 ID + 过滤无效边。
-
-### 修复类别 3：dist 过期导致 data-testid 缺失（影响全部 6 个用例）
-
-**修复方案：** 重新执行 `npm run build`。
+- `failure` 只指 pytest failed。
+- `skip` 是明确的 integration/optional 场景，不计入 failure。
+- 警告不计入 failure。

@@ -314,7 +314,8 @@ class TestImageLLMMetadataStructure:
             })
         limitations = result["data"].get("limitations", [])
         joined = " ".join(limitations).lower()
-        assert "提示词" in joined or "prompt" in joined or "不生成" in joined or "真实图片" in joined
+        assert "模板/规则降级产物" in joined
+        assert "非真实 llm 生成" in joined
 
 
 class TestImageAgentEdgeCases:

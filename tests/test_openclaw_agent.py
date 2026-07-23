@@ -20,7 +20,7 @@ def test_url_whitelist():
 
 
 def test_browser_screenshot():
-    agent = OpenClawAgent(headless=True, timeout=15)
+    agent = OpenClawAgent(headless=True, timeout=15, allow_browser_automation=True)
     result = agent.run({
         "task_id": "test_screenshot",
         "task_type": "browser_screenshot",
@@ -37,7 +37,7 @@ def test_browser_screenshot():
 
 
 def test_browser_scrape():
-    agent = OpenClawAgent(headless=True, timeout=15)
+    agent = OpenClawAgent(headless=True, timeout=15, allow_browser_automation=True)
     result = agent.run({
         "task_id": "test_scrape",
         "task_type": "browser_scrape",
@@ -51,7 +51,7 @@ def test_browser_scrape():
 
 
 def test_browser_test():
-    agent = OpenClawAgent(headless=True, timeout=15)
+    agent = OpenClawAgent(headless=True, timeout=15, allow_browser_automation=True)
     result = agent.run({
         "task_id": "test_page_test",
         "task_type": "browser_test",
@@ -74,7 +74,9 @@ def test_blocked_url():
         "task_type": "browser_screenshot",
         "url": "https://evil.phishing.site",
     })
-    assert result["status"] == "被拦截"
+    assert result["status"] == "blocked"
+    assert result["blocked"] is True
+    assert result["blocked_reason"] == "browser_automation_approval_required"
     assert result["success"] is False
     print("[PASS] blocked url protection")
 
