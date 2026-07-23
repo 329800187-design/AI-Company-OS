@@ -183,10 +183,13 @@ class TestWebsiteExecuteEndpoint:
 
 
 class TestWebsiteGovernanceGuard:
-    def test_vague_goal_blocked_by_guard(self):
+    """业务 Agent execute 入口不再由旧 Governance Guard 拦截模糊目标"""
+
+    def test_vague_goal_is_handled_by_business_agent(self):
         resp = _post_website_execute(_website_payload(goal="make money"))
         data = resp.json()
-        assert data["ok"] is False or "blocked" in str(data).lower()
+        assert data["ok"] is True
+        assert data["agent_id"] == "website"
 
 
 class TestWebsiteGovernanceFallback:

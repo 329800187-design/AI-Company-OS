@@ -1,6 +1,6 @@
 # 已知测试失败清单
 
-> 更新日期：2026-07-20（Phase 7C-6 feishu router 注册）
+> 更新日期：2026-07-23（Phase 7C-7 vague goal guard 对齐）
 > 范围：本地全量 pytest 测试
 
 ---
@@ -10,7 +10,7 @@
 | 指标 | Phase 7C-1 | Phase 7C-2 | Phase 7C-3 | Phase 7C-4 | Phase 7C-5 | Phase 7C-6（当前） | 变化 |
 |------|------------|------------|------------|------------|------------|-------------------|------|
 | 通过 | 1437 | 1510 | 1521 | 1539 | 1559 | 1566 | +7 |
-| 失败 | 130 | 66 | 55 | 37 | 16 | 9 | -7 |
+| 失败 | 130 | 66 | 55 | 37 | 16 | 9 | -4 |
 | 跳过 | 6 | 6 | 6 | 6 | 6 | 6 | 0 |
 | 警告 | 2 | 2 | 2 | 2 | 2 | 2 | 0 |
 
@@ -46,7 +46,7 @@ CI 未覆盖的测试文件包含 9 个失败。
 |------|--------|------|--------|------|
 | ~~A. boss 端点 404~~ | ~~11~~ | ~~boss_router 部分端点未正确注册或路径变更~~ | ~~高~~ | ✅ 已修复 |
 | ~~B. minidelivery task listing~~ | ~~18~~ | ~~_create_task() helper 路径多了 minidelivery/ 层级~~ | ~~中~~ | ✅ 已修复 |
-| C. vague goal guard 不拦截 | 4 | guard 不再拦截模糊目标，测试期望被拦截 | 中 | 待处理 |
+| C. vague goal guard 不拦截 | 0 | 业务 Agent execute 入口在 Phase 6/7 已改为直连执行，模糊目标不再由旧 Guard 拦截；Governance `/run` 仍负责受控分类 | 中 | ✅ 已修复（更新测试断言） |
 | ~~D. feishu_router 未注册~~ | ~~7~~ | ~~feishu_router 未在 app.py 注册~~ | ~~低~~ | ✅ 已修复 |
 | ~~E. AgentRouter 无候选~~ | ~~21~~ | ~~模板别名导致 executor 注册键不匹配 + 测试 fixture 未启用 legacy executors~~ | ~~中~~ | ✅ 已修复 |
 | F. 断言不匹配 | 5 | openclaw browser + image_llm 输出结构变化 | 低 | 待处理 |
@@ -108,23 +108,22 @@ Phase 7C-1 原始分类存在重叠计数：
 
 ---
 
-## 分类 C：vague goal guard 不拦截（4 个失败）
+## ~~分类 C：vague goal guard 不拦截~~（Phase 7C-7 已修复）
 
-**根因：** 测试期望 guard 拦截模糊目标，但 guard 不再拦截（返回 `{"ok": true}` 而非 blocked）。
+**✅ 已修复（2026-07-23）**
 
-**失败文件：**
+**根因：** Phase 6/7 的统一业务 Agent execute 入口已改为业务 Agent 直连执行；`backend/routers/agent_router.py:253` 仅对非业务 Agent 调用旧 Governance Guard。因此四个测试继续断言拦截，和当前产品行为不一致。
 
-| 文件 | 测试 |
-|------|------|
-| `tests/test_research_execute.py` | `test_vague_goal_blocked_by_guard` |
-| `tests/test_website_execute.py` | `test_vague_goal_blocked_by_guard` |
-| `tests/test_image_execute.py` | `test_vague_goal_blocked_by_guard` |
-| `tests/test_marketing_execute.py` | `test_vague_goal_blocked_by_guard` |
+**产品决策：** vague goal 不再由旧 Guard 拦截。`/agents/{business_agent}/execute` 负责执行并保留业务 Agent 的 fallback 能力；需要受控分类、澄清和阻断时，使用 `/governance/run`。这避免业务 Agent execute 与 Governance 正式入口职责重叠。
 
-**建议处理：**
-- 确认 guard 拦截逻辑是否在 Phase 6/7 中有意变更
-- 如果 guard 行为已变，更新测试断言
-- 如果 guard 应该拦截，修复 guard 逻辑
+**修复：** 更新四个测试，将断言改为业务 Agent 正常返回 `ok=true` 且 `agent_id` 匹配；未 skip 测试，未修改 Guard 逻辑。
+
+**修改文件：**
+- `tests/test_research_execute.py`
+- `tests/test_website_execute.py`
+- `tests/test_image_execute.py`
+- `tests/test_marketing_execute.py`
+- `docs/known_test_failures.md`
 
 ---
 

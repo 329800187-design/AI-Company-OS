@@ -228,10 +228,10 @@ class TestResearchExecuteEndpoint:
 
 
 class TestResearchGovernanceGuard:
-    """Governance guard 在 /agents/research/execute 仍然生效"""
+    """业务 Agent execute 入口不再由旧 Governance Guard 拦截模糊目标"""
 
-    def test_vague_goal_blocked_by_guard(self):
-        """模糊目标应被 governance guard 拦截"""
+    def test_vague_goal_is_handled_by_business_agent(self):
+        """模糊目标继续交由业务 Agent 处理；受控分类仍走 /governance/run。"""
         resp = client.post("/agents/research/execute", json={
             "task_id": "",
             "goal": "帮我赚钱",
@@ -240,7 +240,8 @@ class TestResearchGovernanceGuard:
             "input": {},
         })
         data = resp.json()
-        assert data["ok"] is False or "blocked" in str(data).lower()
+        assert data["ok"] is True
+        assert data["agent_id"] == "research"
 
 
 class TestResearchGovernanceFallback:
