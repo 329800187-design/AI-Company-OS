@@ -1,6 +1,15 @@
 # ============================================
-# AI Company OS — Docker 镜像 v0.5.0
+# AI Company OS — production image
 # ============================================
+FROM node:22-alpine AS frontend-builder
+
+WORKDIR /frontend
+COPY frontend-new/package.json frontend-new/package-lock.json ./
+RUN npm ci
+COPY frontend-new/ ./
+RUN npm run build
+
+
 FROM python:3.12
 
 LABEL org.opencontainers.image.title="AI Company OS"
@@ -24,6 +33,10 @@ RUN playwright install --with-deps chromium
 
 # 复制应用代码
 COPY . .
+
+# frontend-new/dist is intentionally excluded from the Docker build context;
+# always use the deterministic build produced in the Node stage.
+COPY --from=frontend-builder /frontend/dist /app/frontend-new/dist
 
 # 创建非 root 用户
 RUN useradd --create-home --shell /bin/bash appuser && chown -R appuser:appuser /app

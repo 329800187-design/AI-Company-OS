@@ -55,7 +55,21 @@ if ! python -c "from playwright.sync_api import sync_playwright; p=sync_playwrig
 fi
 echo "[OK] Playwright ready"
 
-# 6. Create .env if not exists
+# 6. Build React frontend
+if ! command -v npm &>/dev/null; then
+    echo "[ERROR] npm not found. Install Node.js 20.19+ or 22.12+."
+    exit 1
+fi
+echo "[INFO] Preparing frontend..."
+pushd frontend-new >/dev/null
+if [ ! -d "node_modules" ]; then
+    npm ci
+fi
+npm run build
+popd >/dev/null
+echo "[OK] Frontend production build ready"
+
+# 7. Create .env if not exists
 if [ ! -f ".env" ]; then
     echo "[INFO] Creating .env from template..."
     cp .env.example .env
@@ -69,7 +83,7 @@ if [ ! -f ".env" ]; then
     echo ""
 fi
 
-# 7. Start server
+# 8. Start server
 echo ""
 echo "============================================"
 echo "  Starting server..."

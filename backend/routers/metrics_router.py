@@ -66,6 +66,13 @@ def metrics():
     except Exception:
         pass
 
+    # 6. Boss operating loop (human acceptance + observed outcomes)
+    try:
+        from backend.services.boss_command_center import get_boss_command_center
+        m["boss"] = get_boss_command_center().get_operating_summary()
+    except Exception:
+        pass
+
     return m
 
 

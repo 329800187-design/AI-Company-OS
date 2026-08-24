@@ -10,7 +10,7 @@ import json
 import sqlite3
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -46,12 +46,28 @@ class MemoryStore:
                 importance REAL DEFAULT 0.5,
                 created_at TEXT DEFAULT (datetime('now')),
                 accessed_at TEXT DEFAULT (datetime('now')),
-                access_count INTEGER DEFAULT 0
+                access_count INTEGER DEFAULT 0,
+                retention_class TEXT DEFAULT 'standard',
+                expires_at TEXT,
+                deleted_at TEXT,
+                deletion_reason TEXT DEFAULT ''
             )
         """)
+        # Backward-compatible migration for existing project databases.
+        for column in (
+            "retention_class TEXT DEFAULT 'standard'",
+            "expires_at TEXT",
+            "deleted_at TEXT",
+            "deletion_reason TEXT DEFAULT ''",
+        ):
+            try:
+                conn.execute(f"ALTER TABLE memories ADD COLUMN {column}")
+            except sqlite3.OperationalError:
+                pass
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_key ON memories(key)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(source)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_active_expiry ON memories(deleted_at, expires_at)")
         conn.commit()
 
     # ── 写入 ──────────────────────────────────────────────
@@ -102,7 +118,10 @@ class MemoryStore:
     def recall(self, key: str) -> Optional[dict]:
         """按 key 精确查��"""
         conn = self._get_conn()
-        row = conn.execute("SELECT * FROM memories WHERE key=?", (key,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM memories WHERE key=? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
+            (key, datetime.now().isoformat()),
+        ).fetchone()
         if not row:
             return None
         return self._row_to_dict(row)
@@ -121,14 +140,14 @@ class MemoryStore:
 
         if like_clauses:
             rows = conn.execute(
-                f"SELECT * FROM memories WHERE {' OR '.join(like_clauses)} "
+                f"SELECT * FROM memories WHERE deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?) AND ({' OR '.join(like_clauses)}) "
                 "ORDER BY importance DESC, accessed_at DESC LIMIT ?",
-                (*params, max(limit * 10, 100))
+                (datetime.now().isoformat(), *params, max(limit * 10, 100))
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT * FROM memories ORDER BY importance DESC, accessed_at DESC LIMIT ?",
-                (limit * 5,)
+                "SELECT * FROM memories WHERE deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?) ORDER BY importance DESC, accessed_at DESC LIMIT ?",
+                (datetime.now().isoformat(), limit * 5)
             ).fetchall()
 
         candidates = [self._row_to_dict(r) for r in rows]
@@ -137,6 +156,32 @@ class MemoryStore:
         if candidates and query:
             candidates = self._rerank_semantic(query, candidates)
 
+        return candidates[:limit]
+
+    def search_by_source_tags(self, query: str, *, source: str,
+                              required_tags: List[str] = None,
+                              limit: int = 10) -> List[dict]:
+        """Search a scoped subset of memories.
+
+        Long-lived operating knowledge should not be mixed blindly with every
+        transient agent trace.  Callers can therefore restrict recall to one
+        producer and a small set of required tags before semantic re-ranking.
+        """
+        conn = self._get_conn()
+        clauses = ["source = ?", "deleted_at IS NULL", "(expires_at IS NULL OR expires_at > ?)"]
+        params: List[Any] = [source, datetime.now().isoformat()]
+        for tag in required_tags or []:
+            clauses.append("tags LIKE ?")
+            params.append(f'%"{tag}"%')
+
+        rows = conn.execute(
+            f"SELECT * FROM memories WHERE {' AND '.join(clauses)} "
+            "ORDER BY importance DESC, accessed_at DESC LIMIT ?",
+            (*params, max(limit * 10, 100)),
+        ).fetchall()
+        candidates = [self._row_to_dict(row) for row in rows]
+        if candidates and query:
+            candidates = self._rerank_semantic(query, candidates)
         return candidates[:limit]
 
     @staticmethod
@@ -195,9 +240,9 @@ class MemoryStore:
             # 如果没找到相关记忆，返回最近的执行记录
             conn = self._get_conn()
             rows = conn.execute(
-                "SELECT * FROM memories WHERE source != 'system' "
+                "SELECT * FROM memories WHERE source != 'system' AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?) "
                 "ORDER BY accessed_at DESC LIMIT ?",
-                (limit,)
+                (datetime.now().isoformat(), limit)
             ).fetchall()
             memories = [self._row_to_dict(r) for r in rows]
 
@@ -210,8 +255,27 @@ class MemoryStore:
                 data = json.loads(m["content"])
                 goal_text = data.get("goal", m["content"][:100])
             except Exception:
+                data = {}
                 goal_text = m["content"][:100]
-            lines.append(f"- [{m['source']}] {goal_text}")
+            if data.get("record_type") == "accepted_boss_mission":
+                lines.append(f"- [Boss 已验收] {goal_text}")
+                comment = str(data.get("review_comment", "")).strip()
+                if comment:
+                    lines.append(f"  - 验收意见：{comment[:240]}")
+                for module in data.get("modules", [])[:2]:
+                    summary = str(module.get("summary", "")).strip()
+                    if summary:
+                        title = module.get("title") or module.get("module_id") or "模块结论"
+                        lines.append(f"  - {title}：{summary[:360]}")
+                outcome = data.get("outcome", {})
+                if outcome:
+                    lines.append(f"  - 后续结果：{outcome.get('status', 'inconclusive')}")
+                    if outcome.get("metrics"):
+                        lines.append(f"  - 观测指标：{json.dumps(outcome['metrics'], ensure_ascii=False)[:360]}")
+                    if outcome.get("note"):
+                        lines.append(f"  - 复盘备注：{str(outcome['note'])[:360]}")
+            else:
+                lines.append(f"- [{m['source']}] {goal_text}")
 
         return "\n".join(lines)
 
@@ -219,8 +283,8 @@ class MemoryStore:
         """��取最近的记忆"""
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT * FROM memories ORDER BY accessed_at DESC LIMIT ?",
-            (limit,)
+            "SELECT * FROM memories WHERE deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?) ORDER BY accessed_at DESC LIMIT ?",
+            (datetime.now().isoformat(), limit)
         ).fetchall()
         return [self._row_to_dict(r) for r in rows]
 
@@ -249,12 +313,91 @@ class MemoryStore:
         conn.commit()
         return cursor.rowcount > 0
 
+    def retire_by_key(self, key: str, reason: str = "") -> bool:
+        """Soft-delete a memory so it can no longer be recalled or injected."""
+        conn = self._get_conn()
+        cursor = conn.execute(
+            """UPDATE memories SET deleted_at=?, deletion_reason=?
+               WHERE key=? AND deleted_at IS NULL""",
+            (datetime.now().isoformat(), str(reason or "")[:500], key),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def set_retention(self, key: str, retention_days: Optional[int] = None,
+                      retention_class: str = "standard") -> bool:
+        """Set an explicit retention policy for an active memory.
+
+        ``retention_days=None`` means the memory has no scheduled expiry, but
+        it remains subject to explicit soft deletion by a human.
+        """
+        if retention_days is not None and retention_days < 1:
+            raise ValueError("retention_days must be positive when specified")
+        retention_class = str(retention_class or "standard").strip()[:80] or "standard"
+        expires_at = (
+            (datetime.now() + timedelta(days=int(retention_days))).isoformat()
+            if retention_days is not None else None
+        )
+        conn = self._get_conn()
+        cursor = conn.execute(
+            """UPDATE memories SET retention_class=?, expires_at=?
+               WHERE key=? AND deleted_at IS NULL""",
+            (retention_class, expires_at, key),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def cleanup_expired(self, source: Optional[str] = None) -> Dict[str, Any]:
+        """Soft-delete records whose explicit retention period has expired."""
+        conn = self._get_conn()
+        now = datetime.now().isoformat()
+        clauses = ["deleted_at IS NULL", "expires_at IS NOT NULL", "expires_at <= ?"]
+        params: List[Any] = [now]
+        if source:
+            clauses.append("source = ?")
+            params.append(source)
+        cursor = conn.execute(
+            f"UPDATE memories SET deleted_at=?, deletion_reason='retention_expired' WHERE {' AND '.join(clauses)}",
+            (now, *params),
+        )
+        conn.commit()
+        return {"retired_count": cursor.rowcount, "cleaned_at": now, "source": source}
+
+    def governance_summary(self, source: Optional[str] = None) -> Dict[str, Any]:
+        """Return only factual retention/deletion counters, never memory content."""
+        conn = self._get_conn()
+        clauses = []
+        params: List[Any] = []
+        if source:
+            clauses.append("source = ?")
+            params.append(source)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        now = datetime.now().isoformat()
+        row = conn.execute(
+            f"""SELECT
+                    COUNT(*) AS total_count,
+                    SUM(CASE WHEN deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?) THEN 1 ELSE 0 END) AS active_count,
+                    SUM(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS retired_count,
+                    SUM(CASE WHEN deleted_at IS NULL AND expires_at IS NOT NULL THEN 1 ELSE 0 END) AS expiring_count
+                FROM memories {where}""",
+            (now, *params),
+        ).fetchone()
+        return {
+            "source": source,
+            "total_count": int(row["total_count"] or 0),
+            "active_count": int(row["active_count"] or 0),
+            "retired_count": int(row["retired_count"] or 0),
+            "expiring_count": int(row["expiring_count"] or 0),
+        }
+
     def update_by_key(self, key: str, content: Optional[str] = None,
                       source: Optional[str] = None, tags: Optional[List[str]] = None,
                       importance: Optional[float] = None) -> bool:
         """按 key 更新单条记忆的部分字段，返回是否成功"""
         conn = self._get_conn()
-        existing = conn.execute("SELECT id FROM memories WHERE key=?", (key,)).fetchone()
+        existing = conn.execute(
+            "SELECT id FROM memories WHERE key=? AND deleted_at IS NULL", (key,)
+        ).fetchone()
         if not existing:
             return False
         updates = []
@@ -293,6 +436,10 @@ class MemoryStore:
             "created_at": row["created_at"],
             "accessed_at": row["accessed_at"],
             "access_count": row["access_count"],
+            "retention_class": row["retention_class"],
+            "expires_at": row["expires_at"],
+            "deleted_at": row["deleted_at"],
+            "deletion_reason": row["deletion_reason"],
         }
 
 

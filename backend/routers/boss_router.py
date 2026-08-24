@@ -5,7 +5,7 @@ import json
 import time
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -56,6 +56,58 @@ class ModuleRunRequest(BaseModel):
 class MissionAcceptRequest(BaseModel):
     """用户接受 Mission 结果请求"""
     comment: str = Field(default="", description="用户备注")
+
+
+class MissionOutcomeRequest(BaseModel):
+    """Human-observed business result after accepting a Mission delivery."""
+    outcome_status: Literal["improved", "unchanged", "worse", "inconclusive"] = Field(
+        ..., description="人工观测到的结果，不由系统自动推断"
+    )
+    metrics: Dict[str, float] = Field(default_factory=dict, description="可选的实际指标观测")
+    note: str = Field(default="", max_length=1200, description="复盘备注")
+
+
+class MissionActionCreateRequest(BaseModel):
+    """A proposed action after a Mission was accepted by a human."""
+    action_type: str = Field(..., min_length=1, max_length=100)
+    summary: str = Field(default="", max_length=500)
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    connector_id: str = Field(default="local_simulation", max_length=100)
+
+
+class MissionActionApprovalRequest(BaseModel):
+    approval_note: str = Field(default="", max_length=800)
+
+
+class MissionActionCancellationRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=800)
+
+
+class MissionKpiObservationRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=160)
+    value: float
+    unit: str = Field(default="", max_length=60)
+    direction: Literal["increased", "decreased", "unchanged", "unknown"] = "unknown"
+    note: str = Field(default="", max_length=1200)
+    action_id: Optional[str] = Field(default=None, max_length=100)
+
+
+class OperatingCycleCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=160)
+    objective: str = Field(..., min_length=1, max_length=1200)
+    period_start: str = Field(default="", max_length=64)
+    period_end: str = Field(default="", max_length=64)
+    target_metrics: Dict[str, Any] = Field(default_factory=dict)
+
+
+class OperatingCycleObservationRequest(BaseModel):
+    observation_id: int = Field(..., ge=1)
+
+
+class OperatingCycleReviewRequest(BaseModel):
+    conclusion: str = Field(..., min_length=1, max_length=2400)
+    decision: Literal["continue", "adjust", "pause", "complete"]
+    next_actions: List[str] = Field(default_factory=list, max_length=20)
 
 
 @router.get("/templates", summary="模板列表")
@@ -138,6 +190,12 @@ def list_missions(limit: int = 20, offset: int = 0):
     service = get_boss_command_center()
     missions = service.list_missions(limit=limit, offset=offset)
     return {"missions": missions, "total": len(missions)}
+
+
+@router.get("/overview", summary="Boss 运营闭环概览")
+def get_boss_overview():
+    """Return factual mission/outcome counters; it does not infer business success."""
+    return get_boss_command_center().get_operating_summary()
 
 
 class CleanupStaleRequest(BaseModel):
@@ -259,6 +317,195 @@ def accept_mission(mission_id: str, request: MissionAcceptRequest = MissionAccep
 
     mission = service.accept_mission(mission_id, comment=request.comment)
     return mission
+
+
+@router.get("/missions/{mission_id}/outcome", summary="获取 Mission 后续结果")
+def get_mission_outcome(mission_id: str):
+    service = get_boss_command_center()
+    if not service.get_mission(mission_id):
+        raise HTTPException(status_code=404, detail=f"Mission {mission_id} 不存在")
+    outcome = service.get_outcome(mission_id)
+    return {"mission_id": mission_id, "outcome": outcome}
+
+
+@router.post("/missions/{mission_id}/outcome", summary="记录人工观测的 Mission 后续结果")
+def record_mission_outcome(mission_id: str, request: MissionOutcomeRequest):
+    service = get_boss_command_center()
+    try:
+        outcome = service.record_outcome(
+            mission_id, request.outcome_status, metrics=request.metrics, note=request.note
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not outcome:
+        raise HTTPException(status_code=404, detail=f"Mission {mission_id} 不存在")
+    return {"mission_id": mission_id, "outcome": outcome}
+
+
+@router.get("/action-connectors", summary="已注册的动作连接器")
+def list_mission_action_connectors():
+    """Only locally simulated connectors are available by default."""
+    return {"connectors": get_boss_command_center().get_operating_summary()["available_action_connectors"]}
+
+
+@router.get("/missions/{mission_id}/actions", summary="获取 Mission 动作记录")
+def get_mission_actions(mission_id: str):
+    service = get_boss_command_center()
+    if not service.get_mission(mission_id):
+        raise HTTPException(status_code=404, detail=f"Mission {mission_id} 不存在")
+    actions = service.get_actions(mission_id)
+    return {"mission_id": mission_id, "actions": actions, "total": len(actions)}
+
+
+@router.post("/missions/{mission_id}/actions", summary="提出需要人工批准的动作")
+def create_mission_action(mission_id: str, request: MissionActionCreateRequest):
+    service = get_boss_command_center()
+    try:
+        action = service.create_action_request(
+            mission_id=mission_id,
+            action_type=request.action_type,
+            summary=request.summary,
+            payload=request.payload,
+            connector_id=request.connector_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not action:
+        raise HTTPException(status_code=404, detail=f"Mission {mission_id} 不存在")
+    return {"mission_id": mission_id, "action": action}
+
+
+@router.post("/actions/{action_id}/approve", summary="人工批准一个动作")
+def approve_mission_action(action_id: str, request: MissionActionApprovalRequest = MissionActionApprovalRequest()):
+    service = get_boss_command_center()
+    try:
+        action = service.approve_action(action_id, request.approval_note)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not action:
+        raise HTTPException(status_code=404, detail=f"Action {action_id} 不存在")
+    return {"action": action}
+
+
+@router.post("/actions/{action_id}/cancel", summary="人工取消一个未执行动作")
+def cancel_mission_action(action_id: str, request: MissionActionCancellationRequest):
+    service = get_boss_command_center()
+    try:
+        action = service.cancel_action(action_id, request.reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not action:
+        raise HTTPException(status_code=404, detail=f"Action {action_id} 不存在")
+    return {"action": action}
+
+
+@router.post("/actions/{action_id}/preflight", summary="对待批准动作执行无副作用预检")
+def preflight_mission_action(action_id: str):
+    """Checks connector readiness without executing or contacting an external system."""
+    service = get_boss_command_center()
+    try:
+        action = service.preflight_action(action_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not action:
+        raise HTTPException(status_code=404, detail=f"Action {action_id} 不存在")
+    return {"action": action}
+
+
+@router.post("/actions/{action_id}/execute", summary="执行一个已人工批准的动作")
+def execute_mission_action(action_id: str):
+    service = get_boss_command_center()
+    try:
+        action = service.execute_action(action_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not action:
+        raise HTTPException(status_code=404, detail=f"Action {action_id} 不存在")
+    return {"action": action}
+
+
+@router.get("/missions/{mission_id}/kpis", summary="获取 Mission KPI 观测")
+def get_mission_kpis(mission_id: str):
+    service = get_boss_command_center()
+    if not service.get_mission(mission_id):
+        raise HTTPException(status_code=404, detail=f"Mission {mission_id} 不存在")
+    observations = service.get_kpi_observations(mission_id)
+    return {"mission_id": mission_id, "observations": observations, "total": len(observations)}
+
+
+@router.post("/missions/{mission_id}/kpis", summary="记录人工 KPI 观测")
+def record_mission_kpi(mission_id: str, request: MissionKpiObservationRequest):
+    service = get_boss_command_center()
+    try:
+        observation = service.record_kpi_observation(
+            mission_id=mission_id,
+            name=request.name,
+            value=request.value,
+            unit=request.unit,
+            direction=request.direction,
+            note=request.note,
+            action_id=request.action_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not observation:
+        raise HTTPException(status_code=404, detail=f"Mission {mission_id} 不存在")
+    return {"mission_id": mission_id, "observation": observation}
+
+
+@router.get("/operating-cycles", summary="经营复盘周期列表")
+def list_operating_cycles(limit: int = Query(default=20, ge=1, le=100)):
+    cycles = get_boss_command_center().list_operating_cycles(limit=limit)
+    return {"cycles": cycles, "total": len(cycles)}
+
+
+@router.post("/operating-cycles", summary="创建人工经营复盘周期")
+def create_operating_cycle(request: OperatingCycleCreateRequest):
+    try:
+        cycle = get_boss_command_center().create_operating_cycle(
+            name=request.name,
+            objective=request.objective,
+            period_start=request.period_start,
+            period_end=request.period_end,
+            target_metrics=request.target_metrics,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return cycle
+
+
+@router.get("/operating-cycles/{cycle_id}", summary="经营复盘周期详情")
+def get_operating_cycle(cycle_id: str):
+    cycle = get_boss_command_center().get_operating_cycle(cycle_id)
+    if not cycle:
+        raise HTTPException(status_code=404, detail=f"Cycle {cycle_id} 不存在")
+    return cycle
+
+
+@router.post("/operating-cycles/{cycle_id}/observations", summary="人工将 KPI 观测加入周期")
+def attach_operating_cycle_observation(cycle_id: str, request: OperatingCycleObservationRequest):
+    try:
+        cycle = get_boss_command_center().attach_kpi_observation_to_cycle(
+            cycle_id, request.observation_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not cycle:
+        raise HTTPException(status_code=404, detail=f"Cycle {cycle_id} 不存在")
+    return cycle
+
+
+@router.post("/operating-cycles/{cycle_id}/review", summary="记录人工经营复盘结论")
+def review_operating_cycle(cycle_id: str, request: OperatingCycleReviewRequest):
+    try:
+        cycle = get_boss_command_center().review_operating_cycle(
+            cycle_id, request.conclusion, request.decision, request.next_actions
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not cycle:
+        raise HTTPException(status_code=404, detail=f"Cycle {cycle_id} 不存在")
+    return cycle
 
 
 @router.get("/modules/definitions", summary="模块定义")

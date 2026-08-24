@@ -104,6 +104,12 @@ class LocalAgentRuntime:
         if self._task_classifier:
             task_type, classification_confidence = self._task_classifier.classify(message, context)
 
+        # The local image agent can always fall back to a prompt/mock asset.
+        # Keep the real-render setup steps visible even when that fallback is
+        # considered a successful response by a verifier.
+        if task_type == "image":
+            fix_hints = self._get_fix_hints(task_type)
+
         tool_trace.append({
             "tool": "task_classifier",
             "action": "任务识别",
@@ -214,7 +220,7 @@ class LocalAgentRuntime:
 
         if not result.get("ok"):
             # 合并 agent 自身的 fix_hints 和 runtime 的 fix_hints
-            combined_hints = fix_hints or agent_fix_hints
+            combined_hints = fix_hints or agent_fix_hints or self._get_fix_hints(task_type)
             return self._create_result(
                 ok=False,
                 mode="local",
@@ -244,7 +250,7 @@ class LocalAgentRuntime:
                 tool_trace=tool_trace,
                 error="任务执行结果为空",
                 warnings=["本地工具未返回有效内容"],
-                fix_hints=fix_hints,
+                fix_hints=fix_hints or self._get_fix_hints(task_type),
                 confidence=0.0
             )
 
@@ -281,7 +287,7 @@ class LocalAgentRuntime:
                     final_answer=content,
                     error="结果验证失败",
                     warnings=verification.get("issues", []),
-                    fix_hints=fix_hints,
+                    fix_hints=fix_hints or self._get_fix_hints(task_type),
                     verification_result=verification,
                     confidence=0.0
                 )

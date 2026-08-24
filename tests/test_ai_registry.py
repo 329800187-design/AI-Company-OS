@@ -139,6 +139,8 @@ def test_cc_switch_execute():
     svc = reg.get_service("cc-switch")
     if not svc or svc.status != "online":
         pytest.skip("CC Switch not online")
+    if not os.getenv("CC_SWITCH_API_KEY", "").strip():
+        pytest.skip("CC Switch credential not configured")
 
     result = reg.execute("cc-switch", {
         "prompt": "说一句话介绍你自己，不超过20个字",
@@ -149,7 +151,7 @@ def test_cc_switch_execute():
     if not result.get("success"):
         error_msg = str(result.get("error", ""))
         # 上游 provider 暂时不可用 → skip（不阻塞离线回归）
-        if any(code in error_msg for code in ("502", "503", "504", "429", "Service Unavailable", "Too Many Requests")):
+        if any(code in error_msg for code in ("401", "502", "503", "504", "429", "Unauthorized", "Service Unavailable", "Too Many Requests")):
             pytest.skip(f"CC Switch upstream provider unavailable: {error_msg[:120]}")
         # 连接失败 → skip（本机服务可能未启动）
         if any(code in error_msg for code in ("Connection refused", "ConnectError", "ConnectTimeout")):

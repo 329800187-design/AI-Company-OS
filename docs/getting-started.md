@@ -1,111 +1,95 @@
-# AI Company OS — Quick Start
+# AI Company OS — 快速开始
 
-## 1. Prerequisites
+## 环境要求
 
 - Python 3.12+
-- Git Bash (Windows) or bash (Linux/Mac)
+- Node.js 20.19+ 或 22.12+
+- npm
+- Docker Desktop 或 Docker Engine（仅 Docker 部署需要）
 
-## 2. One-Click Start (Windows)
+## 首次安装：先做一键验收
 
-Double-click `start.bat` in the project root. It will:
-1. Create virtual environment
-2. Install dependencies
-3. Copy `.env.example` → `.env` (edit API keys)
-4. Install Playwright Chromium
-5. Start server at `http://localhost:8000`
+Windows：
 
-## 3. Manual Start
+```powershell
+.\verify.bat
+```
+
+Linux / macOS：
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+chmod +x verify.sh
+./verify.sh
+```
+
+验收会准备依赖、构建 React 前端、启动临时后端、检查核心 API 与交付中心，并在结束后关闭临时后端。全部必选项通过时退出码为 `0`。
+
+## 正式启动
+
+Windows：
+
+```powershell
+.\start.bat
+```
+
+Linux / macOS：
+
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+启动脚本会确保 Python 依赖、Playwright Chromium 和 React 生产构建就绪，然后启动 Uvicorn。
+
+访问地址：
+
+- 新版界面：`http://127.0.0.1:8000/app`
+- 经典界面：`http://127.0.0.1:8000/ui`
+- API 文档：`http://127.0.0.1:8000/docs`
+- 健康检查：`http://127.0.0.1:8000/health`
+
+## 环境变量与真实 Provider
+
+首次启动会在缺少 `.env` 时复制 `.env.example`。可以配置 DeepSeek/OpenAI/Claude，以及搜索和图片 Provider。
+
+没有真实 API Key 时系统允许使用 Mock、模板或本地 heuristic fallback，但这不代表真实 Provider 已通过验收。显式验证真实 Provider：
+
+```bash
+python scripts/verify_deployment.py --with-providers
+```
+
+## Docker Compose
+
+```bash
 cp .env.example .env
-# Edit .env: add DEEPSEEK_API_KEY=
-uvicorn backend.app:app --host 0.0.0.0 --port 8000 --reload
-```
-
-## 4. Configure API Key
-
-Open `http://localhost:8000/ui` → Settings → add your DeepSeek/OpenAI/Claude API key.
-
-## 5. First Command
-
-In Commander page (default home), type:
-```
-write a hello world Python function and test it
-```
-
-The system will:
-1. CEO decomposes → Codex writes code → QA verifies
-2. Results appear in real-time
-
-## 6. Docker
-
-```bash
+docker compose build
 docker compose up -d
-# http://localhost (port 80)
+docker compose ps
+curl http://127.0.0.1/health
 ```
 
-## 7. Available Pages
+新版前端在 Docker 多阶段构建中生成，无需把本地 `frontend-new/dist` 放入镜像。
 
-| Page | Description |
-|------|-------------|
-| 📊 Dashboard | System overview, agent health, usage stats |
-| 🧠 Commander | Goal input → auto decompose → execute |
-| 💬 AI Chat | Direct LLM conversation |
-| 🔍 CTO | Code review / tech choice / architecture |
-| 🎨 Image | AI image generation (DALL-E 3) |
-| 📝 Marketing | Copywriting / SEO / social / brand |
-| 🌐 OpenClaw | Web research + deep thinking + 1M context |
-| 📚 Skills | 25 built-in skills with semantic search |
-| 📋 Templates | 12 industry scenario templates |
-| ⚙️ Settings | API keys, provider switching, auth |
+## 本地开发
 
-## 8. API Reference
-
-Swagger docs: `http://localhost:8000/docs`
-
-Key endpoints:
-- `POST /commander/run` — sync execution
-- `POST /commander/run-async` — async with WebSocket progress
-- `POST /agents/{name}/run` — direct agent call
-- `POST /workflows/dag/run` — DAG workflow
-- `GET /system/metrics` — monitoring data
-
-## 9. Local Verification (Smoke Check)
-
-After starting the server, run the smoke check to verify core endpoints:
+后端：
 
 ```bash
-# Run smoke check (requires server at 127.0.0.1:8000)
-python scripts/backend_smoke_check.py
-
-# Custom host/port
-python scripts/backend_smoke_check.py --host 127.0.0.1 --port 8000
+python -m uvicorn backend.app:app --reload --port 8000
 ```
 
-This checks: `/health`, `/memory/recent`, `/memory/search`, `/boss/missions`, `/boss/templates`, mission detail/export, and response structures. No AI API key needed.
-
-## 10. Running Tests
-
-```bash
-# Boss command center (67 tests)
-python -m pytest tests/test_boss_command_center.py -q
-
-# Memory + Boss basics (17 tests, no external API deps)
-python -m pytest tests/test_memory_and_boss_basics.py -q
-
-# Browser automation approval (19 tests)
-python -m pytest tests/test_browser_automation_approval.py -q
-```
-
-## 11. Frontend Build
+前端：
 
 ```bash
 cd frontend-new
-npm install
-npx vite build          # production build
-npx vite                # dev server
+npm ci
+npm run dev
 ```
-- `GET /search?q=...` — full-text search
+
+Vite 默认代理到 `http://127.0.0.1:8000`。
+
+## 更多信息
+
+完整的部署矩阵、验收边界、故障排查、数据备份和发布清单见：
+
+- `docs/phase7d_deployment_runbook.md`

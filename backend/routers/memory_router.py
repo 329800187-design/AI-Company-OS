@@ -25,6 +25,19 @@ class UpdateMemoryRequest(BaseModel):
     importance: Optional[float] = Field(default=None, ge=0, le=1)
 
 
+class RetentionRequest(BaseModel):
+    retention_days: Optional[int] = Field(default=None, ge=1)
+    retention_class: str = Field(default="standard", min_length=1, max_length=80)
+
+
+class RetireMemoryRequest(BaseModel):
+    reason: str = Field(default="", max_length=500)
+
+
+class CleanupExpiredRequest(BaseModel):
+    source: Optional[str] = Field(default=None, max_length=100)
+
+
 @router.get("/search", summary="Search memories")
 def search_memory(q: str = "", limit: int = 10):
     store = get_memory_store()
@@ -57,6 +70,36 @@ def get_memory_context(goal: str = ""):
     store = get_memory_store()
     context = store.get_context(goal)
     return {"context": context, "goal": goal}
+
+
+@router.get("/governance", summary="Memory retention and deletion status")
+def memory_governance(source: Optional[str] = None):
+    return get_memory_store().governance_summary(source=source)
+
+
+@router.post("/governance/cleanup", summary="Retire explicitly expired memories")
+def cleanup_expired_memories(req: CleanupExpiredRequest = CleanupExpiredRequest()):
+    return get_memory_store().cleanup_expired(source=req.source)
+
+
+@router.patch("/{key}/retention", summary="Set one memory retention policy")
+def set_memory_retention(key: str, req: RetentionRequest):
+    store = get_memory_store()
+    try:
+        updated = store.set_retention(key, req.retention_days, req.retention_class)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Memory '{key}' not found or is retired")
+    return {"status": "ok", "key": key, "retention_days": req.retention_days, "retention_class": req.retention_class}
+
+
+@router.delete("/{key}/retire", summary="Retire one memory from all recall paths")
+def retire_memory(key: str, req: RetireMemoryRequest = RetireMemoryRequest()):
+    retired = get_memory_store().retire_by_key(key, req.reason)
+    if not retired:
+        raise HTTPException(status_code=404, detail=f"Memory '{key}' not found or already retired")
+    return {"status": "ok", "message": f"Memory '{key}' retired"}
 
 
 @router.delete("/clear", summary="Clear all memories")

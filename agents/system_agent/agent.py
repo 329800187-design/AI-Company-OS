@@ -60,14 +60,17 @@ def _detect_local_ai() -> Dict[str, Any]:
     try:
         import llama_cpp  # noqa: F401
         info["llama_cpp_available"] = True
-    except ImportError:
+    # Some optional wheels import successfully but fail while loading their
+    # platform-native shared library. Detection must treat that exactly like
+    # an unavailable optional runtime instead of failing the whole agent.
+    except Exception:
         pass
 
     # transformers
     try:
         import transformers  # noqa: F401
         info["transformers_available"] = True
-    except ImportError:
+    except Exception:
         pass
 
     # 扫描常见本地推理端口
