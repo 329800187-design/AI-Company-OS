@@ -1,6 +1,6 @@
 # Current Project State
 
-Last updated: 2026-07-14
+Last updated: 2026-08-23
 
 ## Current Goal
 
@@ -41,6 +41,8 @@ The Boss Command Center execution loop has been corrected through Phase 6.22.
 | 6.20 | Done | Legacy aliases are canonicalized; legacy business executors are disabled by default. |
 | 6.21 | Done | Boss Lite visible names changed to generic capability names. |
 | 6.22 | Done | Boss Lite backend prompts and reports mostly cleaned of domain-locked terms. |
+| 6.23 | Done | Frontend boss page visible copy cleaned (页面目标→交付目标, 首屏标题→核心标题, 上下文调研→上下文整理, 营销方案→沟通表达, 落地页→交付物结构, SEO→检索展示). |
+| 6.24 | Done | README and residual docs cleaned of domain-locked terms; generic framing verified. |
 
 ## Generic Template Protocol
 
@@ -139,55 +141,166 @@ In `backend/services/boss_module_executors.py`:
 - Legacy executors register only when `ACO_ENABLE_LEGACY_BUSINESS_EXECUTORS=true`.
 - Default behavior for all generic templates is `DefaultModuleExecutor`.
 
-## Current Known Residuals
+## Phase Status
 
-Phase 6.23 is still pending. Do this before adding new features.
+### Phase 6 — Generic Correction: COMPLETE
+Phases 6.13–6.24 are all Done, including 6.23/6.24 frontend + README residual cleanup (shipped via the Phase 6 squash merge). The product is now a generic AI business-process execution system; no domain-locked terms remain in prompts, visible copy, or docs.
 
-Known residuals from the latest audit:
+### Phase 7C — Test Baseline Zero: COMPLETE
+All Phase 7C assertion-baseline fixes are merged (PR #8, squash commit `94f3a3f` on main). Full pytest: **1577 passed, 0 failed, 6 skipped**. CI (test + docker) green.
 
-- `frontend-new/src/pages/boss/index.tsx` still has visible labels like `页面目标` and `首屏标题` in `extractKeyFields`.
-- `frontend-new/src/pages/boss/index.tsx` default DAG draft still has `上下文调研`.
-- `README.md` still has old wording such as `落地页文案和页面方案` and old agent role descriptions in some places.
+### Phase 7D — Deploy & One-click Verify: IN PROGRESS
 
-These are not backend execution blockers, but they keep the product memory tied to old marketing/landing-page language.
+Completed locally on 2026-08-11:
 
-## Next Required Task: Phase 6.23
+- Added the deployment/runbook doc for local and Docker operation.
+- Added cross-platform one-click verification (`verify.bat`, `verify.sh`, `scripts/verify_deployment.py`).
+- The verifier checks environment versions, backend import, frontend production build, ephemeral backend health, core API smoke, MiniDelivery and PDF routing.
+- Added an incremental SQLite metadata index for MiniDelivery task listings. With 5,814 historical deliveries, the deployment healthcheck now completes in about 3.7 seconds instead of timing out after a 56.7-second full JSON scan.
+- Updated local start scripts and Docker to build `frontend-new` instead of relying on an ignored, pre-existing `dist` directory.
+- Local Phase 7D verification: **9 passed, 0 failed**; backend smoke: **11 passed, 0 failed**; deployment healthcheck: **4 passed, 0 failed**.
 
-Phase 6.23 should clean frontend details and README residuals only.
+Re-verified locally on 2026-08-16:
 
-Scope:
+- `python scripts/verify_deployment.py`: **9 passed, 0 failed, 0 warnings, 0 skipped**; its backend smoke subcheck is now **14 passed, 0 failed**.
+- Full `pytest -q --maxfail=1`: **1599 passed, 0 failed, 7 skipped** in 14m45s.
+- Optional local integrations now degrade deterministically: an unconfigured CC Switch credential skips its external chat check; a broken `llama-cpp` native DLL is reported as unavailable; browser tests skip only when their public remote target cannot complete.
+- Image fallback responses now retain real-render setup guidance, and invalid research output with no evidence reports both the content and missing-source causes.
 
-- `frontend-new/src/pages/boss/index.tsx`
-- `README.md`
-- tests if helpful
+Remaining before Phase 7D can be marked complete:
 
-Replace visible copy:
+- Run `verify.bat` from a clean Windows checkout or release archive.
+- Run `verify.sh` from a clean Linux or macOS checkout.
 
-- `页面目标` -> `交付目标`
-- `首屏标题` -> `核心标题`
-- `页面板块` -> `交付板块`
-- `上下文调研` -> `上下文整理`
-- `营销方案` / `营销文案` -> `沟通表达`
-- `落地页` -> `交付物结构`
-- visible `SEO` -> `检索展示`
+Completed Docker verification on 2026-08-17:
+
+- The revised multi-stage image `ai-company-os-app:latest` built successfully. Docker Desktop returned a final build-status `rpc EOF`, but the image was exported and usable.
+- `docker compose up -d` started both `aios-app` and `aios-nginx`; the app healthcheck became `healthy`.
+- The public Compose entrypoint returned HTTP 200 for both `http://localhost/health` and `http://localhost/app`.
 
 Do not rename compatibility field names like `page_goal`, `hero`, `seo`, or `landing_page_copy` unless there is a separate migration plan.
 
-Recommended validation:
+### Phase 8 - Operating-Memory Closed Loop: IN PROGRESS
 
-```bash
-python -m pytest tests/test_boss_command_center.py -q
-cd frontend-new && npm run build
-npx playwright test e2e/boss-flow.spec.ts
-```
+Completed locally on 2026-08-15:
+
+- A Boss Mission now writes a bounded, structured operating-memory record only after a human accepts it. The record contains the goal, review comment, completion metrics, module conclusions, and next actions, not raw artifacts or tool traces.
+- Later Boss module execution retrieves only relevant, human-accepted Boss records and supplies them as advisory context. The prompt explicitly requires current facts to be rechecked.
+- Commander now passes shared skill and memory context into its CEO and fallback planners; previously it retrieved those values but did not use them.
+- A human can record an observed outcome after acceptance (`improved`, `unchanged`, `worse`, or `inconclusive`), with optional real metrics and a review note. The observation updates the accepted-mission memory and is visible in the Boss operating overview.
+- The Boss command-center UI now shows accepted deliveries, observed outcomes, and feedback coverage, and offers an in-context human outcome form for completed Missions.
+- Memory is non-blocking: an unavailable memory store records an event but cannot undo a user's acceptance decision.
+
+Still needed for the original "continuous company" vision:
+
+- Connect verified external actions and real business-data feedback, rather than primarily local/mock/template execution.
+
+### Phase 8.1 - Governed Actions & KPI Return: COMPLETE (local simulation)
+
+Completed locally on 2026-08-20:
+
+- Accepted Missions can propose a generic action only after human delivery acceptance.
+- Every action follows `pending_approval -> approved -> executed`; approval never auto-executes it, and execution is exactly once with an auditable receipt.
+- The only default connector is `local_simulation`. It records an execution-shaped receipt and payload digest but never contacts an external system or creates external side effects.
+- Human KPI observations can be attached to an accepted Mission (and optionally its action), are persisted with source `human_entry`, shown in the Boss command center, and added to the bounded operating-memory record.
+- Boss overview now reports action and KPI counters. Service regression: `10 passed`; frontend production build passed.
+
+### Phase 8.2 - Shared Memory Governance: COMPLETE
+
+Completed locally on 2026-08-20:
+
+- Operating-memory records now carry retention metadata and support explicit soft retirement. Retired or expired records are excluded from exact recall, search, recent lists, and prompt-context injection.
+- A human can set an optional retention period, retire a record with a reason, and run an expiry cleanup without permanently deleting the original database row.
+- Memory governance endpoints expose factual active, retired, and expiring counters. Boss overview surfaces the governance state for its shared operating memory.
+- Regression coverage validates soft retirement, expiry cleanup, and router behavior; the Phase 8 targeted suite has **13 passed**.
+
+### Phase 8.3 - Human Operating Review Cycles: COMPLETE
+
+Completed locally on 2026-08-21:
+
+- A human can create a collecting operating cycle with an objective, period, and target metrics; it neither schedules work nor performs any action.
+- KPI observations enter a cycle only through an explicit human attachment. A review cannot be submitted until at least one observation is attached.
+- Each cycle accepts exactly one human conclusion and one decision: `continue`, `adjust`, `pause`, or `complete`. The reviewed conclusion is then retained as a governed, human-accepted Boss operating-memory record; collecting cycles are never written to shared memory.
+- The Boss command center exposes the create, attach, and review flow, while the overview reports collecting and reviewed-cycle counts.
+- Regression coverage for the Phase 8 suite is **15 passed**; the frontend production build passed.
+
+### Phase 8.4 - Action Preflight Contract: COMPLETE (simulation only)
+
+Completed locally on 2026-08-21:
+
+- Every action connector now declares its mode, credential requirements, whether it needs a preflight, and whether it can have external side effects.
+- Proposed actions must pass a connector-owned, non-mutating preflight before human approval. The preflight is persisted and logged separately from the execution receipt.
+- The default and only registered connector remains `local_simulation`; its preflight verifies the action shape and explicitly reports that no external system will be contacted.
+- The Boss command center shows the required `propose → preflight → approve → execute` sequence. No credentials were added and no real external integration was enabled.
+- Regression coverage for the Phase 8 suite is **16 passed**; the frontend production build passed.
+
+### Phase 8.5 - Human Action Cancellation: COMPLETE (simulation only)
+
+Completed locally on 2026-08-21:
+
+- A human can cancel a pending or approved action before execution, but must supply a reason. The cancellation, timestamp, and reason are persisted and logged as an audit event.
+- A cancelled action cannot be preflighted, approved, or executed. An executed action cannot be labelled as cancelled; it requires a separate, explicit remediation action instead.
+- The Boss command center exposes the cancellation path and makes the recorded reason visible. No external connector or credentials were enabled.
+- Regression coverage for the Phase 8 suite is **17 passed**; the frontend production build passed.
+
+### Phase 8.6 - Credential-Safe Action Payloads: COMPLETE (simulation only)
+
+Completed locally on 2026-08-21:
+
+- Action payloads are rejected when field names indicate credentials, including API keys, tokens, passwords, secrets, authorization values, and private keys. The guard examines field names only; it does not inspect, log, or retain the corresponding values.
+- Future real connectors must obtain credentials from a dedicated connector configuration boundary, never from an auditable action request, preflight, receipt, or shared operating memory.
+- The Boss command center now states this constraint alongside the simulation-only execution workflow.
+- Regression coverage for the Phase 8 suite is **18 passed**; the frontend production build passed.
+
+### Phase 8.7 - Expiring Human Action Approval: COMPLETE (simulation only)
+
+Completed locally on 2026-08-21:
+
+- An action approval now has a bounded validity period: 30 minutes by default, configurable through `ACO_ACTION_APPROVAL_TTL_SECONDS` within a safe 1-minute to 24-hour range.
+- An expired approval automatically returns the action to `pending_approval`, clears the prior preflight and approval state, and requires a new preflight plus a new explicit human approval before execution.
+- Expiry is logged as an audit event and surfaced in the Boss command center alongside the approval expiry time.
+- Regression coverage for the Phase 8 suite is **19 passed**; the frontend production build passed.
 
 ## Recent Verification Reported
 
-Claude reported these results after Phase 6.22:
+Latest (Phase 7C, main `94f3a3f`):
 
-- `python -m pytest tests/test_boss_command_center.py -q` -> 145 passed
+- Full pytest: **1577 passed, 0 failed, 6 skipped**
+- CI: test + docker green (PR #8 merged)
 - `npm run build` -> passed
 - `npx playwright test e2e/boss-flow.spec.ts` -> 5 passed
+
+Latest local Phase 7D verification (2026-08-11, working tree):
+
+- `python scripts/verify_deployment.py` -> 9 passed, 0 failed
+- Backend smoke -> 11 passed, 0 failed
+- Deployment healthcheck -> 4 passed, 0 failed
+- MiniDelivery index regression -> 22 passed
+
+Latest local Phase 8.3 verification (2026-08-21, working tree):
+
+- `pytest -q tests/test_operating_cycles.py tests/test_boss_operating_memory.py tests/test_memory_governance.py --maxfail=1` -> **15 passed**
+- `npm run build` (in `frontend-new`) -> passed
+
+Latest local Phase 8.4 verification (2026-08-21, working tree):
+
+- `pytest -q tests/test_boss_operating_memory.py tests/test_operating_cycles.py tests/test_memory_governance.py --maxfail=1` -> **16 passed**
+- `npm run build` (in `frontend-new`) -> passed
+
+Latest local Phase 8.5 verification (2026-08-21, working tree):
+
+- `pytest -q tests/test_boss_operating_memory.py tests/test_operating_cycles.py tests/test_memory_governance.py --maxfail=1` -> **17 passed**
+- `npm run build` (in `frontend-new`) -> passed
+
+Latest local Phase 8.6 verification (2026-08-21, working tree):
+
+- `pytest -q tests/test_boss_operating_memory.py tests/test_operating_cycles.py tests/test_memory_governance.py --maxfail=1` -> **18 passed**
+- `npm run build` (in `frontend-new`) -> passed
+
+Latest local Phase 8.7 verification (2026-08-21, working tree):
+
+- `pytest -q tests/test_boss_operating_memory.py tests/test_operating_cycles.py tests/test_memory_governance.py --maxfail=1` -> **19 passed**
+- `npm run build` (in `frontend-new`) -> passed after one transient system-memory allocation retry
 
 DAG editor E2E had known pre-existing failures in some runs; do not treat those as caused by the genericization work unless reproduced after a clean build/server restart.
 

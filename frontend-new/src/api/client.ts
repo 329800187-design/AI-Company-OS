@@ -480,6 +480,117 @@ class ApiClient {
     })
   }
 
+  async getBossOperatingOverview() {
+    return this.request<{
+      mission_count: number
+      accepted_mission_count: number
+      status_counts: Record<string, number>
+      outcome_count: number
+      outcome_counts: Record<string, number>
+      outcome_feedback_rate: number
+      action_count: number
+      action_counts: Record<string, number>
+      executed_action_count: number
+      kpi_observation_count: number
+      operating_memory_governance: {
+        active_count?: number
+        retired_count?: number
+        expiring_count?: number
+        available?: boolean
+      }
+      operating_cycle_count: number
+      operating_cycle_counts: Record<string, number>
+      reviewed_cycle_count: number
+    }>("/boss/overview")
+  }
+
+  async createMissionAction(
+    missionId: string,
+    payload: { action_type: string; summary?: string; payload?: Record<string, unknown>; connector_id?: string },
+  ) {
+    return this.request<{ mission_id: string; action: Record<string, unknown> }>(
+      `/boss/missions/${missionId}/actions`, { method: "POST", body: payload },
+    )
+  }
+
+  async approveMissionAction(actionId: string, approvalNote = "") {
+    return this.request<{ action: Record<string, unknown> }>(`/boss/actions/${actionId}/approve`, {
+      method: "POST", body: { approval_note: approvalNote },
+    })
+  }
+
+  async cancelMissionAction(actionId: string, reason: string) {
+    return this.request<{ action: Record<string, unknown> }>(`/boss/actions/${actionId}/cancel`, {
+      method: "POST", body: { reason },
+    })
+  }
+
+  async preflightMissionAction(actionId: string) {
+    return this.request<{ action: Record<string, unknown> }>(`/boss/actions/${actionId}/preflight`, {
+      method: "POST",
+    })
+  }
+
+  async executeMissionAction(actionId: string) {
+    return this.request<{ action: Record<string, unknown> }>(`/boss/actions/${actionId}/execute`, {
+      method: "POST",
+    })
+  }
+
+  async recordMissionKpi(
+    missionId: string,
+    payload: { name: string; value: number; unit?: string; direction?: "increased" | "decreased" | "unchanged" | "unknown"; note?: string; action_id?: string },
+  ) {
+    return this.request<{ mission_id: string; observation: Record<string, unknown> }>(
+      `/boss/missions/${missionId}/kpis`, { method: "POST", body: payload },
+    )
+  }
+
+  async listOperatingCycles(limit = 20) {
+    return this.request<{ cycles: Array<Record<string, unknown>>; total: number }>(
+      `/boss/operating-cycles?limit=${limit}`,
+    )
+  }
+
+  async createOperatingCycle(payload: {
+    name: string; objective: string; period_start?: string; period_end?: string; target_metrics?: Record<string, unknown>
+  }) {
+    return this.request<Record<string, unknown>>("/boss/operating-cycles", { method: "POST", body: payload })
+  }
+
+  async attachOperatingCycleObservation(cycleId: string, observationId: number) {
+    return this.request<Record<string, unknown>>(`/boss/operating-cycles/${cycleId}/observations`, {
+      method: "POST", body: { observation_id: observationId },
+    })
+  }
+
+  async reviewOperatingCycle(cycleId: string, payload: { conclusion: string; decision: "continue" | "adjust" | "pause" | "complete"; next_actions?: string[] }) {
+    return this.request<Record<string, unknown>>(`/boss/operating-cycles/${cycleId}/review`, {
+      method: "POST", body: payload,
+    })
+  }
+
+  async recordMissionOutcome(
+    missionId: string,
+    outcomeStatus: "improved" | "unchanged" | "worse" | "inconclusive",
+    note = "",
+    metrics: Record<string, number> = {},
+  ) {
+    return this.request<{
+      mission_id: string
+      outcome: {
+        mission_id: string
+        outcome_status: "improved" | "unchanged" | "worse" | "inconclusive"
+        metrics: Record<string, number>
+        note: string
+        observed_at: string
+      }
+    }>(`/boss/missions/${missionId}/outcome`, {
+      method: "POST",
+      body: { outcome_status: outcomeStatus, metrics, note },
+    })
+  }
+
   // 清理超时 running 模块
   async cleanupStaleMissions(timeoutMinutes = 30) {
     return this.request<{

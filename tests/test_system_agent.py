@@ -2,6 +2,7 @@
 import os
 import sys
 import json
+import builtins
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -16,6 +17,21 @@ def test_detect_local_ai():
     assert "llama_cpp_available" in info
     assert "local_openai_endpoints" in info
     print("AI Detection:", json.dumps(info, indent=2, ensure_ascii=False))
+
+
+def test_detect_local_ai_handles_broken_optional_runtime(monkeypatch):
+    """Optional native runtimes with missing DLLs must be reported unavailable."""
+    original_import = builtins.__import__
+
+    def broken_llama_import(name, *args, **kwargs):
+        if name == "llama_cpp":
+            raise RuntimeError("llama.dll is unavailable")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", broken_llama_import)
+    info = _detect_local_ai()
+
+    assert info["llama_cpp_available"] is False
 
 
 def test_shell_execute():

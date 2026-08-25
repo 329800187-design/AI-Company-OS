@@ -827,6 +827,10 @@ class DefaultModuleExecutor(ModuleExecutor):
             return ExecutionResult(ok=False, error=f"未知模块: {module_id}")
 
         prompt = prompt_template.format(goal=goal)
+        context = context or {}
+        accepted_mission_memory = str(context.get("accepted_mission_memory", "")).strip()
+        if accepted_mission_memory:
+            prompt += f"\n\n{accepted_mission_memory}"
 
         # v1.5.1: 每个模块加 30s 超时，防止 openclaw 等慢 Agent 卡死整个 Mission
         import concurrent.futures
@@ -834,12 +838,14 @@ class DefaultModuleExecutor(ModuleExecutor):
             from backend.services.local_agent_runtime import get_local_agent_runtime
             runtime = get_local_agent_runtime()
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(runtime.execute, prompt, {
+                runtime_context = {
                     "boss_mission": True,
                     "mission_id": mission_id,
                     "mission_module": module_id,
                     "mission_goal": goal,
-                })
+                    "accepted_mission_memory": accepted_mission_memory,
+                }
+                future = pool.submit(runtime.execute, prompt, runtime_context)
                 result = future.result(timeout=30)
         except concurrent.futures.TimeoutError:
             return ExecutionResult(

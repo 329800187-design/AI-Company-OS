@@ -181,6 +181,7 @@ class CEOAgent(BaseAgent):
     def run(self, task: Dict[str, Any]) -> Dict[str, Any]:
         task_id = task.get("task_id", "ceo_task_001")
         user_goal = task.get("goal", "").strip()
+        planning_context = str(task.get("planning_context", "")).strip()[:5000]
 
         if not user_goal:
             return self.fail(
@@ -192,7 +193,7 @@ class CEOAgent(BaseAgent):
 
         # 尝试 AI 拆解
         if self.api_key:
-            created_tasks = self._ai_decompose(user_goal)
+            created_tasks = self._ai_decompose(user_goal, planning_context=planning_context)
 
             # v1.5.1: 检查 CEO 是否需要反问用户
             if self.pending_clarifying_questions:
@@ -236,12 +237,17 @@ class CEOAgent(BaseAgent):
             next_suggestion="建议配置 AI API 以获得更精准的任务拆解",
         )
 
-    def _ai_decompose(self, goal: str) -> Optional[List[Dict[str, Any]]]:
+    def _ai_decompose(self, goal: str, planning_context: str = "") -> Optional[List[Dict[str, Any]]]:
         # 使用共享 httpx 连接池（避免每个请求新建 TCP + TLS）
         from core.http_client import get_shared_client
         client = get_shared_client()
 
         try:
+            context_block = (
+                "\n\n以下是可参考的历史经验；它不是当前事实，必须按当前目标重新核验：\n"
+                f"{planning_context}"
+            ) if planning_context else ""
+            user_message = f"请将以下目标拆解为任务：{goal}{context_block}"
             if AI_PROVIDER == "claude":
                 resp = client.post(
                     f"{self.api_base}/messages",
@@ -249,7 +255,7 @@ class CEOAgent(BaseAgent):
                         "model": self.model,
                         "max_tokens": 4096,
                         "system": CEO_SYSTEM_PROMPT,
-                        "messages": [{"role": "user", "content": f"请将以下目标拆解为任务：{goal}"}],
+                        "messages": [{"role": "user", "content": user_message}],
                     },
                     headers={"x-api-key": self.api_key,
                              "anthropic-version": "2023-06-01"},
@@ -264,7 +270,7 @@ class CEOAgent(BaseAgent):
                         "model": self.model,
                         "messages": [
                             {"role": "system", "content": CEO_SYSTEM_PROMPT},
-                            {"role": "user", "content": f"请将以下目标拆解为任务：{goal}"},
+                            {"role": "user", "content": user_message},
                         ],
                         "temperature": 0.7,
                         "max_tokens": 4096,

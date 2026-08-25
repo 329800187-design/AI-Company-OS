@@ -44,6 +44,9 @@ logs
 # Uploads and output
 uploads
 output
+user_data
+.profiles
+execplan
 openclaw_screenshots
 codex_sandbox
 
@@ -53,9 +56,11 @@ htmlcov
 .coverage
 coverage.xml
 tests
+test-results
 
 # Node
 node_modules
+frontend-new/node_modules
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -75,6 +80,7 @@ desktop.ini
 
 # Playwright
 .playwright
+frontend-new/test-results
 
 # Temporary
 *.tmp
@@ -82,3 +88,6 @@ desktop.ini
 *.bak
 *.backup
 temp
+
+# Local release artifacts are not part of the runtime image.
+release_artifacts

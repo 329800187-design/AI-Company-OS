@@ -66,7 +66,35 @@ if %errorlevel% neq 0 (
 )
 echo [OK] Playwright ready
 
-:: 7. Create .env if not exists
+:: 7. Build React frontend
+where npm >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [ERROR] npm not found. Install Node.js 20.19+ or 22.12+.
+    pause
+    exit /b 1
+)
+echo [INFO] Preparing frontend...
+pushd frontend-new
+if not exist "node_modules" (
+    call npm ci
+    if errorlevel 1 (
+        popd
+        echo [ERROR] Failed to install frontend dependencies!
+        pause
+        exit /b 1
+    )
+)
+call npm run build
+if errorlevel 1 (
+    popd
+    echo [ERROR] Frontend build failed!
+    pause
+    exit /b 1
+)
+popd
+echo [OK] Frontend production build ready
+
+:: 8. Create .env if not exists
 if not exist ".env" (
     echo [INFO] Creating .env from template...
     copy .env.example .env >nul
@@ -80,7 +108,7 @@ if not exist ".env" (
     echo.
 )
 
-:: 8. Start server
+:: 9. Start server
 echo.
 echo ============================================
 echo   Starting server...
@@ -89,10 +117,10 @@ echo   API: http://localhost:8000/docs
 echo ============================================
 echo.
 
-:: 9. Open browser after 3 seconds
+:: 10. Open browser after 3 seconds
 start /b cmd /c "timeout /t 3 >nul && start http://localhost:8000/app"
 
-:: 10. Start uvicorn
+:: 11. Start uvicorn
 python -m uvicorn backend.app:app --host 0.0.0.0 --port 8000
 
 pause

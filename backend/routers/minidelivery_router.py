@@ -12,6 +12,7 @@ from fastapi.responses import PlainTextResponse, FileResponse
 from backend.minidelivery.models import XHSCopyRequest, CopyPackRequest, SaveFromAgentRequest, CompareTasksRequest
 from backend.minidelivery.pipeline import run_pipeline, run_copy_pack_pipeline
 from backend.minidelivery.artifact_writer import OUTPUT_ROOT, ensure_output_dir
+from backend.minidelivery.task_index import list_indexed_tasks
 
 router = APIRouter(prefix="/minidelivery", tags=["MiniDelivery / 最小交付闭环"])
 
@@ -976,7 +977,7 @@ def save_from_agent(request: SaveFromAgentRequest):
 # ── 列表接口（Phase 2A）─────────────────────────────────────
 
 @router.get("/tasks", summary="交付物列表",
-            description="扫描 output/minidelivery/*/result.json，返回列表，支持搜索、筛选与分页")
+            description="通过增量元数据索引返回列表，支持搜索、筛选与分页")
 def list_tasks(
     q: Optional[str] = Query(None, description="搜索关键词，匹配 goal/task_id/agent_id/artifact_type/source_page，大小写不敏感"),
     agent_id: Optional[str] = Query(None, description="按 agent_id 筛选"),
@@ -985,101 +986,15 @@ def list_tasks(
     limit: int = Query(50, ge=1, le=100, description="每页条数，默认 50，最大 100"),
     offset: int = Query(0, ge=0, description="跳过前 N 条，默认 0"),
 ):
-    tasks: List[Dict[str, Any]] = []
-    warnings: List[str] = []
-
-    minidelivery_root = OUTPUT_ROOT
-    if not minidelivery_root.exists():
-        return {"tasks": [], "warnings": [], "total": 0, "limit": limit, "offset": 0, "has_more": False}
-
-    for task_dir in sorted(minidelivery_root.iterdir()):
-        if not task_dir.is_dir():
-            continue
-        result_path = task_dir / "result.json"
-        if not result_path.exists():
-            continue
-        try:
-            with open(result_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            warnings.append(f"跳过损坏的 result.json: {task_dir.name} ({exc})")
-            continue
-
-        # 构建摘要（不读取 artifact.md 全文）
-        task_id = data.get("task_id", task_dir.name)
-        entry = {
-            "task_id": task_id,
-            "goal": data.get("goal", ""),
-            "agent_id": data.get("agent_id", ""),
-            "artifact_type": data.get("artifact_type", ""),
-            "source_page": data.get("source_page", ""),
-            "created_at": data.get("created_at", ""),
-            "artifact_path": data.get("artifact_path", ""),
-            "result_path": str(result_path),
-        }
-
-        # 如果 result.json 没有 created_at，用文件修改时间兜底
-        if not entry["created_at"]:
-            import os as _os
-            mtime = _os.path.getmtime(result_path)
-            from datetime import datetime, timezone
-            entry["created_at"] = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
-
-        # Boss Lite 复盘字段（可选，读取 raw_agent_result.json，失败不影响列表）
-        if entry["agent_id"] == "boss":
-            raw_p = task_dir / "raw_agent_result.json"
-            try:
-                if raw_p.exists():
-                    with open(raw_p, "r", encoding="utf-8") as rf:
-                        raw = json.load(rf)
-                    for _key in ("succeeded", "failed", "total", "total_duration_ms", "handoff_enabled", "execution_mode"):
-                        _val = raw.get(_key)
-                        if _val is not None:
-                            entry[_key] = _val
-            except (json.JSONDecodeError, UnicodeDecodeError, OSError):
-                pass  # 读取失败不影响列表返回
-
-        # 精确筛选
-        if agent_id and entry["agent_id"] != agent_id:
-            continue
-        if artifact_type and entry["artifact_type"] != artifact_type:
-            continue
-        if source_page and entry["source_page"] != source_page:
-            continue
-
-        # 关键词搜索（大小写不敏感，匹配 result.json 元数据字段）
-        if q:
-            q_lower = q.lower()
-            searchable = " ".join(
-                str(v or "") for v in [
-                    entry.get("goal"),
-                    entry.get("task_id"),
-                    entry.get("agent_id"),
-                    entry.get("artifact_type"),
-                    entry.get("source_page"),
-                ]
-            ).lower()
-            if q_lower not in searchable:
-                continue
-
-        tasks.append(entry)
-
-    # 按 created_at 倒序
-    tasks.sort(key=lambda t: t.get("created_at", ""), reverse=True)
-
-    # 分页
-    total = len(tasks)
-    page = tasks[offset: offset + limit]
-    has_more = (offset + limit) < total
-
-    return {
-        "tasks": page,
-        "warnings": warnings,
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-        "has_more": has_more,
-    }
+    return list_indexed_tasks(
+        OUTPUT_ROOT,
+        q=q,
+        agent_id=agent_id,
+        artifact_type=artifact_type,
+        source_page=source_page,
+        limit=limit,
+        offset=offset,
+    )
 
 
 # ── 读取接口 ───────────────────────────────────────────────

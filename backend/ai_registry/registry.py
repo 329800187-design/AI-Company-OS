@@ -39,6 +39,24 @@ def _get(url: str, **kwargs) -> httpx.Response:
 def _post(url: str, **kwargs) -> httpx.Response:
     return _http.post(url, **kwargs)
 
+
+def _cc_switch_config() -> tuple[str, str, str]:
+    """Read the local proxy configuration without embedding a credential."""
+    base_url = os.getenv("CC_SWITCH_BASE_URL", "http://127.0.0.1:15721").rstrip("/")
+    api_key = os.getenv("CC_SWITCH_API_KEY", "").strip()
+    model = os.getenv("CC_SWITCH_MODEL", "deepseek-v4-pro").strip() or "deepseek-v4-pro"
+    return base_url, api_key, model
+
+
+def _cc_switch_headers(api_key: str) -> Dict[str, str]:
+    headers = {
+        "Content-Type": "application/json",
+        "anthropic-version": "2023-06-01",
+    }
+    if api_key:
+        headers["x-api-key"] = api_key
+    return headers
+
 # ═══════════════════════════════════════════════════════════════
 # Data Model
 # ═══════════════════════════════════════════════════════════════
@@ -85,18 +103,19 @@ class CCScanner:
     """Scan CC Switch — the multi-backend proxy hub at 127.0.0.1:15721"""
 
     def scan(self) -> Optional[AIService]:
+        base_url, api_key, default_model = _cc_switch_config()
         svc = AIService(
             service_id="cc-switch",
             name="CC Switch",
             provider="cc-switch",
             kind="proxy",
-            base_url="http://127.0.0.1:15721",
+            base_url=base_url,
             capabilities=["chat", "proxy", "multi_backend"],
         )
 
         # Test Anthropic-compatible endpoint (already verified working)
         try:
-            r = _get("http://127.0.0.1:15721/v1/models", timeout=10)
+            r = _get(f"{base_url}/v1/models", timeout=10)
             if r.status_code == 200:
                 svc.status = "online"
                 svc.last_checked = time.time()
@@ -109,24 +128,20 @@ class CCScanner:
 
         # Try to discover backend providers by probing known paths
         try:
-            r = _get("http://127.0.0.1:15721/providers", timeout=3)
+            r = _get(f"{base_url}/providers", timeout=3)
             if r.status_code == 200:
                 svc.metadata["providers_raw"] = r.json()
         except Exception:
             pass
 
         # Test actual chat capability
-        if svc.status == "online":
+        if svc.status == "online" and api_key:
             try:
                 r = _post(
-                    "http://127.0.0.1:15721/v1/messages",
-                    headers={
-                        "Content-Type": "application/json",
-                        "x-api-key": "sk-ccswitch-proxy",
-                        "anthropic-version": "2023-06-01",
-                    },
+                    f"{base_url}/v1/messages",
+                    headers=_cc_switch_headers(api_key),
                     json={
-                        "model": "deepseek-v4-pro",
+                        "model": default_model,
                         "max_tokens": 5,
                         "messages": [{"role": "user", "content": "ping"}],
                     },
@@ -134,10 +149,12 @@ class CCScanner:
                 )
                 if r.status_code == 200:
                     svc.capabilities.append("verified_working")
-                    svc.metadata["default_model"] = "deepseek-v4-pro"
+                    svc.metadata["default_model"] = default_model
                     svc.metadata["api_type"] = "anthropic_compatible"
             except Exception:
                 pass
+        elif svc.status == "online":
+            svc.metadata["auth_configured"] = False
 
         return svc
 
@@ -551,16 +568,19 @@ class AIRegistry:
             return {"success": False, "error": "缺少 prompt 字段"}
 
         system = payload.get("system_prompt", "你是 AI Company OS 的智能助手。")
-        model = payload.get("model", svc.metadata.get("default_model", "deepseek-v4-pro"))
+        base_url, api_key, default_model = _cc_switch_config()
+        if not api_key:
+            return {
+                "success": False,
+                "error": "CC Switch credential is not configured; set CC_SWITCH_API_KEY before executing chat tasks.",
+                "service": "cc-switch",
+            }
+        model = payload.get("model", svc.metadata.get("default_model", default_model))
 
         try:
             r = _post(
-                "http://127.0.0.1:15721/v1/messages",
-                headers={
-                    "Content-Type": "application/json",
-                    "x-api-key": "sk-ccswitch-proxy",
-                    "anthropic-version": "2023-06-01",
-                },
+                f"{base_url}/v1/messages",
+                headers=_cc_switch_headers(api_key),
                 json={
                     "model": model,
                     "max_tokens": payload.get("max_tokens", 2048),

@@ -17,10 +17,16 @@ Boss Command Center Service — 通用业务流程执行引擎
 import uuid
 import json
 import time
-from datetime import datetime
+import os
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 from backend.database.database import get_db
 from backend.logger import get_logger
+from backend.services.action_connectors import (
+    find_sensitive_payload_paths,
+    get_action_connector,
+    list_action_connectors,
+)
 
 logger = get_logger()
 
@@ -89,6 +95,23 @@ MODULE_DEFINITIONS = {
 }
 
 MODULE_ORDER = ["strategy", "market", "marketing", "landing", "actions"]
+
+# Human-reported business outcomes.  These are deliberately observations, not
+# automatic judgements made by an agent.
+OUTCOME_STATUSES = {"improved", "unchanged", "worse", "inconclusive"}
+ACTION_STATUSES = {"pending_approval", "approved", "executed", "failed", "cancelled"}
+KPI_DIRECTIONS = {"increased", "decreased", "unchanged", "unknown"}
+CYCLE_STATUSES = {"collecting", "reviewed"}
+CYCLE_DECISIONS = {"continue", "adjust", "pause", "complete"}
+
+
+def _action_approval_ttl_seconds() -> int:
+    """Keep human approval short-lived; deployers may set a bounded override."""
+    try:
+        configured = int(os.getenv("ACO_ACTION_APPROVAL_TTL_SECONDS", "1800"))
+    except ValueError:
+        configured = 1800
+    return max(60, min(configured, 86400))
 
 # Phase 6.16: 模块级执行超时（秒）
 MODULE_TIMEOUT_SECONDS = {
@@ -409,6 +432,105 @@ def _init_boss_tables():
                 FOREIGN KEY (mission_id) REFERENCES boss_missions(mission_id)
             )
         """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS boss_mission_outcomes (
+                mission_id TEXT PRIMARY KEY,
+                outcome_status TEXT NOT NULL,
+                metrics TEXT DEFAULT '{}',
+                note TEXT DEFAULT '',
+                observed_at TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                updated_at TEXT DEFAULT (datetime('now','localtime')),
+                FOREIGN KEY (mission_id) REFERENCES boss_missions(mission_id)
+            )
+        """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS boss_mission_actions (
+                action_id TEXT PRIMARY KEY,
+                mission_id TEXT NOT NULL,
+                connector_id TEXT NOT NULL,
+                action_type TEXT NOT NULL,
+                summary TEXT DEFAULT '',
+                payload TEXT DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'pending_approval',
+                preflight TEXT DEFAULT '{}',
+                approval_note TEXT DEFAULT '',
+                approved_at TEXT,
+                approval_expires_at TEXT,
+                cancellation_reason TEXT DEFAULT '',
+                cancelled_at TEXT,
+                receipt TEXT DEFAULT '{}',
+                executed_at TEXT,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                updated_at TEXT DEFAULT (datetime('now','localtime')),
+                FOREIGN KEY (mission_id) REFERENCES boss_missions(mission_id)
+            )
+        """)
+        try:
+            db.execute("ALTER TABLE boss_mission_actions ADD COLUMN preflight TEXT DEFAULT '{}'")
+        except Exception:
+            pass
+        for column in (
+            "approval_expires_at TEXT",
+            "cancellation_reason TEXT DEFAULT ''",
+            "cancelled_at TEXT",
+        ):
+            try:
+                db.execute(f"ALTER TABLE boss_mission_actions ADD COLUMN {column}")
+            except Exception:
+                pass
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS boss_kpi_observations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mission_id TEXT NOT NULL,
+                action_id TEXT,
+                name TEXT NOT NULL,
+                value REAL NOT NULL,
+                unit TEXT DEFAULT '',
+                direction TEXT NOT NULL DEFAULT 'unknown',
+                source TEXT NOT NULL DEFAULT 'human_entry',
+                note TEXT DEFAULT '',
+                observed_at TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                FOREIGN KEY (mission_id) REFERENCES boss_missions(mission_id),
+                FOREIGN KEY (action_id) REFERENCES boss_mission_actions(action_id)
+            )
+        """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS boss_operating_cycles (
+                cycle_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                objective TEXT NOT NULL,
+                period_start TEXT DEFAULT '',
+                period_end TEXT DEFAULT '',
+                target_metrics TEXT DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'collecting',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS boss_operating_cycle_observations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cycle_id TEXT NOT NULL,
+                mission_id TEXT NOT NULL,
+                observation_id INTEGER NOT NULL,
+                added_at TEXT NOT NULL,
+                UNIQUE(cycle_id, observation_id),
+                FOREIGN KEY (cycle_id) REFERENCES boss_operating_cycles(cycle_id),
+                FOREIGN KEY (observation_id) REFERENCES boss_kpi_observations(id)
+            )
+        """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS boss_operating_cycle_reviews (
+                cycle_id TEXT PRIMARY KEY,
+                conclusion TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                next_actions TEXT DEFAULT '[]',
+                reviewed_at TEXT NOT NULL,
+                FOREIGN KEY (cycle_id) REFERENCES boss_operating_cycles(cycle_id)
+            )
+        """)
         db.commit()
 
 
@@ -422,8 +544,11 @@ except Exception:
 class BossCommandCenterService:
     """老板运营指挥台服务"""
 
-    def __init__(self):
+    def __init__(self, memory_store=None):
         self._runtime = None
+        # Keep this dependency injectable: operating-memory failures must never
+        # block the human acceptance path, and tests can use an isolated store.
+        self._memory_store = memory_store
 
     def _get_runtime(self):
         """延迟加载 LocalAgentRuntime"""
@@ -431,6 +556,143 @@ class BossCommandCenterService:
             from backend.services.local_agent_runtime import get_local_agent_runtime
             self._runtime = get_local_agent_runtime()
         return self._runtime
+
+    def _get_memory_store(self):
+        if self._memory_store is None:
+            from core.memory.memory_store import get_memory_store
+            self._memory_store = get_memory_store()
+        return self._memory_store
+
+    @staticmethod
+    def _compact_memory_value(value: Any, limit: int) -> str:
+        """Convert an execution value to a bounded, persistence-safe string."""
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            text = value
+        else:
+            try:
+                text = json.dumps(value, ensure_ascii=False, default=str)
+            except (TypeError, ValueError):
+                text = str(value)
+        text = text.strip()
+        return text if len(text) <= limit else f"{text[:limit]}…"
+
+    def _build_accepted_mission_memory(self, mission: Dict[str, Any], comment: str,
+                                       accepted_from_status: str) -> Dict[str, Any]:
+        """Make a bounded business record from a human-accepted mission.
+
+        This intentionally captures conclusions rather than full artifacts or
+        raw tool traces, so the record is useful to later planning without
+        turning memory into an uncontrolled duplicate of delivery files.
+        """
+        modules = []
+        for module in mission.get("modules", []):
+            result = self._compact_memory_value(module.get("result"), 1200)
+            structured = self._compact_memory_value(module.get("structured_output"), 1200)
+            next_actions = [self._compact_memory_value(item, 240)
+                            for item in module.get("next_actions", [])[:5]]
+            if not (result or structured or next_actions):
+                continue
+            modules.append({
+                "module_id": module.get("module_id", ""),
+                "title": module.get("title", ""),
+                "status": module.get("status", ""),
+                "summary": result,
+                "structured_summary": structured,
+                "next_actions": next_actions,
+            })
+
+        return {
+            "record_type": "accepted_boss_mission",
+            "mission_id": mission.get("mission_id", ""),
+            "goal": self._compact_memory_value(mission.get("goal"), 1200),
+            "template_id": mission.get("template_id", ""),
+            "accepted_at": datetime.now().isoformat(),
+            "accepted_from_status": accepted_from_status,
+            "review_comment": self._compact_memory_value(comment, 500),
+            "metrics": mission.get("metrics", {}),
+            "modules": modules,
+        }
+
+    def _remember_accepted_mission(self, mission: Dict[str, Any], comment: str,
+                                   accepted_from_status: str) -> None:
+        record = self._build_accepted_mission_memory(mission, comment, accepted_from_status)
+        self._get_memory_store().remember(
+            key=f"boss_mission_{mission['mission_id']}",
+            content=json.dumps(record, ensure_ascii=False),
+            source="boss",
+            tags=["boss", "mission", "accepted", "execution"],
+            importance=0.9,
+        )
+
+    def _sync_outcome_to_memory(self, mission: Dict[str, Any], outcome: Dict[str, Any]) -> None:
+        """Attach human-observed results to the durable accepted-mission record."""
+        key = f"boss_mission_{mission['mission_id']}"
+        store = self._get_memory_store()
+        existing = store.recall(key)
+        if existing:
+            try:
+                record = json.loads(existing.get("content", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                record = {}
+        else:
+            record = self._build_accepted_mission_memory(mission, "", "done")
+        record["outcome"] = {
+            "status": outcome.get("outcome_status", "inconclusive"),
+            "metrics": outcome.get("metrics", {}),
+            "note": self._compact_memory_value(outcome.get("note"), 800),
+            "observed_at": outcome.get("observed_at", ""),
+        }
+        store.remember(
+            key=key,
+            content=json.dumps(record, ensure_ascii=False),
+            source="boss",
+            tags=["boss", "mission", "accepted", "outcome", "execution"],
+            importance=0.95,
+        )
+
+    def _get_accepted_mission_context(self, goal: str, limit: int = 3) -> str:
+        """Return concise, human-accepted experience relevant to a new goal."""
+        records = self._get_memory_store().search_by_source_tags(
+            goal, source="boss", required_tags=["accepted"], limit=limit
+        )
+        if not records:
+            return ""
+
+        lines = ["## 已验收的相关经验（仅供规划参考，仍需核验当前事实）", ""]
+        for memory in records:
+            try:
+                record = json.loads(memory.get("content", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                continue
+            prior_goal = self._compact_memory_value(record.get("goal"), 300)
+            if not prior_goal:
+                continue
+            lines.append(f"- 已验收目标：{prior_goal}")
+            comment = self._compact_memory_value(record.get("review_comment"), 240)
+            if comment:
+                lines.append(f"  - 验收意见：{comment}")
+            metrics = record.get("metrics", {})
+            if metrics:
+                lines.append(
+                    "  - 执行概况："
+                    f"完成率 {metrics.get('completion_rate', 0):.0%}，"
+                    f"警告 {metrics.get('warning_count', 0)}，"
+                    f"待办 {metrics.get('next_action_count', 0)}"
+                )
+            outcome = record.get("outcome", {})
+            if outcome:
+                lines.append(f"  - 后续结果：{outcome.get('status', 'inconclusive')}")
+                if outcome.get("metrics"):
+                    lines.append(f"  - 观测指标：{self._compact_memory_value(outcome['metrics'], 360)}")
+                if outcome.get("note"):
+                    lines.append(f"  - 复盘备注：{self._compact_memory_value(outcome['note'], 360)}")
+            for module in record.get("modules", [])[:3]:
+                summary = self._compact_memory_value(module.get("summary"), 360)
+                if summary:
+                    lines.append(f"  - {module.get('title') or module.get('module_id')}: {summary}")
+        return "\n".join(lines)
 
     # ── 事件日志 ──────────────────────────────────────────
 
@@ -461,6 +723,566 @@ class BossCommandCenterService:
                 evt["payload"] = {}
             events.append(evt)
         return events
+
+    def get_outcome(self, mission_id: str) -> Optional[Dict[str, Any]]:
+        """Return the most recent human-observed business outcome for a Mission."""
+        with get_db() as db:
+            row = db.execute(
+                "SELECT * FROM boss_mission_outcomes WHERE mission_id = ?", (mission_id,)
+            ).fetchone()
+        if not row:
+            return None
+        outcome = dict(row)
+        try:
+            outcome["metrics"] = json.loads(outcome.get("metrics") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            outcome["metrics"] = {}
+        return outcome
+
+    @staticmethod
+    def _decode_json(value: Any, default: Any) -> Any:
+        try:
+            return json.loads(value) if value else default
+        except (json.JSONDecodeError, TypeError):
+            return default
+
+    def _decode_action(self, row: Any) -> Dict[str, Any]:
+        action = dict(row)
+        action["payload"] = self._decode_json(action.get("payload"), {})
+        action["preflight"] = self._decode_json(action.get("preflight"), {})
+        action["receipt"] = self._decode_json(action.get("receipt"), {})
+        return action
+
+    def get_action(self, action_id: str) -> Optional[Dict[str, Any]]:
+        with get_db() as db:
+            row = db.execute(
+                "SELECT * FROM boss_mission_actions WHERE action_id = ?", (action_id,)
+            ).fetchone()
+        return self._decode_action(row) if row else None
+
+    def get_actions(self, mission_id: str) -> List[Dict[str, Any]]:
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT * FROM boss_mission_actions WHERE mission_id = ? ORDER BY created_at ASC, action_id ASC",
+                (mission_id,),
+            ).fetchall()
+        return [self._decode_action(row) for row in rows]
+
+    def get_kpi_observations(self, mission_id: str) -> List[Dict[str, Any]]:
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT * FROM boss_kpi_observations WHERE mission_id = ? ORDER BY observed_at ASC, id ASC",
+                (mission_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _sync_operating_memory_followup(self, mission: Dict[str, Any], field: str,
+                                        item: Dict[str, Any], tags: List[str]) -> None:
+        """Append a small auditable follow-up record to accepted mission memory."""
+        key = f"boss_mission_{mission['mission_id']}"
+        store = self._get_memory_store()
+        existing = store.recall(key)
+        record: Dict[str, Any] = {}
+        if existing:
+            record = self._decode_json(existing.get("content"), {})
+        if not record:
+            record = self._build_accepted_mission_memory(mission, "", "done")
+        entries = record.setdefault(field, [])
+        entries.append(item)
+        record[field] = entries[-20:]
+        store.remember(
+            key=key,
+            content=json.dumps(record, ensure_ascii=False),
+            source="boss",
+            tags=["boss", "mission", "accepted", "execution", *tags],
+            importance=0.95,
+        )
+
+    def create_action_request(self, mission_id: str, action_type: str,
+                              payload: Dict[str, Any] = None, summary: str = "",
+                              connector_id: str = "local_simulation") -> Optional[Dict[str, Any]]:
+        """Propose a post-acceptance action; this never executes it."""
+        mission = self.get_mission(mission_id)
+        if not mission:
+            return None
+        if mission.get("status") != "done":
+            raise ValueError("Only a human-accepted Mission can propose an action")
+        action_type = str(action_type or "").strip()[:100]
+        if not action_type:
+            raise ValueError("action_type is required")
+        get_action_connector(connector_id)  # validates the registered connector
+        try:
+            clean_payload = json.loads(json.dumps(payload or {}, ensure_ascii=False, default=str))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("payload must be JSON serializable") from exc
+        sensitive_paths = find_sensitive_payload_paths(clean_payload)
+        if sensitive_paths:
+            raise ValueError(
+                "Action payload must not contain credentials; configure them outside the action payload: "
+                + ", ".join(sensitive_paths)
+            )
+        payload_json = json.dumps(clean_payload, ensure_ascii=False, separators=(",", ":"))
+        if len(payload_json) > 16000:
+            raise ValueError("payload is too large")
+        action_id = f"action_{uuid.uuid4().hex[:12]}"
+        now = datetime.now().isoformat()
+        with get_db() as db:
+            db.execute(
+                """INSERT INTO boss_mission_actions
+                   (action_id, mission_id, connector_id, action_type, summary, payload, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 'pending_approval', ?, ?)""",
+                (action_id, mission_id, connector_id, action_type,
+                 self._compact_memory_value(summary, 500), payload_json, now, now),
+            )
+        action = self.get_action(action_id)
+        self._log_event(mission_id, "action_proposed", "Action proposed; explicit approval is required before execution",
+                        payload={"action_id": action_id, "action_type": action_type, "connector_id": connector_id})
+        return action
+
+    def approve_action(self, action_id: str, approval_note: str = "") -> Optional[Dict[str, Any]]:
+        """Record a separate human approval. Approval never causes execution."""
+        action = self.get_action(action_id)
+        if not action:
+            return None
+        if action.get("status") != "pending_approval":
+            raise ValueError("Only a pending action can be approved")
+        connector = get_action_connector(action["connector_id"])
+        if connector.describe().get("requires_preflight") and not action.get("preflight", {}).get("ready"):
+            raise ValueError("A successful action preflight is required before approval")
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=_action_approval_ttl_seconds())
+        with get_db() as db:
+            db.execute(
+                """UPDATE boss_mission_actions
+                   SET status='approved', approval_note=?, approved_at=?, approval_expires_at=?, updated_at=?
+                   WHERE action_id=?""",
+                (self._compact_memory_value(approval_note, 800), now.isoformat(), expires_at.isoformat(), now.isoformat(), action_id),
+            )
+        approved = self.get_action(action_id)
+        self._log_event(action["mission_id"], "action_approved", "Action approved by human; it still requires explicit execution",
+                        payload={"action_id": action_id, "action_type": action["action_type"], "approval_expires_at": expires_at.isoformat()})
+        return approved
+
+    def preflight_action(self, action_id: str) -> Optional[Dict[str, Any]]:
+        """Run a connector's non-mutating readiness checks for one proposed action."""
+        action = self.get_action(action_id)
+        if not action:
+            return None
+        if action.get("status") != "pending_approval":
+            raise ValueError("Only a pending action can be preflighted")
+        mission = self.get_mission(action["mission_id"])
+        if not mission or mission.get("status") != "done":
+            raise ValueError("The related Mission must remain human-accepted")
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            preflight = get_action_connector(action["connector_id"]).preflight(action)
+            if not isinstance(preflight, dict):
+                raise ValueError("Connector preflight must return an object")
+            preflight["ready"] = bool(preflight.get("ready"))
+        except Exception as exc:
+            preflight = {
+                "connector_id": action["connector_id"], "ready": False,
+                "checked_at": now, "error": str(exc)[:800],
+            }
+        with get_db() as db:
+            db.execute(
+                "UPDATE boss_mission_actions SET preflight=?, updated_at=? WHERE action_id=?",
+                (json.dumps(preflight, ensure_ascii=False, default=str), now, action_id),
+            )
+        checked = self.get_action(action_id)
+        self._log_event(
+            action["mission_id"], "action_preflighted",
+            "Action preflight completed; it did not execute the action",
+            payload={"action_id": action_id, "connector_id": action["connector_id"], "ready": preflight["ready"]},
+        )
+        return checked
+
+    def cancel_action(self, action_id: str, reason: str) -> Optional[Dict[str, Any]]:
+        """Cancel an unexecuted action with a human reason; never compensates an execution."""
+        action = self.get_action(action_id)
+        if not action:
+            return None
+        if action.get("status") not in {"pending_approval", "approved"}:
+            raise ValueError("Only a pending or approved action can be cancelled; executed actions need a separate remediation action")
+        clean_reason = self._compact_memory_value(reason, 800)
+        if not clean_reason:
+            raise ValueError("A human cancellation reason is required")
+        now = datetime.now().isoformat()
+        with get_db() as db:
+            db.execute(
+                """UPDATE boss_mission_actions
+                   SET status='cancelled', cancellation_reason=?, cancelled_at=?, updated_at=?
+                   WHERE action_id=?""",
+                (clean_reason, now, now, action_id),
+            )
+        cancelled = self.get_action(action_id)
+        self._log_event(
+            action["mission_id"], "action_cancelled",
+            "Action cancelled by human before execution; no automatic retry or compensation was performed",
+            payload={"action_id": action_id, "connector_id": action["connector_id"], "reason": clean_reason},
+        )
+        return cancelled
+
+    def execute_action(self, action_id: str) -> Optional[Dict[str, Any]]:
+        """Execute exactly once after approval, and persist a connector receipt."""
+        action = self.get_action(action_id)
+        if not action:
+            return None
+        if action.get("status") != "approved":
+            raise ValueError("Only an approved action can be executed")
+        mission = self.get_mission(action["mission_id"])
+        if not mission or mission.get("status") != "done":
+            raise ValueError("The related Mission must remain human-accepted")
+        expires_at_raw = action.get("approval_expires_at")
+        try:
+            approval_expires_at = datetime.fromisoformat(expires_at_raw) if expires_at_raw else None
+        except (TypeError, ValueError):
+            approval_expires_at = None
+        if approval_expires_at is None or approval_expires_at <= datetime.now(timezone.utc):
+            reset_at = datetime.now(timezone.utc).isoformat()
+            with get_db() as db:
+                db.execute(
+                    """UPDATE boss_mission_actions
+                       SET status='pending_approval', approval_note='', approved_at=NULL,
+                           approval_expires_at=NULL, preflight='{}', updated_at=? WHERE action_id=?""",
+                    (reset_at, action_id),
+                )
+            self._log_event(
+                action["mission_id"], "action_approval_expired",
+                "Action approval expired before execution; a fresh preflight and approval are required",
+                payload={"action_id": action_id, "expired_at": expires_at_raw or "missing"},
+            )
+            raise ValueError("Action approval has expired; run a fresh preflight and approve again")
+        now = datetime.now().isoformat()
+        try:
+            receipt = get_action_connector(action["connector_id"]).execute(action)
+            receipt_json = json.dumps(receipt, ensure_ascii=False, default=str)
+            with get_db() as db:
+                db.execute(
+                    """UPDATE boss_mission_actions
+                       SET status='executed', receipt=?, executed_at=?, updated_at=? WHERE action_id=?""",
+                    (receipt_json, now, now, action_id),
+                )
+            executed = self.get_action(action_id)
+            self._log_event(action["mission_id"], "action_executed", "Action executed once with a recorded receipt",
+                            payload={"action_id": action_id, "connector_id": action["connector_id"], "simulated": bool(receipt.get("simulated"))})
+            try:
+                self._sync_operating_memory_followup(mission, "action_receipts", {
+                    "action_id": action_id,
+                    "action_type": action["action_type"],
+                    "connector_id": action["connector_id"],
+                    "status": "executed",
+                    "receipt": receipt,
+                }, ["action"])
+            except Exception as exc:
+                logger.warning(f"BossCommandCenter: Failed to sync action receipt {action_id}: {exc}")
+                self._log_event(action["mission_id"], "action_memory_failed", "Action receipt was not synced to operating memory",
+                                payload={"action_id": action_id, "error": str(exc)[:300]})
+            return executed
+        except Exception as exc:
+            failure_receipt = {"error": str(exc)[:800], "failed_at": now}
+            with get_db() as db:
+                db.execute(
+                    "UPDATE boss_mission_actions SET status='failed', receipt=?, updated_at=? WHERE action_id=?",
+                    (json.dumps(failure_receipt, ensure_ascii=False), now, action_id),
+                )
+            self._log_event(action["mission_id"], "action_failed", "Action failed; no automatic retry was attempted",
+                            payload={"action_id": action_id, "error": str(exc)[:300]})
+            return self.get_action(action_id)
+
+    def record_kpi_observation(self, mission_id: str, name: str, value: float,
+                               unit: str = "", direction: str = "unknown", note: str = "",
+                               action_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Store a human-entered KPI observation for an accepted Mission."""
+        mission = self.get_mission(mission_id)
+        if not mission:
+            return None
+        if mission.get("status") != "done":
+            raise ValueError("Only a human-accepted Mission can receive a KPI observation")
+        name = str(name or "").strip()[:160]
+        if not name:
+            raise ValueError("KPI name is required")
+        if direction not in KPI_DIRECTIONS:
+            raise ValueError(f"Unsupported KPI direction: {direction}")
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("KPI value must be numeric") from exc
+        if action_id:
+            action = self.get_action(action_id)
+            if not action or action.get("mission_id") != mission_id:
+                raise ValueError("KPI action must belong to this Mission")
+        observed_at = datetime.now().isoformat()
+        with get_db() as db:
+            cursor = db.execute(
+                """INSERT INTO boss_kpi_observations
+                   (mission_id, action_id, name, value, unit, direction, source, note, observed_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 'human_entry', ?, ?)""",
+                (mission_id, action_id, name, numeric_value, str(unit or "")[:60], direction,
+                 self._compact_memory_value(note, 1200), observed_at),
+            )
+            observation_id = cursor.lastrowid
+        observation = next(
+            item for item in self.get_kpi_observations(mission_id) if item["id"] == observation_id
+        )
+        self._log_event(mission_id, "kpi_observation_recorded", "Human KPI observation recorded",
+                        payload={"observation_id": observation_id, "name": name, "action_id": action_id})
+        try:
+            self._sync_operating_memory_followup(mission, "kpi_observations", {
+                "name": name, "value": numeric_value, "unit": str(unit or "")[:60],
+                "direction": direction, "source": "human_entry", "observed_at": observed_at,
+                "action_id": action_id,
+            }, ["kpi"])
+        except Exception as exc:
+            logger.warning(f"BossCommandCenter: Failed to sync KPI observation {observation_id}: {exc}")
+            self._log_event(mission_id, "kpi_memory_failed", "KPI observation was not synced to operating memory",
+                            payload={"observation_id": observation_id, "error": str(exc)[:300]})
+        return observation
+
+    def _remember_operating_cycle_review(self, cycle: Dict[str, Any]) -> None:
+        """Save only a human-reviewed cycle conclusion as shared operating memory."""
+        review = cycle.get("review") or {}
+        record = {
+            "record_type": "reviewed_boss_operating_cycle",
+            "cycle_id": cycle.get("cycle_id", ""),
+            "goal": self._compact_memory_value(cycle.get("objective"), 1200),
+            "cycle_name": self._compact_memory_value(cycle.get("name"), 240),
+            "period_start": cycle.get("period_start", ""),
+            "period_end": cycle.get("period_end", ""),
+            "target_metrics": cycle.get("target_metrics", {}),
+            "observations": [
+                {"name": item.get("name"), "value": item.get("value"), "unit": item.get("unit"),
+                 "direction": item.get("direction")}
+                for item in cycle.get("observations", [])[:20]
+            ],
+            "review_comment": self._compact_memory_value(review.get("conclusion"), 1200),
+            "decision": review.get("decision", ""),
+            "next_actions": [self._compact_memory_value(item, 300) for item in review.get("next_actions", [])[:20]],
+            "reviewed_at": review.get("reviewed_at", ""),
+        }
+        self._get_memory_store().remember(
+            key=f"boss_cycle_{cycle['cycle_id']}",
+            content=json.dumps(record, ensure_ascii=False),
+            source="boss",
+            tags=["boss", "operating_cycle", "reviewed", "accepted", "execution"],
+            importance=0.95,
+        )
+
+    def _decode_operating_cycle(self, row: Any) -> Dict[str, Any]:
+        cycle = dict(row)
+        cycle["target_metrics"] = self._decode_json(cycle.get("target_metrics"), {})
+        with get_db() as db:
+            observation_rows = db.execute(
+                """SELECT link.mission_id, observation.* FROM boss_operating_cycle_observations link
+                   JOIN boss_kpi_observations observation ON observation.id = link.observation_id
+                   WHERE link.cycle_id = ? ORDER BY link.added_at ASC""",
+                (cycle["cycle_id"],),
+            ).fetchall()
+            review_row = db.execute(
+                "SELECT * FROM boss_operating_cycle_reviews WHERE cycle_id = ?", (cycle["cycle_id"],)
+            ).fetchone()
+        cycle["observations"] = [dict(item) for item in observation_rows]
+        cycle["observation_count"] = len(cycle["observations"])
+        cycle["review"] = dict(review_row) if review_row else None
+        if cycle["review"]:
+            cycle["review"]["next_actions"] = self._decode_json(cycle["review"].get("next_actions"), [])
+        return cycle
+
+    def get_operating_cycle(self, cycle_id: str) -> Optional[Dict[str, Any]]:
+        with get_db() as db:
+            row = db.execute(
+                "SELECT * FROM boss_operating_cycles WHERE cycle_id = ?", (cycle_id,)
+            ).fetchone()
+        return self._decode_operating_cycle(row) if row else None
+
+    def list_operating_cycles(self, limit: int = 20) -> List[Dict[str, Any]]:
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT * FROM boss_operating_cycles ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [self._decode_operating_cycle(row) for row in rows]
+
+    def create_operating_cycle(self, name: str, objective: str, period_start: str = "",
+                               period_end: str = "", target_metrics: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Create a human-owned collection period; it does not schedule or execute work."""
+        clean_name = self._compact_memory_value(name, 160)
+        clean_objective = self._compact_memory_value(objective, 1200)
+        if not clean_name or not clean_objective:
+            raise ValueError("Cycle name and objective are required")
+        try:
+            clean_targets = json.loads(json.dumps(target_metrics or {}, ensure_ascii=False, default=str))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("target_metrics must be JSON serializable") from exc
+        target_json = json.dumps(clean_targets, ensure_ascii=False, separators=(",", ":"))
+        if len(target_json) > 12000:
+            raise ValueError("target_metrics is too large")
+        cycle_id = f"cycle_{uuid.uuid4().hex[:12]}"
+        now = datetime.now().isoformat()
+        with get_db() as db:
+            db.execute(
+                """INSERT INTO boss_operating_cycles
+                   (cycle_id, name, objective, period_start, period_end, target_metrics, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 'collecting', ?, ?)""",
+                (cycle_id, clean_name, clean_objective, str(period_start or "")[:64],
+                 str(period_end or "")[:64], target_json, now, now),
+            )
+        return self.get_operating_cycle(cycle_id)
+
+    def attach_kpi_observation_to_cycle(self, cycle_id: str, observation_id: int) -> Optional[Dict[str, Any]]:
+        """Manually attach one existing human KPI observation to an open cycle."""
+        cycle = self.get_operating_cycle(cycle_id)
+        if not cycle:
+            return None
+        if cycle.get("status") != "collecting":
+            raise ValueError("Only a collecting cycle can receive KPI observations")
+        with get_db() as db:
+            observation = db.execute(
+                "SELECT * FROM boss_kpi_observations WHERE id = ?", (observation_id,)
+            ).fetchone()
+            if not observation:
+                raise ValueError("KPI observation does not exist")
+            db.execute(
+                """INSERT OR IGNORE INTO boss_operating_cycle_observations
+                   (cycle_id, mission_id, observation_id, added_at) VALUES (?, ?, ?, ?)""",
+                (cycle_id, observation["mission_id"], observation_id, datetime.now().isoformat()),
+            )
+            db.execute(
+                "UPDATE boss_operating_cycles SET updated_at=? WHERE cycle_id=?",
+                (datetime.now().isoformat(), cycle_id),
+            )
+        return self.get_operating_cycle(cycle_id)
+
+    def review_operating_cycle(self, cycle_id: str, conclusion: str, decision: str,
+                               next_actions: List[str] = None) -> Optional[Dict[str, Any]]:
+        """Record a human review decision after at least one actual observation was linked."""
+        cycle = self.get_operating_cycle(cycle_id)
+        if not cycle:
+            return None
+        if cycle.get("status") != "collecting":
+            raise ValueError("An operating cycle can be reviewed only once")
+        clean_conclusion = self._compact_memory_value(conclusion, 2400)
+        if not clean_conclusion:
+            raise ValueError("A human review conclusion is required")
+        if decision not in CYCLE_DECISIONS:
+            raise ValueError(f"Unsupported cycle decision: {decision}")
+        if not cycle.get("observations"):
+            raise ValueError("At least one human KPI observation is required before review")
+        clean_actions = [self._compact_memory_value(item, 300) for item in (next_actions or []) if str(item).strip()][:20]
+        now = datetime.now().isoformat()
+        with get_db() as db:
+            db.execute(
+                """INSERT INTO boss_operating_cycle_reviews
+                   (cycle_id, conclusion, decision, next_actions, reviewed_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (cycle_id, clean_conclusion, decision, json.dumps(clean_actions, ensure_ascii=False), now),
+            )
+            db.execute(
+                "UPDATE boss_operating_cycles SET status='reviewed', updated_at=? WHERE cycle_id=?",
+                (now, cycle_id),
+            )
+        reviewed_cycle = self.get_operating_cycle(cycle_id)
+        try:
+            self._remember_operating_cycle_review(reviewed_cycle)
+        except Exception as exc:
+            logger.warning(f"BossCommandCenter: Failed to save operating cycle memory {cycle_id}: {exc}")
+        return reviewed_cycle
+
+    def get_operating_summary(self) -> Dict[str, Any]:
+        """Return small, factual operating-loop counters for a Boss overview."""
+        with get_db() as db:
+            mission_rows = db.execute(
+                "SELECT status, COUNT(*) AS total FROM boss_missions GROUP BY status"
+            ).fetchall()
+            outcome_rows = db.execute(
+                "SELECT outcome_status, COUNT(*) AS total FROM boss_mission_outcomes GROUP BY outcome_status"
+            ).fetchall()
+            action_rows = db.execute(
+                "SELECT status, COUNT(*) AS total FROM boss_mission_actions GROUP BY status"
+            ).fetchall()
+            kpi_count = db.execute("SELECT COUNT(*) AS total FROM boss_kpi_observations").fetchone()["total"]
+            cycle_rows = db.execute(
+                "SELECT status, COUNT(*) AS total FROM boss_operating_cycles GROUP BY status"
+            ).fetchall()
+
+        status_counts = {row["status"]: row["total"] for row in mission_rows}
+        outcome_counts = {row["outcome_status"]: row["total"] for row in outcome_rows}
+        action_counts = {row["status"]: row["total"] for row in action_rows}
+        cycle_counts = {row["status"]: row["total"] for row in cycle_rows}
+        accepted_count = status_counts.get("done", 0)
+        observed_count = sum(outcome_counts.values())
+        try:
+            operating_memory_governance = self._get_memory_store().governance_summary(source="boss")
+        except Exception as exc:
+            logger.warning(f"BossCommandCenter: Failed to summarize operating memory governance: {exc}")
+            operating_memory_governance = {"available": False}
+        return {
+            "mission_count": sum(status_counts.values()),
+            "accepted_mission_count": accepted_count,
+            "status_counts": status_counts,
+            "outcome_count": observed_count,
+            "outcome_counts": outcome_counts,
+            "outcome_feedback_rate": round(observed_count / accepted_count, 2) if accepted_count else 0.0,
+            "action_count": sum(action_counts.values()),
+            "action_counts": action_counts,
+            "executed_action_count": action_counts.get("executed", 0),
+            "kpi_observation_count": kpi_count,
+            "available_action_connectors": list_action_connectors(),
+            "operating_memory_governance": operating_memory_governance,
+            "operating_cycle_count": sum(cycle_counts.values()),
+            "operating_cycle_counts": cycle_counts,
+            "reviewed_cycle_count": cycle_counts.get("reviewed", 0),
+        }
+
+    def record_outcome(self, mission_id: str, outcome_status: str,
+                       metrics: Dict[str, Any] = None, note: str = "") -> Optional[Dict[str, Any]]:
+        """Persist a human-reported post-execution outcome for a completed Mission.
+
+        This never performs a business action or infers success automatically;
+        it simply records what the user observed after accepting the delivery.
+        """
+        mission = self.get_mission(mission_id)
+        if not mission:
+            return None
+        if mission.get("status") != "done":
+            raise ValueError("Only a human-accepted Mission can receive an outcome observation")
+        if outcome_status not in OUTCOME_STATUSES:
+            raise ValueError(f"Unsupported outcome status: {outcome_status}")
+
+        clean_metrics = {
+            str(key)[:100]: value
+            for key, value in (metrics or {}).items()
+            if str(key).strip()
+        }
+        if len(clean_metrics) > 20:
+            clean_metrics = dict(list(clean_metrics.items())[:20])
+        observed_at = datetime.now().isoformat()
+        clean_note = self._compact_memory_value(note, 1200)
+        with get_db() as db:
+            db.execute(
+                """INSERT INTO boss_mission_outcomes
+                   (mission_id, outcome_status, metrics, note, observed_at, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(mission_id) DO UPDATE SET
+                     outcome_status=excluded.outcome_status,
+                     metrics=excluded.metrics,
+                     note=excluded.note,
+                     observed_at=excluded.observed_at,
+                     updated_at=excluded.updated_at""",
+                (mission_id, outcome_status, json.dumps(clean_metrics, ensure_ascii=False),
+                 clean_note, observed_at, observed_at, observed_at),
+            )
+
+        outcome = self.get_outcome(mission_id)
+        self._log_event(mission_id, "mission_outcome_recorded", "已记录人工观测的经营结果",
+                        payload={"outcome_status": outcome_status, "metric_count": len(clean_metrics)})
+        try:
+            self._sync_outcome_to_memory(mission, outcome)
+            self._log_event(mission_id, "mission_outcome_memory_saved", "经营结果已同步到长期记忆")
+        except Exception as exc:
+            logger.warning(f"BossCommandCenter: Failed to sync mission outcome memory {mission_id}: {exc}")
+            self._log_event(mission_id, "mission_outcome_memory_failed", "经营结果未能同步到长期记忆，不影响原始观测",
+                            payload={"error": str(exc)[:300]})
+        return outcome
 
     # ── 模板 ──────────────────────────────────────────────
 
@@ -714,6 +1536,9 @@ class BossCommandCenterService:
 
             # 动态计算 metrics
             mission["metrics"] = self._compute_metrics(mission)
+            mission["outcome"] = self.get_outcome(mission_id)
+            mission["actions"] = self.get_actions(mission_id)
+            mission["kpi_observations"] = self.get_kpi_observations(mission_id)
 
             return mission
 
@@ -729,12 +1554,24 @@ class BossCommandCenterService:
             logger.warning(f"Cannot accept mission {mission_id} in status {mission['status']}")
             return mission
 
+        accepted_from_status = mission["status"]
         self._update_mission_status(mission_id, "done")
         self._log_event(mission_id, "mission_accepted",
                         f"用户接受结果" + (f": {comment}" if comment else ""),
                         payload={"comment": comment})
+        accepted_mission = self.get_mission(mission_id)
+        try:
+            self._remember_accepted_mission(accepted_mission, comment, accepted_from_status)
+            self._log_event(mission_id, "mission_memory_saved", "已将人工验收结论写入经营记忆",
+                            payload={"memory_key": f"boss_mission_{mission_id}"})
+        except Exception as exc:
+            # An optional learning feature must never change the acceptance
+            # decision that the user has already made.
+            logger.warning(f"BossCommandCenter: Failed to save accepted mission memory {mission_id}: {exc}")
+            self._log_event(mission_id, "mission_memory_failed", "经营记忆写入失败，不影响本次验收",
+                            payload={"error": str(exc)[:300]})
         logger.info(f"BossCommandCenter: Mission {mission_id} accepted by user")
-        return self.get_mission(mission_id)
+        return accepted_mission
 
     # ── 僵尸状态清理 ──────────────────────────────────────
 
@@ -1027,6 +1864,11 @@ class BossCommandCenterService:
         mission = self.get_mission(mission_id)
         goal = mission["goal"] if mission else ""
         template_id = mission.get("template_id", "") if mission else ""
+        accepted_mission_memory = ""
+        try:
+            accepted_mission_memory = self._get_accepted_mission_context(goal)
+        except Exception as exc:
+            logger.warning(f"BossCommandCenter: Failed to load operating memory for {mission_id}: {exc}")
 
         # 构建 prev_results 上下文（从已完成的模块中收集 structured_output）
         prev_results = {}
@@ -1051,6 +1893,7 @@ class BossCommandCenterService:
                 "mission": mission,
                 "prev_results": prev_results,
                 "allow_browser_automation": allow_browser_automation,
+                "accepted_mission_memory": accepted_mission_memory,
             })
             try:
                 exec_result = future.result(timeout=timeout_sec)

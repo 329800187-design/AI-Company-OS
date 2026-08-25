@@ -73,6 +73,67 @@ interface Mission {
   updated_at?: string
   modules: ModuleResult[]
   metrics?: MissionMetrics
+  outcome?: MissionOutcome | null
+  actions?: MissionAction[]
+  kpi_observations?: KpiObservation[]
+}
+
+interface MissionOutcome {
+  outcome_status: "improved" | "unchanged" | "worse" | "inconclusive"
+  metrics: Record<string, number>
+  note: string
+  observed_at: string
+}
+
+interface MissionAction {
+  action_id: string
+  action_type: string
+  summary: string
+  connector_id: string
+  status: "pending_approval" | "approved" | "executed" | "failed" | "cancelled"
+  approval_note?: string
+  approval_expires_at?: string | null
+  cancellation_reason?: string
+  preflight?: { ready?: boolean; simulated?: boolean; external_side_effects?: boolean }
+  receipt?: Record<string, unknown>
+}
+
+interface KpiObservation {
+  id: number
+  name: string
+  value: number
+  unit: string
+  direction: "increased" | "decreased" | "unchanged" | "unknown"
+  note: string
+  action_id?: string | null
+}
+
+interface OperatingCycle {
+  cycle_id: string
+  name: string
+  objective: string
+  status: "collecting" | "reviewed"
+  observation_count: number
+  review?: { conclusion: string; decision: string } | null
+}
+
+interface OperatingOverview {
+  mission_count: number
+  accepted_mission_count: number
+  outcome_count: number
+  outcome_counts: Record<string, number>
+  outcome_feedback_rate: number
+  action_count: number
+  executed_action_count: number
+  kpi_observation_count: number
+  operating_memory_governance: {
+    active_count?: number
+    retired_count?: number
+    expiring_count?: number
+    available?: boolean
+  }
+  operating_cycle_count: number
+  reviewed_cycle_count: number
 }
 
 interface MissionSummary {
@@ -732,6 +793,24 @@ export default function BossPage() {
   const [allowBrowserAutomation, setAllowBrowserAutomation] = useState(false)
   const [exportToast, setExportToast] = useState<"json" | "markdown" | null>(null)
   const [missionError, setMissionError] = useState<string | null>(null)
+  const [operatingOverview, setOperatingOverview] = useState<OperatingOverview | null>(null)
+  const [outcomeStatus, setOutcomeStatus] = useState<MissionOutcome["outcome_status"]>("inconclusive")
+  const [outcomeNote, setOutcomeNote] = useState("")
+  const [outcomeSubmitting, setOutcomeSubmitting] = useState(false)
+  const [actionType, setActionType] = useState("record_follow_up")
+  const [actionSummary, setActionSummary] = useState("")
+  const [actionCancellationReason, setActionCancellationReason] = useState("")
+  const [actionSubmitting, setActionSubmitting] = useState(false)
+  const [kpiName, setKpiName] = useState("")
+  const [kpiValue, setKpiValue] = useState("")
+  const [kpiUnit, setKpiUnit] = useState("")
+  const [kpiSubmitting, setKpiSubmitting] = useState(false)
+  const [operatingCycles, setOperatingCycles] = useState<OperatingCycle[]>([])
+  const [cycleName, setCycleName] = useState("")
+  const [cycleObjective, setCycleObjective] = useState("")
+  const [cycleConclusion, setCycleConclusion] = useState("")
+  const [cycleDecision, setCycleDecision] = useState<"continue" | "adjust" | "pause" | "complete">("continue")
+  const [cycleSubmitting, setCycleSubmitting] = useState(false)
 
   // 轮询 timer refs（Phase 6.15: 模块级进度轮询）
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -1620,6 +1699,8 @@ export default function BossPage() {
 
   useEffect(() => {
     loadRecentMissions()
+    loadOperatingOverview()
+    loadOperatingCycles()
     loadTemplates()
     loadLiteHistory()
     loadGraphTemplates()
@@ -1856,11 +1937,176 @@ export default function BossPage() {
         modules: updated.modules || [],
       })
       loadRecentMissions()
+      loadOperatingOverview()
     } catch (error) {
       console.error("Accept mission failed:", error)
       setMissionError(`接受结果失败: ${error instanceof Error ? error.message : "未知错误"}`)
     } finally {
       setIsRunning(false)
+    }
+  }
+
+  const loadOperatingOverview = async () => {
+    try {
+      setOperatingOverview(await api.getBossOperatingOverview())
+    } catch (error) {
+      console.warn("Load Boss operating overview failed:", error)
+      setOperatingOverview(null)
+    }
+  }
+
+  const loadOperatingCycles = async () => {
+    try {
+      const result = await api.listOperatingCycles(10)
+      setOperatingCycles(result.cycles as unknown as OperatingCycle[])
+    } catch (error) {
+      console.warn("Load operating cycles failed:", error)
+      setOperatingCycles([])
+    }
+  }
+
+  const createOperatingCycle = async () => {
+    if (!cycleName.trim() || !cycleObjective.trim() || cycleSubmitting) return
+    setCycleSubmitting(true)
+    setMissionError(null)
+    try {
+      await api.createOperatingCycle({ name: cycleName.trim(), objective: cycleObjective.trim() })
+      setCycleName("")
+      setCycleObjective("")
+      await loadOperatingCycles()
+      await loadOperatingOverview()
+    } catch (error) {
+      setMissionError(`创建复盘周期失败: ${error instanceof Error ? error.message : "未知错误"}`)
+    } finally {
+      setCycleSubmitting(false)
+    }
+  }
+
+  const attachObservationToCycle = async (cycleId: string, observationId: number) => {
+    try {
+      await api.attachOperatingCycleObservation(cycleId, observationId)
+      await loadOperatingCycles()
+    } catch (error) {
+      setMissionError(`加入 KPI 观测失败: ${error instanceof Error ? error.message : "未知错误"}`)
+    }
+  }
+
+  const reviewOperatingCycle = async (cycleId: string) => {
+    if (!cycleConclusion.trim()) return
+    try {
+      await api.reviewOperatingCycle(cycleId, { conclusion: cycleConclusion.trim(), decision: cycleDecision })
+      setCycleConclusion("")
+      await loadOperatingCycles()
+      await loadOperatingOverview()
+    } catch (error) {
+      setMissionError(`记录周期复盘失败: ${error instanceof Error ? error.message : "未知错误"}`)
+    }
+  }
+
+  const submitOutcome = async () => {
+    if (!currentMission || currentMission.status !== "done" || outcomeSubmitting) return
+    setOutcomeSubmitting(true)
+    setMissionError(null)
+    try {
+      const result = await api.recordMissionOutcome(currentMission.mission_id, outcomeStatus, outcomeNote.trim())
+      setCurrentMission({ ...currentMission, outcome: result.outcome })
+      setOutcomeNote("")
+      await loadOperatingOverview()
+    } catch (error) {
+      console.error("Record mission outcome failed:", error)
+      setMissionError(`记录后续结果失败: ${error instanceof Error ? error.message : "未知错误"}`)
+    } finally {
+      setOutcomeSubmitting(false)
+    }
+  }
+
+  const refreshClosedLoopMission = async () => {
+    if (!currentMission) return
+    const updated = await api.getMission(currentMission.mission_id)
+    setCurrentMission({ ...updated, modules: updated.modules || [] })
+    await loadOperatingOverview()
+  }
+
+  const proposeAction = async () => {
+    if (!currentMission || !actionType.trim() || actionSubmitting) return
+    setActionSubmitting(true)
+    setMissionError(null)
+    try {
+      await api.createMissionAction(currentMission.mission_id, {
+        action_type: actionType.trim(), summary: actionSummary.trim(),
+      })
+      setActionSummary("")
+      await refreshClosedLoopMission()
+    } catch (error) {
+      setMissionError(`提出动作失败: ${error instanceof Error ? error.message : "未知错误"}`)
+    } finally {
+      setActionSubmitting(false)
+    }
+  }
+
+  const approveAction = async (actionId: string) => {
+    try {
+      await api.approveMissionAction(actionId)
+      await refreshClosedLoopMission()
+    } catch (error) {
+      setMissionError(`批准动作失败: ${error instanceof Error ? error.message : "未知错误"}`)
+    }
+  }
+
+  const preflightAction = async (actionId: string) => {
+    try {
+      await api.preflightMissionAction(actionId)
+      await refreshClosedLoopMission()
+    } catch (error) {
+      setMissionError(`动作预检失败: ${error instanceof Error ? error.message : "未知错误"}`)
+    }
+  }
+
+  const cancelAction = async (actionId: string) => {
+    if (!actionCancellationReason.trim()) {
+      setMissionError("取消动作前请填写取消原因")
+      return
+    }
+    try {
+      await api.cancelMissionAction(actionId, actionCancellationReason.trim())
+      setActionCancellationReason("")
+      await refreshClosedLoopMission()
+    } catch (error) {
+      setMissionError(`取消动作失败: ${error instanceof Error ? error.message : "未知错误"}`)
+    }
+  }
+
+  const executeAction = async (actionId: string) => {
+    try {
+      await api.executeMissionAction(actionId)
+      await refreshClosedLoopMission()
+    } catch (error) {
+      setMissionError(`执行动作失败: ${error instanceof Error ? error.message : "未知错误"}`)
+      await refreshClosedLoopMission()
+    }
+  }
+
+  const submitKpiObservation = async () => {
+    if (!currentMission || !kpiName.trim() || !kpiValue.trim() || kpiSubmitting) return
+    const value = Number(kpiValue)
+    if (!Number.isFinite(value)) {
+      setMissionError("KPI 数值必须是有效数字")
+      return
+    }
+    setKpiSubmitting(true)
+    setMissionError(null)
+    try {
+      await api.recordMissionKpi(currentMission.mission_id, {
+        name: kpiName.trim(), value, unit: kpiUnit.trim(), direction: "unknown",
+      })
+      setKpiName("")
+      setKpiValue("")
+      setKpiUnit("")
+      await refreshClosedLoopMission()
+    } catch (error) {
+      setMissionError(`记录 KPI 失败: ${error instanceof Error ? error.message : "未知错误"}`)
+    } finally {
+      setKpiSubmitting(false)
     }
   }
 
@@ -2134,6 +2380,46 @@ export default function BossPage() {
             >
               关闭
             </Button>
+          </div>
+        </motion.div>
+      )}
+
+      {mode === "command-center" && operatingOverview && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="grid gap-px overflow-hidden rounded-2xl border border-[#E5E5E5] bg-[#E5E5E5] sm:grid-cols-3 lg:grid-cols-6"
+          data-testid="boss-operating-overview"
+        >
+          <div className="bg-white px-5 py-4">
+            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#8A8A8A]">已验收交付</p>
+            <p className="mt-1 text-2xl font-semibold tracking-tight text-[#0B0B0B]">{operatingOverview.accepted_mission_count}</p>
+            <p className="mt-1 text-xs text-[#8A8A8A]">可进入后续经营复盘</p>
+          </div>
+          <div className="bg-white px-5 py-4">
+            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#8A8A8A]">已反馈结果</p>
+            <p className="mt-1 text-2xl font-semibold tracking-tight text-[#0B0B0B]">{operatingOverview.outcome_count}</p>
+            <p className="mt-1 text-xs text-[#8A8A8A]">来自人工观测，不由系统猜测</p>
+          </div>
+          <div className="bg-[#0B0B0B] px-5 py-4 text-white">
+            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-white/55">反馈覆盖率</p>
+            <p className="mt-1 text-2xl font-semibold tracking-tight">{Math.round(operatingOverview.outcome_feedback_rate * 100)}%</p>
+            <p className="mt-1 text-xs text-white/55">经营闭环的主信号</p>
+          </div>
+          <div className="bg-white px-5 py-4">
+            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#8A8A8A]">已执行动作</p>
+            <p className="mt-1 text-2xl font-semibold tracking-tight text-[#0B0B0B]">{operatingOverview.executed_action_count}</p>
+            <p className="mt-1 text-xs text-[#8A8A8A]">均有人工批准与执行回执</p>
+          </div>
+          <div className="bg-white px-5 py-4">
+            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#8A8A8A]">治理中的记忆</p>
+            <p className="mt-1 text-2xl font-semibold tracking-tight text-[#0B0B0B]">{operatingOverview.operating_memory_governance?.active_count ?? "—"}</p>
+            <p className="mt-1 text-xs text-[#8A8A8A]">已退役 {operatingOverview.operating_memory_governance?.retired_count ?? 0}</p>
+          </div>
+          <div className="bg-white px-5 py-4">
+            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#8A8A8A]">已复盘周期</p>
+            <p className="mt-1 text-2xl font-semibold tracking-tight text-[#0B0B0B]">{operatingOverview.reviewed_cycle_count}</p>
+            <p className="mt-1 text-xs text-[#8A8A8A]">共 {operatingOverview.operating_cycle_count} 个人工周期</p>
           </div>
         </motion.div>
       )}
@@ -3781,6 +4067,221 @@ export default function BossPage() {
                 </Button>
               )}
             </div>
+          </div>
+        </motion.div>
+      )}
+
+      {mode === "command-center" && currentMission?.status === "done" && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-2xl border border-[#E5E5E5] bg-white p-4"
+          data-testid="boss-outcome-feedback"
+        >
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-sm font-medium text-[#0B0B0B]">后续结果反馈</h3>
+              <p className="mt-1 text-xs text-[#8A8A8A]">记录真实观察，帮助下一次规划参考，但不会自动替你判断成败。</p>
+            </div>
+            {currentMission.outcome && (
+              <Badge variant="outline">已记录：{currentMission.outcome.outcome_status}</Badge>
+            )}
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-[160px_1fr_auto] sm:items-end">
+            <label className="grid gap-1.5 text-xs text-[#5A5A5A]">
+              观察结果
+              <select
+                value={outcomeStatus}
+                onChange={(event) => setOutcomeStatus(event.target.value as MissionOutcome["outcome_status"])}
+                className="h-9 rounded-md border border-[#E5E5E5] bg-white px-2 text-sm text-[#0B0B0B]"
+              >
+                <option value="improved">改善</option>
+                <option value="unchanged">无明显变化</option>
+                <option value="worse">变差</option>
+                <option value="inconclusive">暂不确定</option>
+              </select>
+            </label>
+            <label className="grid gap-1.5 text-xs text-[#5A5A5A]">
+              复盘备注（可选）
+              <Textarea
+                value={outcomeNote}
+                onChange={(event) => setOutcomeNote(event.target.value)}
+                placeholder="例如：两周后完成率由 48% 提升到 72%"
+                className="min-h-9 h-9 resize-none py-2 text-sm"
+              />
+            </label>
+            <Button size="sm" onClick={submitOutcome} disabled={outcomeSubmitting} className="gap-1">
+              {outcomeSubmitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <BarChart3 className="h-3.5 w-3.5" />}
+              保存观察
+            </Button>
+          </div>
+        </motion.div>
+      )}
+
+      {mode === "command-center" && currentMission?.status === "done" && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-2xl border border-[#E5E5E5] bg-white p-4"
+          data-testid="boss-action-kpi-loop"
+        >
+          <div>
+            <h3 className="text-sm font-medium text-[#0B0B0B]">已批准动作与 KPI 回流</h3>
+            <p className="mt-1 text-xs text-[#8A8A8A]">动作先经过无副作用预检，再单独批准并显式执行；当前只会在本地模拟。动作载荷不得包含密码、令牌或 API 密钥。</p>
+          </div>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <div className="rounded-xl border border-[#EFEFEF] p-3">
+              <p className="text-xs font-medium text-[#5A5A5A]">提出动作</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-[150px_1fr_auto]">
+                <input
+                  value={actionType}
+                  onChange={(event) => setActionType(event.target.value)}
+                  aria-label="动作类型"
+                  className="h-9 rounded-md border border-[#E5E5E5] px-2 text-sm"
+                />
+                <input
+                  value={actionSummary}
+                  onChange={(event) => setActionSummary(event.target.value)}
+                  placeholder="范围说明（可选）"
+                  aria-label="动作说明"
+                  className="h-9 rounded-md border border-[#E5E5E5] px-2 text-sm"
+                />
+                <Button size="sm" onClick={proposeAction} disabled={actionSubmitting} className="gap-1">
+                  {actionSubmitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                  提出
+                </Button>
+              </div>
+              <input
+                value={actionCancellationReason}
+                onChange={(event) => setActionCancellationReason(event.target.value)}
+                placeholder="取消原因（取消某项未执行动作时必填）"
+                aria-label="取消动作原因"
+                className="mt-2 h-8 w-full rounded-md border border-[#E5E5E5] px-2 text-xs"
+              />
+              <div className="mt-3 space-y-2">
+                {(currentMission.actions || []).length === 0 ? (
+                  <p className="text-xs text-[#8A8A8A]">尚无动作记录。</p>
+                ) : (currentMission.actions || []).map((action) => (
+                  <div key={action.action_id} className="flex flex-wrap items-center gap-2 rounded-lg bg-[#F9F9F8] px-2.5 py-2 text-xs">
+                    <span className="font-medium text-[#0B0B0B]">{action.action_type}</span>
+                    <Badge variant="outline">{action.status}</Badge>
+                    {action.summary && <span className="max-w-[240px] truncate text-[#777]">{action.summary}</span>}
+                    <span className="ml-auto text-[#8A8A8A]">{action.connector_id}</span>
+                    {action.status === "pending_approval" && (
+                      <>
+                        {!action.preflight?.ready ? (
+                          <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => preflightAction(action.action_id)}>预检（不执行）</Button>
+                        ) : (
+                          <>
+                            <span className="text-green-700">预检通过，无外部副作用</span>
+                            <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => approveAction(action.action_id)}>批准</Button>
+                          </>
+                        )}
+                        <Button size="sm" variant="ghost" className="h-7 px-2 text-red-700" onClick={() => cancelAction(action.action_id)}>取消</Button>
+                      </>
+                    )}
+                    {action.status === "approved" && (
+                      <>
+                        <Button size="sm" className="h-7 px-2" onClick={() => executeAction(action.action_id)}>执行模拟</Button>
+                        <Button size="sm" variant="ghost" className="h-7 px-2 text-red-700" onClick={() => cancelAction(action.action_id)}>取消</Button>
+                        {action.approval_expires_at && <span className="text-[#8A8A8A]">批准有效至 {new Date(action.approval_expires_at).toLocaleString()}</span>}
+                      </>
+                    )}
+                    {action.status === "executed" && action.receipt?.simulated === true && (
+                      <span className="text-green-700">已模拟，无外部副作用</span>
+                    )}
+                    {action.status === "cancelled" && (
+                      <span className="text-red-700">已取消：{action.cancellation_reason || "未说明原因"}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-xl border border-[#EFEFEF] p-3">
+              <p className="text-xs font-medium text-[#5A5A5A]">人工 KPI 观测</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_100px_80px_auto]">
+                <input value={kpiName} onChange={(event) => setKpiName(event.target.value)} placeholder="指标名称" aria-label="KPI 名称" className="h-9 rounded-md border border-[#E5E5E5] px-2 text-sm" />
+                <input value={kpiValue} onChange={(event) => setKpiValue(event.target.value)} placeholder="数值" aria-label="KPI 数值" inputMode="decimal" className="h-9 rounded-md border border-[#E5E5E5] px-2 text-sm" />
+                <input value={kpiUnit} onChange={(event) => setKpiUnit(event.target.value)} placeholder="单位" aria-label="KPI 单位" className="h-9 rounded-md border border-[#E5E5E5] px-2 text-sm" />
+                <Button size="sm" onClick={submitKpiObservation} disabled={kpiSubmitting} className="gap-1">
+                  {kpiSubmitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <BarChart3 className="h-3.5 w-3.5" />}
+                  记录
+                </Button>
+              </div>
+              <div className="mt-3 space-y-2">
+                {(currentMission.kpi_observations || []).length === 0 ? (
+                  <p className="text-xs text-[#8A8A8A]">尚无 KPI 观测。</p>
+                ) : (currentMission.kpi_observations || []).map((observation) => (
+                  <div key={observation.id} className="flex items-center gap-2 rounded-lg bg-[#F9F9F8] px-2.5 py-2 text-xs">
+                    <span className="font-medium text-[#0B0B0B]">{observation.name}</span>
+                    <span>{observation.value}{observation.unit ? ` ${observation.unit}` : ""}</span>
+                    <Badge variant="outline">人工观测</Badge>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </motion.div>
+      )}
+
+      {mode === "command-center" && currentMission?.status === "done" && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-2xl border border-[#E5E5E5] bg-white p-4"
+          data-testid="boss-operating-cycles"
+        >
+          <div>
+            <h3 className="text-sm font-medium text-[#0B0B0B]">人工经营复盘周期</h3>
+            <p className="mt-1 text-xs text-[#8A8A8A]">先人工创建周期，再选择要纳入的 KPI，最后由人填写结论和决策。</p>
+          </div>
+          <div className="mt-3 grid gap-2 md:grid-cols-[180px_1fr_auto]">
+            <input value={cycleName} onChange={(event) => setCycleName(event.target.value)} placeholder="周期名称" aria-label="周期名称" className="h-9 rounded-md border border-[#E5E5E5] px-2 text-sm" />
+            <input value={cycleObjective} onChange={(event) => setCycleObjective(event.target.value)} placeholder="复盘目标" aria-label="复盘目标" className="h-9 rounded-md border border-[#E5E5E5] px-2 text-sm" />
+            <Button size="sm" onClick={createOperatingCycle} disabled={cycleSubmitting} className="gap-1">
+              {cycleSubmitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ClipboardList className="h-3.5 w-3.5" />}
+              创建周期
+            </Button>
+          </div>
+          <div className="mt-3 space-y-2">
+            {operatingCycles.length === 0 ? (
+              <p className="text-xs text-[#8A8A8A]">尚无复盘周期。</p>
+            ) : operatingCycles.map((cycle) => (
+              <div key={cycle.cycle_id} className="rounded-xl border border-[#EFEFEF] p-3">
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="font-medium text-[#0B0B0B]">{cycle.name}</span>
+                  <Badge variant="outline">{cycle.status}</Badge>
+                  <span className="text-[#8A8A8A]">已纳入 {cycle.observation_count} 个 KPI</span>
+                </div>
+                <p className="mt-1 text-xs text-[#777]">{cycle.objective}</p>
+                {cycle.status === "collecting" && (
+                  <>
+                    {(currentMission.kpi_observations || []).length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {currentMission.kpi_observations!.map((observation) => (
+                          <Button key={observation.id} size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => attachObservationToCycle(cycle.cycle_id, observation.id)}>
+                            加入 {observation.name}
+                          </Button>
+                        ))}
+                      </div>
+                    )}
+                    {cycle.observation_count > 0 && (
+                      <div className="mt-2 grid gap-2 md:grid-cols-[1fr_130px_auto]">
+                        <input value={cycleConclusion} onChange={(event) => setCycleConclusion(event.target.value)} placeholder="人工复盘结论" aria-label="周期复盘结论" className="h-9 rounded-md border border-[#E5E5E5] px-2 text-sm" />
+                        <select value={cycleDecision} onChange={(event) => setCycleDecision(event.target.value as typeof cycleDecision)} className="h-9 rounded-md border border-[#E5E5E5] bg-white px-2 text-sm">
+                          <option value="continue">继续</option>
+                          <option value="adjust">调整</option>
+                          <option value="pause">暂停</option>
+                          <option value="complete">完成</option>
+                        </select>
+                        <Button size="sm" onClick={() => reviewOperatingCycle(cycle.cycle_id)}>确认复盘</Button>
+                      </div>
+                    )}
+                  </>
+                )}
+                {cycle.review && <p className="mt-2 text-xs text-green-700">人工结论：{cycle.review.conclusion}（{cycle.review.decision}）</p>}
+              </div>
+            ))}
           </div>
         </motion.div>
       )}

@@ -184,7 +184,9 @@ def check_frontend(host, port):
 
 def check_minidelivery_list(base_url):
     """检查 GET /minidelivery/tasks"""
-    status, data, err = _get(f"{base_url}/minidelivery/tasks?limit=1", timeout=5)
+    # An upgraded installation may need to create its incremental metadata
+    # index from historical result.json files on the first request only.
+    status, data, err = _get(f"{base_url}/minidelivery/tasks?limit=1", timeout=120)
 
     if err:
         return {
@@ -357,6 +359,11 @@ def print_report(results, summary):
 # ── 入口 ─────────────────────────────────────────────────────────────
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(description="Phase 5.5 — 本地部署体检")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000, help="后端端口 (默认 8000)")

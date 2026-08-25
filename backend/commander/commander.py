@@ -298,11 +298,16 @@ class CommanderAgent:
                 details=step_details,
             )
 
-    def _ceo_decompose(self, goal: str, session_id: str) -> Optional[List[Dict]]:
+    def _ceo_decompose(self, goal: str, session_id: str,
+                       planning_context: str = "") -> Optional[List[Dict]]:
         """通过 CEO Agent 拆解（带完整的 URL/details 等结构化字段，带超时围栏）"""
         ceo_timeout = int(os.getenv("CEO_TIMEOUT", "20"))
         with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(self.ceo.run, {"task_id": f"{session_id}_decompose", "goal": goal})
+            future = pool.submit(self.ceo.run, {
+                "task_id": f"{session_id}_decompose",
+                "goal": goal,
+                "planning_context": planning_context,
+            })
             try:
                 ceo_result = future.result(timeout=ceo_timeout)
             except TimeoutError:
@@ -342,10 +347,15 @@ class CommanderAgent:
             })
         return steps
 
-    def _ai_decompose(self, goal: str, session_id: str) -> Optional[List[Dict]]:
+    def _ai_decompose(self, goal: str, session_id: str,
+                      planning_context: str = "") -> Optional[List[Dict]]:
         """降级：直接调用 AI API 拆解"""
         try:
-            raw = _call_ai_v2(f"【拆解模式】将以下目标拆解为JSON步骤数组:\n{goal}", system=UNIFIED_SYSTEM_PROMPT)
+            context_block = f"\n\n以下是可参考的既有经验；它不是当前事实，必须按当前目标重新核验：\n{planning_context}" if planning_context else ""
+            raw = _call_ai_v2(
+                f"【拆解模式】将以下目标拆解为JSON步骤数组:\n{goal}{context_block}",
+                system=UNIFIED_SYSTEM_PROMPT,
+            )
             raw_steps = json.loads(raw)
             if not isinstance(raw_steps, list):
                 raise ValueError("AI 未返回数组")
@@ -385,9 +395,16 @@ class CommanderAgent:
         memory = get_memory_store()
         memory_context = memory.get_context(goal)
 
-        # 增强的拆解（带技能+记忆）
+        # 增强的拆解（带技能+记忆）。上下文只作为规划参考，原始 goal
+        # 始终保持独立，避免历史记录改变用户的任务本身。
+        context_parts = []
+        if skill_context:
+            context_parts.append(f"## 可用技能\n{str(skill_context)[:2000]}")
+        if memory_context:
+            context_parts.append(str(memory_context)[:3000])
+        planning_context = "\n\n".join(context_parts)
         self.pending_clarifying_questions = []
-        steps = self._ceo_decompose(goal, session_id)
+        steps = self._ceo_decompose(goal, session_id, planning_context=planning_context)
 
         # v1.5.1: CEO 反问 → 直接返回给用户
         if self.pending_clarifying_questions:
@@ -409,7 +426,7 @@ class CommanderAgent:
             }]
 
         if not steps:
-            steps = self._ai_decompose(goal, session_id)
+            steps = self._ai_decompose(goal, session_id, planning_context=planning_context)
         if not steps:
             # 兜底：直接调 AI 回答
             try:

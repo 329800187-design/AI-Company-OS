@@ -58,11 +58,14 @@ class ResultVerifier:
 
         # 检查是否有内容（只有真正空结果才 failed）
         if not content or len(content.strip()) < 50:
+            failure_issues = ["内容为空或过短"]
+            if not sources:
+                failure_issues.append("缺少信息来源")
             return {
                 "passed": False,
                 "qa_status": "failed",
                 "score": 0,
-                "issues": ["内容为空或过短"],
+                "issues": failure_issues,
                 "has_sources": False,
                 "source_count": 0,
             }

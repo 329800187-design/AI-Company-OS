@@ -98,7 +98,9 @@ def run_smoke_check(host: str, port: int) -> bool:
     # ── 1. 基础端点检查 ──
     print(_c(Colors.BOLD, "  ── 基础端点 ──"))
     for desc, method, path, expected_status in ENDPOINTS:
-        status, body, err = _request(base_url, path, method)
+        # /system/info performs a cold registry/skills inventory on first use.
+        request_timeout = 15 if path == "/system/info" else 5
+        status, body, err = _request(base_url, path, method, timeout=request_timeout)
         data = _parse_json(body)
 
         if err:
@@ -206,6 +208,11 @@ def run_smoke_check(host: str, port: int) -> bool:
 # ── 入口 ──────────────────────────────────────────────────────────────────
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(description="AI Company OS 后端运行验收")
     parser.add_argument("--host", default="127.0.0.1", help="后端主机 (默认 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8000, help="后端端口 (默认 8000)")
