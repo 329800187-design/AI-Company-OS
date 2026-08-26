@@ -1024,8 +1024,8 @@ export default function BossPage() {
       try {
         const result = await api.compareMiniDeliveryTasks(liteCompareSelected as [string, string])
         if (!cancelled) setLiteCompareResult(result)
-      } catch (err: any) {
-        if (!cancelled) setLiteCompareError(err?.message || "对比失败")
+      } catch (err: unknown) {
+        if (!cancelled) setLiteCompareError(err instanceof Error ? err.message : "对比失败")
       } finally {
         if (!cancelled) setLiteCompareLoading(false)
       }
@@ -1741,36 +1741,6 @@ export default function BossPage() {
     setShowCreateForm(true)
   }
 
-  useEffect(() => {
-    loadRecentMissions()
-    loadOperatingOverview()
-    loadOperatingCycles()
-    loadTemplates()
-    loadLiteHistory()
-    loadGraphTemplates()
-
-    // Check for mission to load from sessionStorage
-    const loadMissionId = sessionStorage.getItem("load_mission_id")
-    if (loadMissionId) {
-      sessionStorage.removeItem("load_mission_id")
-      loadMission(loadMissionId)
-    }
-
-    // Check for template to load from sessionStorage
-    const tplData = sessionStorage.getItem("boss_selected_template")
-    if (tplData) {
-      sessionStorage.removeItem("boss_selected_template")
-      try {
-        const tpl = JSON.parse(tplData)
-        setSelectedTemplate(tpl)
-        setGoal(tpl.default_goal)
-        setEnabledModules(tpl.default_modules)
-      } catch {
-        // ignore
-      }
-    }
-  }, [])
-
   const loadTemplates = async () => {
     try {
       const data = await api.getTemplates()
@@ -1817,7 +1787,7 @@ export default function BossPage() {
 
   // 跳转到 Delivery 页面查看交付物
   const viewDelivery = (taskId: string) => {
-    window.location.href = `/app?page=delivery&taskId=${encodeURIComponent(taskId)}`
+    window.location.assign(`/app?page=delivery&taskId=${encodeURIComponent(taskId)}`)
   }
 
   // Boss Lite progress phase auto-cycle
@@ -2195,6 +2165,41 @@ export default function BossPage() {
       setMissionError(`加载历史任务失败: ${error instanceof Error ? error.message : "未知错误"}`)
     }
   }
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        await Promise.all([
+          loadRecentMissions(),
+          loadOperatingOverview(),
+          loadOperatingCycles(),
+          loadTemplates(),
+          loadLiteHistory(),
+          loadGraphTemplates(),
+        ])
+
+        const loadMissionId = sessionStorage.getItem("load_mission_id")
+        if (loadMissionId) {
+          sessionStorage.removeItem("load_mission_id")
+          await loadMission(loadMissionId)
+        }
+
+        const tplData = sessionStorage.getItem("boss_selected_template")
+        if (tplData) {
+          sessionStorage.removeItem("boss_selected_template")
+          try {
+            const tpl = JSON.parse(tplData)
+            setSelectedTemplate(tpl)
+            setGoal(tpl.default_goal)
+            setEnabledModules(tpl.default_modules)
+          } catch {
+            // Ignore malformed persisted template data.
+          }
+        }
+      })()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [])
 
   // 导出
   const handleExport = async (format: "json" | "markdown") => {
