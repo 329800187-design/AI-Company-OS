@@ -34,31 +34,31 @@ const scenes = [
   {
     id: "marketing",
     title: "写文案",
-    desc: "朋友圈、小红书、淘宝、抖音...一键生成",
+    desc: "通知、说明和方案表达，一键生成",
     icon: FileText,
   },
   {
     id: "image",
     title: "做图片",
-    desc: "产品图、海报、Logo，说一句话就搞定",
+    desc: "围绕交付目标生成图片与素材方向",
     icon: Image,
   },
   {
     id: "data",
     title: "看数据",
-    desc: "上传 Excel，自动分析销售趋势",
+    desc: "上传表格，自动分析趋势与关键指标",
     icon: BarChart3,
   },
   {
     id: "research",
     title: "做调研",
-    desc: "竞品分析、市场调研、行业报告",
+    desc: "整理背景、对比选择、形成决策依据",
     icon: Search,
   },
   {
     id: "website",
     title: "建网站",
-    desc: "产品页面、落地页，一句话生成",
+    desc: "从业务目标到页面结构与内容方案",
     icon: Globe,
   },
   {
@@ -70,10 +70,10 @@ const scenes = [
 ]
 
 const quickPrompts = [
-  "帮我写一条朋友圈文案，推广手工耳环",
-  "帮我写 5 条小红书笔记标题",
-  "分析一下我上个月的销售数据",
-  "帮我做一个产品介绍页面",
+  "为新服务设计客户入职流程",
+  "梳理本季度经营复盘的关键结论",
+  "分析近期运营指标并提出行动建议",
+  "制定下一次客户沟通计划",
 ]
 
 const containerVariants = {
@@ -135,7 +135,7 @@ export default function HomePage() {
         </h1>
 
         <p className="text-lg text-[#8A8A8A] max-w-md mx-auto">
-          告诉我你想做什么，我来帮你完成
+          告诉我想推进的业务目标，我来协同完成
         </p>
       </motion.div>
 
@@ -151,7 +151,7 @@ export default function HomePage() {
             <Textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="随便说什么都行，比如：帮我写一条朋友圈文案..."
+              placeholder="描述目标、已有背景和期望交付物..."
               className="min-h-[70px] text-base bg-[#F4F3EF] border-[#E5E5E5] rounded-xl"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
@@ -351,7 +351,7 @@ export default function HomePage() {
             <div>
               <h4 className="font-medium text-sm text-[#0B0B0B] mb-1">小提示</h4>
               <p className="text-sm text-[#8A8A8A] leading-relaxed">
-                不知道怎么描述？直接说大白话就行，比如"帮我写个朋友圈文案卖耳环"。
+                不确定如何开始？直接说明目标、限制条件和希望得到的结果。
               </p>
             </div>
           </div>
