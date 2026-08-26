@@ -201,7 +201,7 @@ export default function ChatPage() {
         })
       }, 100)
     }
-  }, [pendingMessage])
+  }, [pendingMessage, messages.length, isLoading, setPendingMessage, addMessage, setLoading])
 
   const handleSend = async (retryMessage?: string) => {
     const messageToSend = retryMessage || input.trim()

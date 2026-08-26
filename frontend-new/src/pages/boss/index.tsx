@@ -2166,6 +2166,8 @@ export default function BossPage() {
     }
   }
 
+  const initialLoadersRef = useRef({ loadLiteHistory, loadMission })
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void (async () => {
@@ -2174,14 +2176,14 @@ export default function BossPage() {
           loadOperatingOverview(),
           loadOperatingCycles(),
           loadTemplates(),
-          loadLiteHistory(),
+          initialLoadersRef.current.loadLiteHistory(),
           loadGraphTemplates(),
         ])
 
         const loadMissionId = sessionStorage.getItem("load_mission_id")
         if (loadMissionId) {
           sessionStorage.removeItem("load_mission_id")
-          await loadMission(loadMissionId)
+          await initialLoadersRef.current.loadMission(loadMissionId)
         }
 
         const tplData = sessionStorage.getItem("boss_selected_template")
