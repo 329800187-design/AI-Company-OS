@@ -171,6 +171,15 @@ class ApiClient {
     return this.request<{ status: string; version: string }>("/health")
   }
 
+  // Local browser verification
+  async runBrowserVerification() {
+    return this.request<BrowserVerificationRun>("/browser-verification/runs", { method: "POST" })
+  }
+
+  async getBrowserVerificationRuns() {
+    return this.request<{ runs: BrowserVerificationRun[] }>("/browser-verification/runs")
+  }
+
   // Pipeline API - 统一任务执行
   async executePipeline(message: string, context?: Record<string, unknown>) {
     return this.request<{
@@ -1715,6 +1724,17 @@ class ApiClient {
       },
     })
   }
+}
+
+interface BrowserVerificationRun {
+  run_id: string
+  status: "passed" | "failed"
+  started_at: string
+  finished_at: string
+  targets: string[]
+  checks: Array<{ id: string; target: string; passed: boolean; message: string }>
+  passed_count: number
+  total_count: number
 }
 
 export const api = new ApiClient()

@@ -17,6 +17,9 @@ import {
   AlertTriangle,
   Clock,
   Wrench,
+  MonitorCheck,
+  Play,
+  XCircle,
 } from "lucide-react"
 import { api } from "@/api/client"
 import { Button } from "@/components/ui/button"
@@ -60,6 +63,17 @@ interface DiscoveredSummary {
   enabled_count: number
 }
 
+interface BrowserVerificationRun {
+  run_id: string
+  status: "passed" | "failed"
+  started_at: string
+  finished_at: string
+  targets: string[]
+  checks: Array<{ id: string; target: string; passed: boolean; message: string }>
+  passed_count: number
+  total_count: number
+}
+
 const kindIcons: Record<string, ElementType> = {
   cli: Code,
   http: Globe,
@@ -88,6 +102,8 @@ export default function AgentConsolePage() {
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null)
   const [togglingAgent, setTogglingAgent] = useState<string | null>(null)
   const [expandedSchemas, setExpandedSchemas] = useState<Set<string>>(new Set())
+  const [verification, setVerification] = useState<BrowserVerificationRun | null>(null)
+  const [isVerifying, setIsVerifying] = useState(false)
 
   const loadAgents = useCallback(async () => {
     setIsLoading(true)
@@ -137,6 +153,18 @@ export default function AgentConsolePage() {
     })
   }
 
+  const runLocalVerification = async () => {
+    setIsVerifying(true)
+    try {
+      setVerification(await api.runBrowserVerification())
+    } catch (error) {
+      console.error("Failed to run local browser verification:", error)
+      setVerification(null)
+    } finally {
+      setIsVerifying(false)
+    }
+  }
+
   const byKind = (summary?.agents || []).reduce<Record<string, DiscoveredAgent[]>>((acc, agent) => {
     ;(acc[agent.kind] ||= []).push(agent)
     return acc
@@ -175,6 +203,47 @@ export default function AgentConsolePage() {
           重新扫描
         </Button>
       </div>
+
+      <section className="border border-[#E5E5E5] bg-white p-5" aria-labelledby="browser-verification-title">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center bg-primary/10">
+              <MonitorCheck className="h-5 w-5 text-[#0B0B0B]" />
+            </div>
+            <div>
+              <h2 id="browser-verification-title" className="font-semibold">本地浏览器验收</h2>
+              <p className="text-xs text-[#8A8A8A]">127.0.0.1:8000/health · 127.0.0.1:5173/app</p>
+            </div>
+          </div>
+          <Button onClick={runLocalVerification} disabled={isVerifying} data-testid="browser-verification-run-button">
+            {isVerifying ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+            运行验收
+          </Button>
+        </div>
+
+        {verification && (
+          <div className="mt-4 border-t border-[#E5E5E5] pt-4" data-testid="browser-verification-result">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <Badge variant={verification.status === "passed" ? "success" : "secondary"}>
+                {verification.status === "passed" ? "验收通过" : "验收失败"}
+              </Badge>
+              <span className="text-xs text-[#8A8A8A]">{verification.passed_count} / {verification.total_count}</span>
+              <span className="text-xs text-[#8A8A8A]">{new Date(verification.finished_at).toLocaleString()}</span>
+            </div>
+            <div className="grid gap-2 md:grid-cols-2">
+              {verification.checks.map(check => (
+                <div key={check.id} className="flex items-start gap-2 border border-[#E5E5E5] p-3 text-xs">
+                  {check.passed ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red" />}
+                  <div className="min-w-0">
+                    <p className="font-medium">{check.id === "backend_health" ? "后端健康状态" : "前端页面加载"}</p>
+                    <p className="mt-1 break-all text-[#8A8A8A]">{check.message}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
