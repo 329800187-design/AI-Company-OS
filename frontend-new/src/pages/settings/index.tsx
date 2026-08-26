@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, type ElementType } from "react"
 import { motion } from "framer-motion"
 import {
   Settings,
@@ -49,6 +49,71 @@ interface SystemHealth {
   version: string
 }
 
+interface ProviderHealthItem {
+  name: string
+  is_mock: boolean
+  has_api_key: boolean
+  env_provider: string
+  available: boolean
+  providers: Array<{ name: string; has_key: boolean; env_var: string }>
+}
+
+interface HealthItemProps {
+  label: string
+  available: boolean
+  icon: ElementType
+  fixHint?: string
+}
+
+function HealthItem({ label, available, icon: Icon, fixHint }: HealthItemProps) {
+  return (
+    <div className="flex items-center justify-between py-3 border-b border-border last:border-0">
+      <div className="flex items-center gap-3">
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${available ? "bg-green/10" : "bg-destructive/10"}`}>
+          <Icon className={`w-4 h-4 ${available ? "text-green" : "text-destructive"}`} />
+        </div>
+        <div>
+          <span className="text-sm font-medium">{label}</span>
+          {fixHint && !available && <p className="text-xs text-muted-foreground mt-0.5">{fixHint}</p>}
+        </div>
+      </div>
+      {available ? (
+        <Badge variant="success" className="text-xs"><CheckCircle2 className="w-3 h-3 mr-1" />可用</Badge>
+      ) : (
+        <Badge variant="destructive" className="text-xs"><XCircle className="w-3 h-3 mr-1" />不可用</Badge>
+      )}
+    </div>
+  )
+}
+
+interface ProviderItemProps {
+  label: string
+  isMock: boolean
+  icon: ElementType
+  fixHint?: string
+}
+
+function ProviderItem({ label, isMock, icon: Icon, fixHint }: ProviderItemProps) {
+  return (
+    <div className="flex items-center justify-between py-3 border-b border-border last:border-0">
+      <div className="flex items-center gap-3">
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${!isMock ? "bg-green/10" : "bg-warning/10"}`}>
+          <Icon className={`w-4 h-4 ${!isMock ? "text-green" : "text-warning"}`} />
+        </div>
+        <div>
+          <span className="text-sm font-medium">{label}</span>
+          {fixHint && <p className="text-xs text-muted-foreground mt-0.5">{fixHint}</p>}
+        </div>
+      </div>
+      {isMock ? (
+        <Badge variant="warning" className="text-xs"><AlertCircle className="w-3 h-3 mr-1" />Mock 模式</Badge>
+      ) : (
+        <Badge variant="success" className="text-xs"><CheckCircle2 className="w-3 h-3 mr-1" />真实 API</Badge>
+      )}
+    </div>
+  )
+}
+
 export default function SettingsPage() {
   const [provider, setProvider] = useState("deepseek")
   const [apiKey, setApiKey] = useState("")
@@ -72,28 +137,11 @@ export default function SettingsPage() {
   const [currentBrain, setCurrentBrain] = useState("")
   const [switchingBrain, setSwitchingBrain] = useState("")
 
-  // Provider health state
-  interface ProviderHealthItem {
-    name: string
-    is_mock: boolean
-    has_api_key: boolean
-    env_provider: string
-    available: boolean
-    providers: Array<{ name: string; has_key: boolean; env_var: string }>
-  }
   const [providerHealth, setProviderHealth] = useState<{
     search: ProviderHealthItem
     image: ProviderHealthItem
   } | null>(null)
   const [loadingProviders, setLoadingProviders] = useState(true)
-
-  useEffect(() => {
-    loadConfig()
-    loadHealth()
-    loadProviders()
-    loadBrains()
-    loadProvidersHealth()
-  }, [])
 
   const loadConfig = async () => {
     try {
@@ -209,6 +257,18 @@ export default function SettingsPage() {
     }
   }
 
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      void loadConfig()
+      void loadHealth()
+      void loadProviders()
+      void loadBrains()
+      void loadProvidersHealth()
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [])
+
   const handleSave = async () => {
     setIsLoading(true)
     try {
@@ -241,94 +301,12 @@ export default function SettingsPage() {
     try {
       const result = await api.testConnection(provider)
       setTestResult(result)
-    } catch (error) {
+    } catch {
       setTestResult({ ok: false, message: "连接测试失败" })
     } finally {
       setIsTesting(false)
     }
   }
-
-  const HealthItem = ({
-    label,
-    available,
-    icon: Icon,
-    fixHint,
-  }: {
-    label: string
-    available: boolean
-    icon: React.ElementType
-    fixHint?: string
-  }) => (
-    <div className="flex items-center justify-between py-3 border-b border-border last:border-0">
-      <div className="flex items-center gap-3">
-        <div
-          className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-            available ? "bg-green/10" : "bg-destructive/10"
-          }`}
-        >
-          <Icon className={`w-4 h-4 ${available ? "text-green" : "text-destructive"}`} />
-        </div>
-        <div>
-          <span className="text-sm font-medium">{label}</span>
-          {fixHint && !available && (
-            <p className="text-xs text-muted-foreground mt-0.5">{fixHint}</p>
-          )}
-        </div>
-      </div>
-      {available ? (
-        <Badge variant="success" className="text-xs">
-          <CheckCircle2 className="w-3 h-3 mr-1" />
-          可用
-        </Badge>
-      ) : (
-        <Badge variant="destructive" className="text-xs">
-          <XCircle className="w-3 h-3 mr-1" />
-          不可用
-        </Badge>
-      )}
-    </div>
-  )
-
-  const ProviderItem = ({
-    label,
-    isMock,
-    icon: Icon,
-    fixHint,
-  }: {
-    label: string
-    isMock: boolean
-    icon: React.ElementType
-    fixHint?: string
-  }) => (
-    <div className="flex items-center justify-between py-3 border-b border-border last:border-0">
-      <div className="flex items-center gap-3">
-        <div
-          className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-            !isMock ? "bg-green/10" : "bg-warning/10"
-          }`}
-        >
-          <Icon className={`w-4 h-4 ${!isMock ? "text-green" : "text-warning"}`} />
-        </div>
-        <div>
-          <span className="text-sm font-medium">{label}</span>
-          {fixHint && (
-            <p className="text-xs text-muted-foreground mt-0.5">{fixHint}</p>
-          )}
-        </div>
-      </div>
-      {isMock ? (
-        <Badge variant="warning" className="text-xs">
-          <AlertCircle className="w-3 h-3 mr-1" />
-          Mock 模式
-        </Badge>
-      ) : (
-        <Badge variant="success" className="text-xs">
-          <CheckCircle2 className="w-3 h-3 mr-1" />
-          真实 API
-        </Badge>
-      )}
-    </div>
-  )
 
   return (
     <div className="space-y-6">
