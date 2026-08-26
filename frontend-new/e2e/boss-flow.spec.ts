@@ -49,6 +49,25 @@ function makeMission(status: string, mod: Record<string, string> = {}) {
       warning_count: 0, next_action_count: 0,
       completion_rate: ["ready_for_review", "done"].includes(status) ? 1.0 : 0,
     },
+    actions: status === "done" ? [{
+      action_id: "action_e2e_01",
+      action_type: "record_follow_up",
+      summary: "记录已验收后的跟进行动",
+      connector_id: "local_simulation",
+      status: "executed",
+      preflight: {
+        ready: true,
+        simulated: true,
+        external_side_effects: false,
+        checked_at: "2026-07-13T12:02:00Z",
+        checks: [{ name: "connector_configured", passed: true, detail: "本地模拟连接器可用。" }],
+      },
+      receipt: {
+        simulated: true,
+        payload_sha256: "e2e-safe-payload-digest",
+        executed_at: "2026-07-13T12:03:00Z",
+      },
+    }] : [],
   }
 }
 
@@ -187,6 +206,9 @@ test.describe("Boss Command Center 主链路", () => {
     await page.locator('[data-testid="boss-accept-btn"]').click()
     await expect(page.getByText("用户已确认完成")).toBeVisible({ timeout: 5000 })
     await expect(page.locator('[data-testid="boss-accept-btn"]')).not.toBeVisible()
+    await page.getByText("审计记录", { exact: true }).click()
+    await expect(page.getByText("本地模拟已完成", { exact: true })).toBeVisible()
+    await expect(page.getByText("载荷摘要：e2e-safe-payload-digest", { exact: true })).toBeVisible()
   })
 
   test("partial 状态显示已有结果 + 重跑按钮", async ({ page }) => {

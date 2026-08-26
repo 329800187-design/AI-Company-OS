@@ -42,6 +42,7 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { ActionAuditDetails } from "@/components/features/action-audit-details"
 import { DagEditor, type GraphTemplateDraft } from "./DagEditor"
 import { DagCanvas } from "./DagCanvas"
 import { validateDag } from "./dag-validation"
@@ -4265,6 +4266,7 @@ export default function BossPage() {
                     {action.status === "cancelled" && (
                       <span className="text-red-700">已取消：{action.cancellation_reason || "未说明原因"}</span>
                     )}
+                    <ActionAuditDetails action={action} />
                   </div>
                 ))}
               </div>
