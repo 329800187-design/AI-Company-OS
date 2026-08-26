@@ -261,6 +261,13 @@ Completed locally on 2026-08-21:
 - Expiry is logged as an audit event and surfaced in the Boss command center alongside the approval expiry time.
 - Regression coverage for the Phase 8 suite is **19 passed**; the frontend production build passed.
 
+### Phase 8.8 - Governed Webhook Connector: COMPLETE (disabled by default)
+
+- A generic `webhook` action connector is available only when an HTTPS endpoint and its exact hostname allowlist are both configured in the deployment environment.
+- Webhook preflight is strictly local and non-mutating. It validates the HTTPS endpoint and allowlist without contacting the destination.
+- Execution remains subject to the existing acceptance, preflight, human approval, expiry, and exactly-once receipt flow. The receipt stores delivery metadata and a payload digest, never the response body or connector credential.
+- Credentials may only come from `ACO_WEBHOOK_ACTION_TOKEN`; action payload credential-shaped fields remain rejected.
+
 ## Recent Verification Reported
 
 Latest (Phase 7C, main `94f3a3f`):

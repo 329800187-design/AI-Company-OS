@@ -299,3 +299,64 @@ def test_action_connectors_api_exposes_safe_preflight_contract():
     assert connector["connector_id"] == "local_simulation"
     assert connector["requires_preflight"] is True
     assert connector["external_side_effects"] is False
+
+
+def test_webhook_connector_is_disabled_without_explicit_https_allowlist(monkeypatch):
+    from backend.services.action_connectors import list_action_connectors
+
+    monkeypatch.setenv("ACO_WEBHOOK_ACTION_URL", "https://hooks.example.test/actions")
+    monkeypatch.delenv("ACO_WEBHOOK_ACTION_ALLOWED_HOSTS", raising=False)
+
+    assert [item["connector_id"] for item in list_action_connectors()] == ["local_simulation"]
+
+
+def test_webhook_action_requires_preflight_approval_and_records_safe_receipt(tmp_path: Path, monkeypatch):
+    from backend.services.boss_command_center import BossCommandCenterService
+    import httpx
+
+    monkeypatch.setenv("ACO_WEBHOOK_ACTION_URL", "https://hooks.example.test/actions")
+    monkeypatch.setenv("ACO_WEBHOOK_ACTION_ALLOWED_HOSTS", "hooks.example.test")
+    monkeypatch.setenv("ACO_WEBHOOK_ACTION_TOKEN", "test-token")
+
+    calls = []
+    real_client = httpx.Client
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(202, headers={"x-request-id": "delivery-123"})
+
+    class Client:
+        def __init__(self, **_kwargs):
+            self._client = real_client(transport=httpx.MockTransport(handler))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self._client.close()
+
+        def post(self, *args, **kwargs):
+            return self._client.post(*args, **kwargs)
+
+    monkeypatch.setattr("backend.services.action_connectors.httpx.Client", Client)
+    service = BossCommandCenterService(memory_store=MemoryStore(tmp_path / "memory.db"))
+    mission = _review_ready_mission(service, "向外部系统发送已验收交付")
+    service.accept_mission(mission["mission_id"])
+
+    action = service.create_action_request(
+        mission["mission_id"], "publish_delivery", {"delivery_id": "demo-1"}, connector_id="webhook"
+    )
+    preflighted = service.preflight_action(action["action_id"])
+    assert preflighted["preflight"]["ready"] is True
+    assert calls == []
+
+    service.approve_action(action["action_id"], "已确认外部投递范围")
+    executed = service.execute_action(action["action_id"])
+
+    assert executed["status"] == "executed"
+    assert executed["receipt"]["status_code"] == 202
+    assert executed["receipt"]["request_id"] == "delivery-123"
+    assert "test-token" not in str(executed["receipt"])
+    assert len(calls) == 1
+    assert calls[0].headers["Authorization"] == "Bearer test-token"
+    assert calls[0].headers["Idempotency-Key"] == action["action_id"]
