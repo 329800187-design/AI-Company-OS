@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ElementType } from "react"
 import { motion } from "framer-motion"
 import {
   Activity,
@@ -26,7 +26,7 @@ interface Capability {
   installed: boolean
   running: boolean
   version: string
-  models: any[]
+  models: unknown[]
   error: string
   fix_hint: string
 }
@@ -35,7 +35,7 @@ interface Capabilities {
   [key: string]: Capability
 }
 
-const toolIcons: Record<string, any> = {
+const toolIcons: Record<string, ElementType> = {
   hermes: MessageSquare,
   claude_code: Code,
   comfyui: Image,
@@ -79,7 +79,11 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
-    loadData()
+    const timeoutId = window.setTimeout(() => {
+      void loadData()
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
   }, [])
 
   const availableCount = Object.values(capabilities).filter(c => c.available).length
@@ -184,9 +188,13 @@ export default function DashboardPage() {
                     )}
                     {cap.models && cap.models.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-1">
-                        {cap.models.slice(0, 3).map((m: any, i: number) => (
+                        {cap.models.slice(0, 3).map((m, i) => (
                           <Badge key={i} variant="outline" className="text-[10px]">
-                            {typeof m === 'string' ? m : m.provider || m.name || ''}
+                            {typeof m === "string"
+                              ? m
+                              : typeof m === "object" && m !== null
+                                ? String((m as { provider?: unknown; name?: unknown }).provider ?? (m as { name?: unknown }).name ?? "")
+                                : ""}
                           </Badge>
                         ))}
                         {cap.models.length > 3 && (

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { motion } from "framer-motion"
 import {
   Package, Loader2, AlertCircle, Copy, Check, Eye, EyeOff, Search, X, Download, ExternalLink,
@@ -45,6 +45,7 @@ export default function DeliveryPage() {
   const [total, setTotal] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  const taskCountRef = useRef(0)
 
   // 筛选
   const [filterAgent, setFilterAgent] = useState("")
@@ -97,18 +98,20 @@ export default function DeliveryPage() {
         agent_id: filterAgent || undefined,
         artifact_type: filterType || undefined,
         limit: PAGE_SIZE,
-        offset: reset ? 0 : tasks.length,
+        offset: reset ? 0 : taskCountRef.current,
       })
       if (reset) {
         setTasks(resp.tasks)
+        taskCountRef.current = resp.tasks.length
       } else {
         setTasks(prev => [...prev, ...resp.tasks])
+        taskCountRef.current += resp.tasks.length
       }
       setWarnings(resp.warnings)
       setTotal(resp.total)
       setHasMore(resp.has_more)
-    } catch (e: any) {
-      setError(e.message || "加载失败")
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "加载失败")
     } finally {
       setLoading(false)
       setLoadingMore(false)
@@ -122,7 +125,13 @@ export default function DeliveryPage() {
   }, [searchQuery])
 
   // debouncedQuery 变化时重置分页
-  useEffect(() => { fetchTasks(true) }, [debouncedQuery])
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      void fetchTasks(true)
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchTasks])
 
   const handleLoadMore = () => {
     fetchTasks(false)
@@ -138,8 +147,8 @@ export default function DeliveryPage() {
     try {
       const content = await api.getMiniDeliveryArtifact(taskId)
       setPreviewContent(content)
-    } catch (e: any) {
-      setPreviewContent(`加载失败: ${e.message}`)
+    } catch (error) {
+      setPreviewContent(`加载失败: ${error instanceof Error ? error.message : "未知错误"}`)
     } finally {
       setPreviewLoading(false)
     }

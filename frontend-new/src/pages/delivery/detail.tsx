@@ -51,8 +51,8 @@ export default function DeliveryDetail({ taskId, onBack }: DeliveryDetailProps) 
     try {
       const data = await api.getMiniDeliveryTaskDetail(taskId)
       setDetail(data)
-    } catch (e: any) {
-      setError(e.message || "加载任务详情失败")
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "加载任务详情失败")
     } finally {
       setLoading(false)
     }
@@ -70,8 +70,23 @@ export default function DeliveryDetail({ taskId, onBack }: DeliveryDetailProps) 
     }
   }, [taskId])
 
-  useEffect(() => { fetchData() }, [fetchData])
-  useEffect(() => { if (!loading && !error) fetchArtifact() }, [loading, error, fetchArtifact])
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      void fetchData()
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchData])
+
+  useEffect(() => {
+    if (loading || error) return
+
+    const timeoutId = window.setTimeout(() => {
+      void fetchArtifact()
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [loading, error, fetchArtifact])
 
   const handleCopyTaskId = async () => {
     await navigator.clipboard.writeText(taskId)

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ElementType } from "react"
 import { motion } from "framer-motion"
 import {
   Briefcase,
@@ -13,6 +13,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import type { BadgeProps } from "@/components/ui/badge"
 import { api } from "@/api/client"
 import { useAppStore } from "@/stores/app"
 
@@ -24,7 +25,7 @@ interface MissionSummary {
   updated_at?: string
 }
 
-const statusConfig: Record<string, { label: string; variant: string; icon: React.ElementType }> = {
+const statusConfig: Record<string, { label: string; variant: NonNullable<BadgeProps["variant"]>; icon: ElementType }> = {
   pending: { label: "待执行", variant: "secondary", icon: Clock },
   running: { label: "执行中", variant: "info", icon: Loader2 },
   done: { label: "已完成", variant: "success", icon: CheckCircle2 },
@@ -38,10 +39,6 @@ export default function MissionsPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const setCurrentPage = useAppStore((s) => s.setCurrentPage)
 
-  useEffect(() => {
-    loadMissions()
-  }, [])
-
   const loadMissions = async () => {
     setIsLoading(true)
     try {
@@ -53,6 +50,14 @@ export default function MissionsPage() {
       setIsLoading(false)
     }
   }
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      void loadMissions()
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [])
 
   const filteredMissions = missions.filter((m) => {
     if (filter !== "all" && m.status !== filter) return false
@@ -247,7 +252,7 @@ export default function MissionsPage() {
                     </div>
 
                     <div className="flex items-center gap-3 shrink-0">
-                      <Badge variant={statusInfo.variant as any} className="text-xs">
+                      <Badge variant={statusInfo.variant} className="text-xs">
                         {statusInfo.label}
                       </Badge>
                       <ArrowRight className="w-4 h-4 text-[#D4D4D4] group-hover:text-[#8A8A8A] group-hover:translate-x-0.5 transition-all" />

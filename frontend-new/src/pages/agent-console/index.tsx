@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, type ElementType } from "react"
 import { motion } from "framer-motion"
 import {
   Cpu,
@@ -50,7 +50,7 @@ interface DiscoveredAgent {
   cost_level: string
   latency_level: string
   reliability_score: number
-  health: Record<string, any>
+  health: Record<string, unknown> & { error?: string }
   last_error?: string
 }
 
@@ -60,7 +60,7 @@ interface DiscoveredSummary {
   enabled_count: number
 }
 
-const kindIcons: Record<string, any> = {
+const kindIcons: Record<string, ElementType> = {
   cli: Code,
   http: Globe,
   api: Brain,
@@ -102,7 +102,11 @@ export default function AgentConsolePage() {
   }, [])
 
   useEffect(() => {
-    loadAgents()
+    const timeoutId = window.setTimeout(() => {
+      void loadAgents()
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
   }, [loadAgents])
 
   const handleToggle = async (agentId: string, currentEnabled: boolean) => {
