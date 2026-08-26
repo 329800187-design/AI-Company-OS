@@ -2968,8 +2968,8 @@ test.describe("DAG Canvas 布局后端持久化", () => {
     const patchResults: Array<{ url: string; status: number; body?: string }> = []
     page.on("response", async (resp) => {
       if (resp.url().includes("/layout") && resp.request().method() === "PATCH") {
-        let body = ""
-        try { body = await resp.text() } catch {}
+        let body: string
+        try { body = await resp.text() } catch { body = "<unreadable response>" }
         patchResults.push({ url: resp.url(), status: resp.status(), body })
       }
     })
@@ -3030,8 +3030,8 @@ test.describe("DAG Canvas 布局后端持久化", () => {
     const patchResults: Array<{ url: string; status: number; body?: string }> = []
     page.on("response", async (resp) => {
       if (resp.url().includes("/layout") && resp.request().method() === "PATCH") {
-        let body = ""
-        try { body = await resp.text() } catch {}
+        let body: string
+        try { body = await resp.text() } catch { body = "<unreadable response>" }
         patchResults.push({ url: resp.url(), status: resp.status(), body })
       }
     })

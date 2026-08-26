@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, type ElementType } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   Home,
@@ -33,6 +33,21 @@ interface SidebarProps {
   onNavigate: (page: string) => void
 }
 
+interface NavigationItem {
+  id: string
+  label: string
+  icon: ElementType
+  legacy?: boolean
+}
+
+interface NavItemProps {
+  item: NavigationItem
+  isActive: boolean
+  collapsed: boolean
+  onNavigate: (page: string) => void
+  onCloseMobile: () => void
+}
+
 const navItems = [
   { id: "home", label: "首页", icon: Home },
   { id: "boss", label: "老板指挥台", icon: Briefcase, legacy: true },
@@ -62,24 +77,14 @@ const advancedItems = [
   { id: "dashboard", label: "系统状态", icon: Activity },
 ]
 
-export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
-  const [collapsed, setCollapsed] = useState(false)
-  const [mobileOpen, setMobileOpen] = useState(false)
-  const [showAdvanced, setShowAdvanced] = useState(false)
-
-  const NavItem = ({
-    item,
-    isActive,
-  }: {
-    item: { id: string; label: string; icon: React.ElementType; legacy?: boolean }
-    isActive: boolean
-  }) => (
+function NavItem({ item, isActive, collapsed, onNavigate, onCloseMobile }: NavItemProps) {
+  return (
     <motion.button
       whileHover={{ x: 3 }}
       whileTap={{ scale: 0.98 }}
       onClick={() => {
         onNavigate(item.id)
-        setMobileOpen(false)
+        onCloseMobile()
       }}
       className={cn(
         "flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm transition-colors duration-200 relative",
@@ -88,7 +93,6 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
           : "text-[#8A8A8A] hover:text-white hover:bg-white/5"
       )}
     >
-      {/* Active indicator */}
       {isActive && (
         <motion.div
           layoutId="activeTab"
@@ -109,6 +113,12 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
       )}
     </motion.button>
   )
+}
+
+export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
+  const [collapsed, setCollapsed] = useState(false)
+  const [mobileOpen, setMobileOpen] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
 
   const sidebarContent = (
     <div className="flex flex-col h-full">
@@ -140,6 +150,9 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
               key={item.id}
               item={item}
               isActive={currentPage === item.id}
+              collapsed={collapsed}
+              onNavigate={onNavigate}
+              onCloseMobile={() => setMobileOpen(false)}
             />
           ))}
         </div>
@@ -156,6 +169,9 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
               key={item.id}
               item={item}
               isActive={currentPage === item.id}
+              collapsed={collapsed}
+              onNavigate={onNavigate}
+              onCloseMobile={() => setMobileOpen(false)}
             />
           ))}
         </div>
@@ -191,6 +207,9 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
                     key={item.id}
                     item={item}
                     isActive={currentPage === item.id}
+                    collapsed={collapsed}
+                    onNavigate={onNavigate}
+                    onCloseMobile={() => setMobileOpen(false)}
                   />
                 ))}
               </motion.div>
@@ -204,6 +223,9 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
         <NavItem
           item={{ id: "settings", label: "设置", icon: Settings }}
           isActive={currentPage === "settings"}
+          collapsed={collapsed}
+          onNavigate={onNavigate}
+          onCloseMobile={() => setMobileOpen(false)}
         />
       </div>
     </div>

@@ -1,6 +1,6 @@
 import { CheckCircle2, XCircle, Clock, AlertTriangle, SkipForward, Loader2, Check, X, RotateCw } from "lucide-react"
 import { useState } from "react"
-import type { CollaborationPlanView, CollaborationStepView } from "@/types"
+import type { CollaborationStepView } from "@/types"
 
 interface CollaborationStepsProps {
   planId?: string
@@ -346,31 +346,4 @@ export function CollaborationSteps({
       </div>
     </div>
   )
-}
-
-/**
- * Helper: extract collaboration data from various response shapes.
- * Returns undefined if no collaboration data found.
- */
-export function extractCollaboration(data: Record<string, unknown>): {
-  planId?: string
-  status?: string
-  steps?: CollaborationStepView[]
-} | undefined {
-  // 1. Try data.collaboration_plan (from POST /governance/run or GET detail)
-  const cp = data.collaboration_plan as CollaborationPlanView | undefined
-  if (cp?.steps && cp.steps.length > 0) {
-    return { planId: cp.plan_id, status: cp.status, steps: cp.steps }
-  }
-
-  // 2. Try data.steps (from POST /governance/run summary)
-  if (Array.isArray(data.steps) && data.steps.length > 0) {
-    return {
-      planId: data.plan_id as string | undefined,
-      status: data.status as string | undefined,
-      steps: data.steps as CollaborationStepView[],
-    }
-  }
-
-  return undefined
 }

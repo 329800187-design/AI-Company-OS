@@ -29,10 +29,14 @@ function App() {
 
   // If URL targets a specific page, set it and skip landing
   useEffect(() => {
-    if (initialPage) {
+    if (!initialPage) return
+
+    const timeoutId = window.setTimeout(() => {
       setCurrentPage(initialPage)
       setShowLanding(false)
-    }
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
   }, [initialPage, setCurrentPage])
 
   // Enter key shortcut on landing

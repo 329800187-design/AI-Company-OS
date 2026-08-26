@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { api } from "@/api/client"
-import { CollaborationSteps, extractCollaboration } from "@/components/features/collaboration-steps"
+import { CollaborationSteps } from "@/components/features/collaboration-steps"
+import { extractCollaboration } from "@/components/features/collaboration-utils"
 
 interface GovernanceResult {
   run_id: string

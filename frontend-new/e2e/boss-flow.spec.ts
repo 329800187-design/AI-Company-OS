@@ -96,7 +96,6 @@ test.describe("Boss Command Center 主链路", () => {
 
   test("确认执行 → running → ready_for_review + 结果 + 接受按钮", async ({ page }) => {
     let pollCount = 0
-    let runResolved = false
 
     page.route(/\/boss\/missions/, async (route) => {
       const url = route.request().url()
@@ -110,7 +109,6 @@ test.describe("Boss Command Center 主链路", () => {
       // POST run — delay 3s so polling has time to fire
       if (method === "POST" && /\/run$/.test(url)) {
         await new Promise(r => setTimeout(r, 3000))
-        runResolved = true
         await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(makeMission("running", { strategy: "running" })) })
         return
       }
