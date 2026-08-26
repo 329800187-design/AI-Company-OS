@@ -136,14 +136,13 @@ export function DagEditor({ draft, onChange, errors, disabled, showCanvas, canva
   const [editingEdgeIdx, setEditingEdgeIdx] = useState<number | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null)
 
-  // Stable layout storage key — computed once from initial draft, does not change on edits
-  const layoutStorageKeyRef = useRef<string | undefined>(undefined)
-  if (layoutStorageKeyRef.current === undefined) {
+  // Stable layout storage key — computed once from initial draft, does not change on edits.
+  const [layoutStorageKey] = useState(() => {
     const nodeIds = draft.nodes.map((n) => n.id.trim()).filter(Boolean)
-    layoutStorageKeyRef.current = nodeIds.length > 0
+    return nodeIds.length > 0
       ? `dag_layout_${draft.name}_${hashNodeIds(nodeIds)}`
       : undefined
-  }
+  })
 
   // ── Undo/Redo history ──
   const history = useDagHistory<GraphTemplateDraft>(draft, onChange)
@@ -435,7 +434,7 @@ export function DagEditor({ draft, onChange, errors, disabled, showCanvas, canva
             editable
             onChange={handleCanvasChange}
             onBatchDelete={handleBatchDelete}
-            layoutStorageKey={layoutStorageKeyRef.current}
+            layoutStorageKey={layoutStorageKey}
             canvasLayout={canvasLayout}
             onLayoutChange={onLayoutChange}
           />

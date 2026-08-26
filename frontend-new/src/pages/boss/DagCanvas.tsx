@@ -491,17 +491,25 @@ function DagCanvasInner({ nodes, edges, className, editable, onChange, layoutSto
 
   // Initialize/reset positions when graph structure changes
   useEffect(() => {
-    if (nodes.length === 0) { setPositions(new Map()); return }
-    const dagrePos = computeDagrePositions(nodes, edges)
-    setPositions((prev) => {
-      const next = new Map<string, { x: number; y: number }>()
-      for (const n of nodes) {
-        const existing = prev.get(n.id)
-        const dagre = dagrePos.get(n.id)
-        next.set(n.id, existing ?? dagre ?? { x: 0, y: 0 })
+    const timeoutId = window.setTimeout(() => {
+      if (nodes.length === 0) {
+        setPositions(new Map())
+        return
       }
-      return next
-    })
+
+      const dagrePos = computeDagrePositions(nodes, edges)
+      setPositions((prev) => {
+        const next = new Map<string, { x: number; y: number }>()
+        for (const n of nodes) {
+          const existing = prev.get(n.id)
+          const dagre = dagrePos.get(n.id)
+          next.set(n.id, existing ?? dagre ?? { x: 0, y: 0 })
+        }
+        return next
+      })
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
   }, [nodes, edges])
 
   // Restore saved positions: backend layout (priority) → localStorage (fallback)
@@ -533,38 +541,43 @@ function DagCanvasInner({ nodes, edges, className, editable, onChange, layoutSto
 
   // On mount / key change: apply backend layout first, then localStorage fallback
   useEffect(() => {
-    const nodeIds = new Set(nodes.map((n) => n.id))
-    // Priority 1: backend layout
-    if (canvasLayout && Object.keys(canvasLayout).length > 0) {
-      setPositions((prev) => {
-        const next = new Map(prev)
-        for (const [id, pos] of Object.entries(canvasLayout)) {
-          if (nodeIds.has(id) && typeof pos?.x === "number" && typeof pos?.y === "number") {
-            next.set(id, pos)
+    const timeoutId = window.setTimeout(() => {
+      const nodeIds = new Set(nodes.map((n) => n.id))
+      // Priority 1: backend layout
+      if (canvasLayout && Object.keys(canvasLayout).length > 0) {
+        setPositions((prev) => {
+          const next = new Map(prev)
+          for (const [id, pos] of Object.entries(canvasLayout)) {
+            if (nodeIds.has(id) && typeof pos?.x === "number" && typeof pos?.y === "number") {
+              next.set(id, pos)
+            }
           }
-        }
-        return next
-      })
-      return
-    }
-    // Priority 2: localStorage fallback
-    if (!layoutStorageKey) return
-    try {
-      const raw = localStorage.getItem(layoutStorageKey)
-      if (!raw) return
-      const saved = JSON.parse(raw) as Record<string, { x: number; y: number }>
-      setPositions((prev) => {
-        const next = new Map(prev)
-        for (const [id, pos] of Object.entries(saved)) {
-          if (nodeIds.has(id) && typeof pos?.x === "number" && typeof pos?.y === "number") {
-            next.set(id, pos)
+          return next
+        })
+        return
+      }
+
+      // Priority 2: localStorage fallback
+      if (!layoutStorageKey) return
+      try {
+        const raw = localStorage.getItem(layoutStorageKey)
+        if (!raw) return
+        const saved = JSON.parse(raw) as Record<string, { x: number; y: number }>
+        setPositions((prev) => {
+          const next = new Map(prev)
+          for (const [id, pos] of Object.entries(saved)) {
+            if (nodeIds.has(id) && typeof pos?.x === "number" && typeof pos?.y === "number") {
+              next.set(id, pos)
+            }
           }
-        }
-        return next
-      })
-    } catch {
-      // corrupt entry — ignore
-    }
+          return next
+        })
+      } catch {
+        // Corrupt entry: keep Dagre's defaults.
+      }
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
     // Run once on mount / when key or node set changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layoutStorageKey, nodes.length])
