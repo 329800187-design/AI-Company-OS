@@ -124,6 +124,8 @@ class AgentRouter:
 
     def _has_executor(self, agent: AgentCapability) -> bool:
         """检查 Agent 是否有可执行的 adapter"""
+        if not agent.runnable:
+            return False
         # 有 executable 路径的本地 Agent
         if agent.kind == "local" and agent.executable:
             return True

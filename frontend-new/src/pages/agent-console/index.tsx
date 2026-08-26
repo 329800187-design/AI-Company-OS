@@ -39,6 +39,7 @@ interface DiscoveredAgent {
   requires_gpu: boolean
   requires_confirmation: boolean
   enabled: boolean
+  runnable: boolean
   source: string
   timeout_seconds: number
   input_schema?: Record<string, unknown> | null
@@ -61,6 +62,18 @@ interface DiscoveredSummary {
   agents: DiscoveredAgent[]
   total: number
   enabled_count: number
+  scan_scope?: {
+    project_root?: string
+    project_agent_dirs?: string[]
+    path_commands?: string[]
+    local_services?: string[]
+    mcp_configs?: string[]
+    filesystem_scan?: string
+  }
+  planning?: {
+    available_enabled: Array<{ id: string; name: string; capabilities: string[]; task_types: string[] }>
+    message: string
+  }
 }
 
 interface BrowserVerificationRun {
@@ -245,6 +258,31 @@ export default function AgentConsolePage() {
         )}
       </section>
 
+      <section className="border border-[#E5E5E5] bg-white p-5" aria-labelledby="agent-discovery-title" data-testid="agent-discovery-scope">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 id="agent-discovery-title" className="font-semibold">本机能力盘点</h2>
+            <p className="mt-1 text-xs text-[#8A8A8A]">已启用且可用的 Agent 才会进入任务拆解和调度</p>
+          </div>
+          <Badge variant="outline">{summary?.planning?.available_enabled.length || 0} 个可调度</Badge>
+        </div>
+        <div className="mt-4 grid gap-2 md:grid-cols-2">
+          {(summary?.planning?.available_enabled || []).map(agent => (
+            <div key={agent.id} className="border border-[#E5E5E5] p-3 text-xs">
+              <p className="font-medium">{agent.name} <span className="font-mono text-[#8A8A8A]">{agent.id}</span></p>
+              <p className="mt-1 text-[#8A8A8A]">{agent.capabilities.slice(0, 4).join(" · ") || "未声明能力"}</p>
+            </div>
+          ))}
+        </div>
+        <details className="mt-4 text-xs text-[#8A8A8A]">
+          <summary className="cursor-pointer font-medium text-[#0B0B0B]">查看扫描范围</summary>
+          <p className="mt-2">{summary?.scan_scope?.filesystem_scan}</p>
+          <p className="mt-1 break-all">项目路径：{summary?.scan_scope?.project_root}</p>
+          <p className="mt-1">PATH 命令：{summary?.scan_scope?.path_commands?.join("、")}</p>
+          <p className="mt-1">本地服务：{summary?.scan_scope?.local_services?.join("、")}</p>
+        </details>
+      </section>
+
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="p-6 rounded-2xl border border-[#E5E5E5] bg-white">
@@ -348,7 +386,9 @@ export default function AgentConsolePage() {
                               {agent.last_error || "不可用"}
                             </Badge>
                           ) : agent.enabled ? (
-                            <Badge variant="success" className="text-xs">已启用</Badge>
+                            <Badge variant={agent.runnable ? "success" : "warning"} className="text-xs">
+                              {agent.runnable ? "已启用" : "已启用但未接入适配器"}
+                            </Badge>
                           ) : (
                             <Badge variant="secondary" className="text-xs">未启用</Badge>
                           )}

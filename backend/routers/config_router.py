@@ -14,7 +14,7 @@ from backend.config import (
     CODEX_TIMEOUT, CODEX_MAX_OUTPUT,
     OPENCLAW_HEADLESS, OPENCLAW_TIMEOUT,
     LOG_LEVEL, LOG_DIR, LOG_MAX_DAYS,
-    get_provider_info, get_ai_config,
+    get_provider_info, get_ai_config, get_current_provider, apply_runtime_config,
 )
 from backend.middleware.auth_middleware import set_auth_token, set_auth_enabled
 
@@ -76,7 +76,7 @@ class TestConnectionData(BaseModel):
 @router.get("/providers", summary="获取所有 AI Provider 状态")
 def list_providers():
     """返回所有 AI Provider 信息（不包含 Key）"""
-    return {"providers": get_provider_info(), "current": AI_PROVIDER}
+    return {"providers": get_provider_info(), "current": get_current_provider()}
 
 
 @router.get("/providers/health", summary="获取 Search/Image Provider 健康状态")
@@ -135,6 +135,8 @@ def config_status():
             return "***"
         return key[:4] + "****" + key[-4:]
 
+    from core.brain_manager import get_brain_manager
+    brain_manager = get_brain_manager()
     return {
         "server": {
             "host": HOST,
@@ -142,7 +144,8 @@ def config_status():
             "auth_configured": bool(AUTH_TOKEN),
         },
         "providers": get_provider_info(),
-        "current_provider": AI_PROVIDER,
+        "current_provider": get_current_provider(),
+        "current_brain": brain_manager.get_current(),
         "agents": {
             "codex_timeout": CODEX_TIMEOUT,
             "codex_max_output": CODEX_MAX_OUTPUT,
@@ -162,6 +165,18 @@ def config_status():
 def save_config(data: ConfigSaveData):
     """将配置写入 .env 文件（Pydantic 校验 + 防注入）"""
     data_dict = data.model_dump(exclude_none=True)
+
+    # Provider 切换必须在同一次请求中具备凭据，避免界面显示“已切换”但聊天实际失败。
+    if "ai_provider" in data_dict:
+        requested_provider = str(data_dict["ai_provider"])
+        provider_info = next((p for p in get_provider_info() if p["id"] == requested_provider), None)
+        key_field = f"{requested_provider}_api_key"
+        has_pending_key = bool(data_dict.get(key_field))
+        if provider_info and not provider_info.get("configured") and not has_pending_key:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{requested_provider} 尚未配置 API Key，请先填写密钥后再切换主脑",
+            )
 
     # 读取现有内容
     existing = {}
@@ -193,6 +208,19 @@ def save_config(data: ConfigSaveData):
             # 双重保险：再次过滤注入字符
             existing[env_key] = _sanitize_env_value(val)
 
+    runtime_values = {
+        env_key: _sanitize_env_value(str(data_dict[json_key]))
+        for env_key, json_key in env_map.items()
+        if json_key in data_dict
+    }
+    apply_runtime_config(runtime_values)
+
+    if "ai_provider" in data_dict:
+        from core.brain_manager import get_brain_manager
+        brain_result = get_brain_manager().switch_to(str(data_dict["ai_provider"]))
+        if not brain_result.get("ok"):
+            raise HTTPException(status_code=400, detail=brain_result.get("error", "Provider 不可用"))
+
     # 认证配置特殊处理：运行时生效
     if "auth_token" in data_dict:
         existing["AUTH_TOKEN"] = data_dict["auth_token"]
@@ -210,7 +238,13 @@ def save_config(data: ConfigSaveData):
         lines.append(f"{k}={v}")
 
     ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return {"status": "ok", "message": "配置已保存，部分配置需要重启服务后生效"}
+    from core.brain_manager import get_brain_manager
+    return {
+        "status": "ok",
+        "message": "配置已保存并已在当前服务生效",
+        "current_provider": get_current_provider(),
+        "current_brain": get_brain_manager().get_current(),
+    }
 
 
 @router.post("/test", summary="测试 AI Provider 连接")
@@ -219,6 +253,8 @@ def test_connection(data: TestConnectionData):
     provider = data.provider
     try:
         config = get_ai_config(provider)
+        if not config["api_key"]:
+            return {"status": "error", "message": f"{provider} 尚未配置 API Key"}
         import httpx
 
         if provider == "claude":

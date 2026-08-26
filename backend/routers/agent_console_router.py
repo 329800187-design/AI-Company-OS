@@ -68,6 +68,16 @@ async def get_discovered_agents():
         "agents": agent_list,
         "total": len(agent_list),
         "enabled_count": enabled_count,
+        "scan_scope": discovery.get_scan_scope(),
+        "planning": {
+            "available_enabled": [
+                 {"id": agent.id, "name": agent.name, "capabilities": agent.capabilities,
+                 "task_types": agent.task_types, "runnable": agent.runnable}
+                for agent in agents.values()
+                if agent.status == "available" and agent.enabled and agent.runnable
+            ],
+            "message": "任务拆解只会使用状态为可用且已启用的 Agent",
+        },
     }
 
 

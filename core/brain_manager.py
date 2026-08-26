@@ -58,7 +58,10 @@ class BrainProfile:
             "capabilities": self.capabilities,
             "priority": self.priority,
             "enabled": self.enabled,
-            "has_api_key": bool(os.getenv(self.api_key_env, "")) if self.api_key_env else True,
+            "has_api_key": (
+                bool(os.getenv(self.api_key_env, ""))
+                or (self.provider == "claude" and bool(os.getenv("ANTHROPIC_API_KEY", "")))
+            ) if self.api_key_env else True,
         }
 
 
@@ -99,7 +102,7 @@ class BrainManager:
             icon="🎭",
             base_url="https://api.anthropic.com/v1",
             model="claude-sonnet-4-20250514",
-            api_key_env="ANTHROPIC_API_KEY",
+            api_key_env="CLAUDE_API_KEY",
             capabilities=["chat", "code", "analysis", "writing"],
             priority=85,
         ),
@@ -183,6 +186,39 @@ class BrainManager:
             except Exception:
                 pass
 
+    def _sync_runtime_profiles(self) -> None:
+        """同步 Web UI 配置到主脑资料，避免启动时快照覆盖运行时修改。"""
+        try:
+            from backend.config import get_ai_config, get_current_provider
+        except Exception:
+            return
+
+        for brain_id in ("deepseek", "openai", "claude"):
+            brain = self._brains.get(brain_id)
+            if not brain:
+                continue
+            cfg = get_ai_config(brain_id)
+            brain.base_url = cfg["base_url"].rstrip("/")
+            if brain_id == "claude" and not brain.base_url.endswith("/v1"):
+                brain.base_url += "/v1"
+            brain.model = cfg["model"]
+
+        runtime_brain = os.getenv("AI_BRAIN_ID", "")
+        if runtime_brain in self._brains:
+            self._current_id = runtime_brain
+        else:
+            runtime_provider = get_current_provider()
+            if runtime_provider in ("deepseek", "openai", "claude"):
+                self._current_id = runtime_provider
+
+    @staticmethod
+    def _has_credentials(brain: BrainProfile) -> bool:
+        if brain.is_local:
+            return True
+        if os.getenv(brain.api_key_env, ""):
+            return True
+        return brain.provider == "claude" and bool(os.getenv("ANTHROPIC_API_KEY", ""))
+
     def _save_config(self):
         """保存配置"""
         data = {
@@ -198,10 +234,12 @@ class BrainManager:
 
     def list_all(self) -> List[Dict[str, Any]]:
         """列出所有主脑"""
+        self._sync_runtime_profiles()
         return [b.to_dict() for b in self._brains.values()]
 
     def list_available(self) -> List[Dict[str, Any]]:
         """列出可用主脑（已启用且有 API Key 或是本地服务）"""
+        self._sync_runtime_profiles()
         available = []
         for b in self._brains.values():
             if not b.enabled:
@@ -211,12 +249,13 @@ class BrainManager:
                 available.append(b.to_dict())
                 continue
             # 云端服务需要 API Key
-            if b.api_key_env and os.getenv(b.api_key_env):
+            if self._has_credentials(b):
                 available.append(b.to_dict())
         return available
 
     def get_current(self) -> Dict[str, Any]:
         """获取当前主脑"""
+        self._sync_runtime_profiles()
         brain = self._brains.get(self._current_id)
         if not brain:
             brain = self._brains["deepseek"]
@@ -239,21 +278,30 @@ class BrainManager:
         if not brain.enabled:
             return {"ok": False, "error": f"主脑已禁用: {brain.name}"}
 
-        # 检查 API Key（本地服务不需要）
-        if not brain.is_local and brain.api_key_env:
-            if not os.getenv(brain.api_key_env):
-                return {"ok": False, "error": f"缺少 API Key: {brain.api_key_env}"}
+        # 允许先选择未配置的云端主脑，再由设置页补充凭据；它不会被列为可用主脑，聊天也会明确返回缺钥提示。
+        ready = self._has_credentials(brain)
 
         old_id = self._current_id
         self._current_id = brain_id
+        os.environ["AI_BRAIN_ID"] = brain_id
+        if brain.provider in ("deepseek", "openai", "claude"):
+            try:
+                from backend.config import apply_runtime_config
+                apply_runtime_config({"AI_PROVIDER": brain.provider})
+            except Exception:
+                pass
         self._save_config()
 
-        return {
+        result = {
             "ok": True,
             "message": f"已切换到 {brain.icon} {brain.name}",
             "old": old_id,
             "new": brain_id,
+            "ready": ready,
         }
+        if not ready:
+            result["warning"] = f"尚未配置 API Key: {brain.api_key_env}"
+        return result
 
     def enable_brain(self, brain_id: str) -> Dict[str, Any]:
         """启用主脑"""
@@ -288,25 +336,37 @@ class BrainManager:
     # ── 对话 ──────────────────────────────────────────────────
 
     def chat(self, message: str, system: str = "", temperature: float = 0.7,
-             max_tokens: int = 4096) -> Dict[str, Any]:
+             max_tokens: int = 4096, history: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         """使用当前主脑进行对话"""
+        self._sync_runtime_profiles()
         brain = self._brains.get(self._current_id)
         if not brain:
             return {"ok": False, "error": "主脑未配置"}
 
+        if not self._has_credentials(brain):
+            return {
+                "ok": False,
+                "error": f"{brain.name} API Key 未配置，请先在设置页填写并保存",
+                "brain": brain.brain_id,
+                "provider": brain.provider,
+            }
+
         # 获取 API Key
         api_key = os.getenv(brain.api_key_env, "") if brain.api_key_env else ""
+        if not api_key and brain.provider == "claude":
+            api_key = os.getenv("ANTHROPIC_API_KEY", "")
 
         # 构建请求
         if brain.provider == "claude":
-            return self._chat_claude(brain, message, system, api_key, max_tokens)
+            return self._chat_claude(brain, message, system, api_key, max_tokens, history or [])
         else:
             return self._chat_openai_compatible(brain, message, system, api_key,
-                                                 temperature, max_tokens)
+                                                 temperature, max_tokens, history or [])
 
     def _chat_openai_compatible(self, brain: BrainProfile, message: str,
                                  system: str, api_key: str,
-                                 temperature: float, max_tokens: int) -> Dict[str, Any]:
+                                 temperature: float, max_tokens: int,
+                                 history: List[Dict[str, str]]) -> Dict[str, Any]:
         """OpenAI 兼容格式对话"""
         headers = {"Content-Type": "application/json"}
         if api_key:
@@ -314,10 +374,8 @@ class BrainManager:
 
         body = {
             "model": brain.model,
-            "messages": [
-                {"role": "system", "content": system or "你是一个有帮助的AI助手。"},
-                {"role": "user", "content": message},
-            ],
+            "messages": ([{"role": "system", "content": system or "你是一个有帮助的AI助手。"}]
+                         + history[-20:] + [{"role": "user", "content": message}]),
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
@@ -336,6 +394,8 @@ class BrainManager:
             return {
                 "ok": True,
                 "reply": reply,
+                "provider": brain.provider,
+                "brain": brain.brain_id,
                 "model": data.get("model", brain.model),
                 "usage": data.get("usage", {}),
             }
@@ -343,7 +403,8 @@ class BrainManager:
             return {"ok": False, "error": str(e), "brain": brain.name}
 
     def _chat_claude(self, brain: BrainProfile, message: str,
-                     system: str, api_key: str, max_tokens: int) -> Dict[str, Any]:
+                     system: str, api_key: str, max_tokens: int,
+                     history: List[Dict[str, str]]) -> Dict[str, Any]:
         """Claude 格式对话"""
         if not api_key:
             return {"ok": False, "error": "缺少 Claude API Key"}
@@ -358,7 +419,7 @@ class BrainManager:
             "model": brain.model,
             "max_tokens": max_tokens,
             "system": system or "你是一个有帮助的AI助手。",
-            "messages": [{"role": "user", "content": message}],
+            "messages": history[-20:] + [{"role": "user", "content": message}],
         }
 
         try:
@@ -379,6 +440,8 @@ class BrainManager:
             return {
                 "ok": True,
                 "reply": text,
+                "provider": brain.provider,
+                "brain": brain.brain_id,
                 "model": data.get("model", brain.model),
                 "usage": data.get("usage", {}),
             }
@@ -404,8 +467,7 @@ class BrainManager:
                     status = "offline"
             else:
                 # 云端服务检查 API Key
-                has_key = bool(os.getenv(brain.api_key_env, "")) if brain.api_key_env else False
-                status = "configured" if has_key else "no_api_key"
+                status = "configured" if self._has_credentials(brain) else "no_api_key"
 
             results[brain_id] = {
                 "name": brain.name,

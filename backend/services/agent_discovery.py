@@ -18,6 +18,7 @@ from typing import Dict, List, Any, Optional
 from backend.logger import get_logger
 
 logger = get_logger()
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # ── Enabled Agents 配置管理 ──────────────────────────────────────
 _user_data_dir = Path(os.getenv("AI_COMPANY_OS_USER_DATA", "user_data"))
@@ -29,6 +30,8 @@ _default_enabled_config: Dict[str, bool] = {
     "marketing": True,
     "image": True,
     "data": True,
+    "research": True,
+    "website": True,
     "example_echo": True,
     # 内置 legacy agents（默认启用）
     "ceo_agent": True,
@@ -107,6 +110,8 @@ class AgentCapability:
         self.requires_gpu: bool = kwargs.get("requires_gpu", False)
         self.requires_confirmation: bool = kwargs.get("requires_confirmation", False)
         self.enabled: bool = kwargs.get("enabled", True)
+        # “发现”不等于“可执行”。CLI 只有在接入专用适配器后才可进入路由。
+        self.runnable: bool = kwargs.get("runnable", self.kind != "cli")
         self.source: str = kwargs.get("source", "unknown")  # manifest, cli, http, api, mcp, fallback
         self.timeout_seconds: int = kwargs.get("timeout_seconds", 60)
         self.input_schema: Optional[Dict[str, Any]] = kwargs.get("input_schema", None)
@@ -139,6 +144,7 @@ class AgentCapability:
             "requires_gpu": self.requires_gpu,
             "requires_confirmation": self.requires_confirmation,
             "enabled": self.enabled,
+            "runnable": self.runnable,
             "source": self.source,
             "timeout_seconds": self.timeout_seconds,
             "input_schema": self.input_schema,
@@ -164,6 +170,7 @@ class AgentDiscovery:
     def __init__(self):
         self._agents: Dict[str, AgentCapability] = {}
         self._scanned = False
+        self._scan_scope: Dict[str, Any] = {}
 
     def scan_all(self, force: bool = False) -> Dict[str, AgentCapability]:
         """扫描所有 Agent"""
@@ -195,6 +202,12 @@ class AgentDiscovery:
         self._scanned = True
         logger.info(f"AgentDiscovery: Found {len(self._agents)} agents")
         return self._agents
+
+    def get_scan_scope(self) -> Dict[str, Any]:
+        """Explain what was inspected so discovery is observable and bounded."""
+        if not self._scanned:
+            self.scan_all()
+        return dict(self._scan_scope)
 
     def _apply_enabled_config(self):
         """应用 enabled_agents.json 配置到扫描结果"""
@@ -230,7 +243,8 @@ class AgentDiscovery:
 
     def get_available_agents(self) -> List[AgentCapability]:
         """获取所有可用 Agent"""
-        return [a for a in self._agents.values() if a.status == "available"]
+        return [a for a in self._agents.values()
+                if a.status == "available" and a.enabled]
 
     def get_agents_by_capability(self, capability: str) -> List[AgentCapability]:
         """根据能力获取 Agent"""
@@ -274,6 +288,18 @@ class AgentDiscovery:
              "task_types": ["code"],
              "capabilities": ["version_control"],
              "supports_files": True},
+            {"id": "cursor", "name": "Cursor Agent", "cmd": "cursor", "args": ["--version"],
+             "task_types": ["code", "analysis"],
+             "capabilities": ["code_execution", "file_analysis"],
+             "supports_code_execution": True, "supports_files": True},
+            {"id": "qwen_code", "name": "Qwen Code", "cmd": "qwen", "args": ["--version"],
+             "task_types": ["code", "analysis"],
+             "capabilities": ["code_execution", "reasoning"],
+             "supports_code_execution": True},
+            {"id": "opencode", "name": "OpenCode", "cmd": "opencode", "args": ["--version"],
+             "task_types": ["code", "analysis"],
+             "capabilities": ["code_execution", "reasoning"],
+             "supports_code_execution": True},
         ]
 
         for agent_info in cli_agents:
@@ -320,7 +346,8 @@ class AgentDiscovery:
             priority=50,
             cost_level="free",
             latency_level="fast",
-            reliability_score=0.9 if available else 0.0
+            reliability_score=0.9 if available else 0.0,
+            runnable=False,
         )
 
     # ── HTTP 服务扫描 ──────────────────────────────────────
@@ -523,6 +550,8 @@ class AgentDiscovery:
     def _check_api_agent(self, info: Dict[str, Any]) -> Optional[AgentCapability]:
         """检查 API Agent"""
         api_key = os.getenv(info["env_key"], "")
+        if info["id"] == "claude_api" and not api_key:
+            api_key = os.getenv("ANTHROPIC_API_KEY", "")
         base_url = os.getenv(info.get("base_url_env", ""), "")
         model = os.getenv(info.get("model_env", ""), "")
 
@@ -612,7 +641,7 @@ class AgentDiscovery:
         1. 读取 agent.json manifest（声明式注册）
         2. 无 manifest 的旧 agent 走兼容 fallback（硬编码能力映射）
         """
-        agents_dir = Path("agents")
+        agents_dir = PROJECT_ROOT / "agents"
         if not agents_dir.exists():
             return
 
@@ -764,6 +793,15 @@ class AgentDiscovery:
                 reliability_score=0.7 if status == "available" else 0.0
             )
             self._agents[agent.id] = agent
+
+        self._scan_scope = {
+            "project_root": str(PROJECT_ROOT),
+            "project_agent_dirs": [str(agents_dir), str(agents_dir / "installed")],
+            "path_commands": ["claude", "codex", "gemini", "aider", "python", "node", "git", "cursor", "qwen", "opencode"],
+            "local_services": ["ollama", "lm_studio", "comfyui", "sd_webui", "n8n"],
+            "mcp_configs": ["~/.mcp.json", "~/.config/claude/mcp.json", "项目/.mcp.json"],
+            "filesystem_scan": "仅扫描项目 Agent、用户级 MCP 配置和 PATH 中的已知 Agent 命令；不递归读取整个系统磁盘。",
+        }
 
     # ── Helper ──────────────────────────────────────────────
 

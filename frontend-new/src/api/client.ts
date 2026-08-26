@@ -135,7 +135,7 @@ class ApiClient {
   }
 
   async testConnection(provider: string) {
-    return this.request<{ ok: boolean; message: string }>("/config/test", {
+    return this.request<{ status: "ok" | "error"; message: string }>("/config/test", {
       method: "POST",
       body: { provider },
     })
@@ -1144,6 +1144,7 @@ class ApiClient {
         requires_gpu: boolean
         requires_confirmation: boolean
         enabled: boolean
+        runnable: boolean
         source: string
         timeout_seconds: number
         input_schema?: Record<string, unknown> | null
@@ -1163,6 +1164,18 @@ class ApiClient {
       }>
       total: number
       enabled_count: number
+      scan_scope?: {
+        project_root?: string
+        project_agent_dirs?: string[]
+        path_commands?: string[]
+        local_services?: string[]
+        mcp_configs?: string[]
+        filesystem_scan?: string
+      }
+      planning?: {
+        available_enabled: Array<{ id: string; name: string; capabilities: string[]; task_types: string[]; runnable?: boolean }>
+        message: string
+      }
     }>("/agent-console/discovered")
   }
 

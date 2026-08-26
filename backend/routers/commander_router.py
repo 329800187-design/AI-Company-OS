@@ -268,9 +268,8 @@ class ChatResponse(BaseModel):
              description="直接调用 AI 模型进行对话，不走 Commander 任务编排流水线，适合聊天问答。")
 def chat_send(request: ChatRequest):
     """直接 AI 对话，支持上下文"""
-    from backend.config import get_ai_config
+    from core.brain_manager import get_brain_manager
     from backend.security import input_validator, rate_limiter
-    import httpx
 
     # 输入验证
     is_valid, error_msg = input_validator.validate_message(request.message)
@@ -282,74 +281,25 @@ def chat_send(request: ChatRequest):
     if not is_allowed:
         raise HTTPException(status_code=429, detail=rate_msg)
 
-    cfg = get_ai_config("deepseek")
-    api_key = cfg["api_key"]
-    base_url = cfg["base_url"]
-    model = cfg.get("model", "deepseek-chat")
+    system_prompt = """你是 AI Company OS 的主脑助手。你负责理解用户目标、补充必要信息、解释系统能力，并协助用户把业务目标推进为可验收的计划。
 
-    if not api_key:
-        raise HTTPException(status_code=400, detail="DeepSeek API Key 未配置")
-
-    try:
-        url = f"{base_url}/chat/completions"
-
-        system_prompt = """【重要规则】你必须始终使用中文回复，无论用户用什么语言提问。禁止使用英文回复。
-
-你是「AI Company」，一个专业的电商 AI 助手，专门帮助电商老板提升业务效率。
-
-你的核心能力：
-1. 📝 写营销文案 — 朋友圈、小红书、淘宝详情页、抖音文案
-2. 📊 数据分析 — 销售数据、用户画像、市场趋势
-3. 🔍 市场调研 — 竞品分析、行业报告、价格策略
-4. 🌐 建网站 — 产品落地页、企业官网、预约页面
-5. 💡 营销策划 — 活动方案、推广策略、品牌定位
-
-回答要求：
-- 【强制】必须使用中文回复，包括标题、正文、标签
-- 简洁明了，直击要点，不要废话
-- 实用性强，生成的内容可以直接复制使用
-- 适当使用 emoji 让内容更生动
-- 如果用户问你是什么，回答：我是 AI Company，你的电商 AI 助手
-"""
-
-        # 构建消息列表（包含历史对话）
-        messages = [{"role": "system", "content": system_prompt}]
-
-        # 添加历史对话（最多保留最近 10 轮）
-        if request.history:
-            for msg in request.history[-20:]:  # 最多 20 条历史
-                messages.append({"role": msg.role, "content": msg.content})
-
-        # 添加当前用户消息
-        messages.append({"role": "user", "content": request.message})
-
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": request.temperature,
-            "max_tokens": request.max_tokens,
-        }
-
-        with httpx.Client(timeout=60, proxy=None, trust_env=False) as client:
-            resp = client.post(
-                url,
-                json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}",
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-
-        reply = data["choices"][0]["message"]["content"].strip()
-        thinking = data["choices"][0]["message"].get("reasoning_content", None)
-
-        return ChatResponse(
-            reply=reply,
-            model=model,
-            provider="deepseek",
-            thinking=thinking,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI 对话失败: {str(e)}")
+系统是通用业务流程平台，不默认属于任何行业或渠道。不要把用户目标改写成电商、营销或其他特定行业任务；具体行业只来自用户输入。
+回复使用中文，优先给出清晰、可执行的下一步。涉及高风险外部操作时，必须说明需要人工确认。"""
+    history = [{"role": msg.role, "content": msg.content} for msg in request.history[-20:]]
+    manager = get_brain_manager()
+    result = manager.chat(
+        request.message,
+        system=system_prompt,
+        temperature=request.temperature,
+        max_tokens=request.max_tokens,
+        history=history,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "当前没有可用 AI 主脑"))
+    current = manager.get_current()
+    return ChatResponse(
+        reply=result.get("reply", ""),
+        model=result.get("model", current.get("model", "")),
+        provider=result.get("brain", current.get("provider", "")),
+        thinking=result.get("thinking"),
+    )

@@ -29,13 +29,14 @@ class AgentRegistry:
 
     def get_available_agents(self) -> List[AgentCapability]:
         """获取所有可用 Agent"""
-        return [a for a in self._agents.values() if a.status == "available"]
+        return [a for a in self._agents.values()
+                if a.status == "available" and a.enabled]
 
     def get_agents_for_task(self, task_type: str) -> List[AgentCapability]:
         """获取能处理指定任务的 Agent"""
         candidates = []
         for agent in self._agents.values():
-            if agent.status != "available":
+            if agent.status != "available" or not agent.enabled:
                 continue
             if task_type in agent.task_types:
                 candidates.append(agent)
