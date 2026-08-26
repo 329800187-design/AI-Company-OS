@@ -94,8 +94,19 @@ interface MissionAction {
   approval_note?: string
   approval_expires_at?: string | null
   cancellation_reason?: string
-  preflight?: { ready?: boolean; simulated?: boolean; external_side_effects?: boolean }
+  preflight?: { ready?: boolean; simulated?: boolean; external_side_effects?: boolean; target_host?: string }
   receipt?: Record<string, unknown>
+}
+
+interface MissionActionConnector {
+  connector_id: string
+  display_name: string
+  mode: "simulation" | "external"
+  configured: boolean
+  requires_human_approval: boolean
+  requires_preflight: boolean
+  external_side_effects: boolean
+  note?: string
 }
 
 interface KpiObservation {
@@ -799,12 +810,45 @@ export default function BossPage() {
   const [outcomeSubmitting, setOutcomeSubmitting] = useState(false)
   const [actionType, setActionType] = useState("record_follow_up")
   const [actionSummary, setActionSummary] = useState("")
+  const [actionConnectorId, setActionConnectorId] = useState("local_simulation")
+  const [actionConnectors, setActionConnectors] = useState<MissionActionConnector[]>([
+    {
+      connector_id: "local_simulation",
+      display_name: "本地模拟",
+      mode: "simulation",
+      configured: true,
+      requires_human_approval: true,
+      requires_preflight: true,
+      external_side_effects: false,
+      note: "仅生成可审计回执，不会联系外部系统。",
+    },
+  ])
   const [actionCancellationReason, setActionCancellationReason] = useState("")
   const [actionSubmitting, setActionSubmitting] = useState(false)
   const [kpiName, setKpiName] = useState("")
   const [kpiValue, setKpiValue] = useState("")
   const [kpiUnit, setKpiUnit] = useState("")
   const [kpiSubmitting, setKpiSubmitting] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    api.getMissionActionConnectors()
+      .then(({ connectors }) => {
+        if (!active || connectors.length === 0) return
+        setActionConnectors(connectors)
+        setActionConnectorId((current) => (
+          connectors.some((connector) => connector.connector_id === current)
+            ? current
+            : connectors[0].connector_id
+        ))
+      })
+      .catch(() => {
+        // Keep the local simulation fallback available when the API is unavailable.
+      })
+    return () => {
+      active = false
+    }
+  }, [])
   const [operatingCycles, setOperatingCycles] = useState<OperatingCycle[]>([])
   const [cycleName, setCycleName] = useState("")
   const [cycleObjective, setCycleObjective] = useState("")
@@ -2033,7 +2077,9 @@ export default function BossPage() {
     setMissionError(null)
     try {
       await api.createMissionAction(currentMission.mission_id, {
-        action_type: actionType.trim(), summary: actionSummary.trim(),
+        action_type: actionType.trim(),
+        summary: actionSummary.trim(),
+        connector_id: actionConnectorId,
       })
       setActionSummary("")
       await refreshClosedLoopMission()
@@ -4127,18 +4173,30 @@ export default function BossPage() {
         >
           <div>
             <h3 className="text-sm font-medium text-[#0B0B0B]">已批准动作与 KPI 回流</h3>
-            <p className="mt-1 text-xs text-[#8A8A8A]">动作先经过无副作用预检，再单独批准并显式执行；当前只会在本地模拟。动作载荷不得包含密码、令牌或 API 密钥。</p>
+            <p className="mt-1 text-xs text-[#8A8A8A]">动作先经过无副作用预检，再单独批准并显式执行。默认连接器只在本地模拟；受控 Webhook 仅在部署明确配置后可选。动作载荷不得包含密码、令牌或 API 密钥。</p>
           </div>
           <div className="mt-3 grid gap-3 lg:grid-cols-2">
             <div className="rounded-xl border border-[#EFEFEF] p-3">
               <p className="text-xs font-medium text-[#5A5A5A]">提出动作</p>
-              <div className="mt-2 grid gap-2 sm:grid-cols-[150px_1fr_auto]">
+              <div className="mt-2 grid gap-2 sm:grid-cols-[150px_150px_minmax(0,1fr)_auto]">
                 <input
                   value={actionType}
                   onChange={(event) => setActionType(event.target.value)}
                   aria-label="动作类型"
                   className="h-9 rounded-md border border-[#E5E5E5] px-2 text-sm"
                 />
+                <select
+                  value={actionConnectorId}
+                  onChange={(event) => setActionConnectorId(event.target.value)}
+                  aria-label="动作连接器"
+                  className="h-9 min-w-0 rounded-md border border-[#E5E5E5] bg-white px-2 text-sm"
+                >
+                  {actionConnectors.map((connector) => (
+                    <option key={connector.connector_id} value={connector.connector_id}>
+                      {connector.display_name}
+                    </option>
+                  ))}
+                </select>
                 <input
                   value={actionSummary}
                   onChange={(event) => setActionSummary(event.target.value)}
@@ -4173,7 +4231,9 @@ export default function BossPage() {
                           <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => preflightAction(action.action_id)}>预检（不执行）</Button>
                         ) : (
                           <>
-                            <span className="text-green-700">预检通过，无外部副作用</span>
+                            <span className={action.preflight?.external_side_effects ? "text-amber-700" : "text-green-700"}>
+                              {action.preflight?.external_side_effects ? "预检通过，执行会联系外部系统" : "预检通过，无外部副作用"}
+                            </span>
                             <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => approveAction(action.action_id)}>批准</Button>
                           </>
                         )}
@@ -4182,13 +4242,18 @@ export default function BossPage() {
                     )}
                     {action.status === "approved" && (
                       <>
-                        <Button size="sm" className="h-7 px-2" onClick={() => executeAction(action.action_id)}>执行模拟</Button>
+                        <Button size="sm" className="h-7 px-2" onClick={() => executeAction(action.action_id)}>
+                          {action.preflight?.external_side_effects ? "执行外部动作" : "执行模拟"}
+                        </Button>
                         <Button size="sm" variant="ghost" className="h-7 px-2 text-red-700" onClick={() => cancelAction(action.action_id)}>取消</Button>
                         {action.approval_expires_at && <span className="text-[#8A8A8A]">批准有效至 {new Date(action.approval_expires_at).toLocaleString()}</span>}
                       </>
                     )}
                     {action.status === "executed" && action.receipt?.simulated === true && (
                       <span className="text-green-700">已模拟，无外部副作用</span>
+                    )}
+                    {action.status === "executed" && action.receipt?.delivered === true && (
+                      <span className="text-green-700">已投递，回执已记录</span>
                     )}
                     {action.status === "cancelled" && (
                       <span className="text-red-700">已取消：{action.cancellation_reason || "未说明原因"}</span>

@@ -504,6 +504,21 @@ class ApiClient {
     }>("/boss/overview")
   }
 
+  async getMissionActionConnectors() {
+    return this.request<{
+      connectors: Array<{
+        connector_id: string
+        display_name: string
+        mode: "simulation" | "external"
+        configured: boolean
+        requires_human_approval: boolean
+        requires_preflight: boolean
+        external_side_effects: boolean
+        note?: string
+      }>
+    }>("/boss/action-connectors")
+  }
+
   async createMissionAction(
     missionId: string,
     payload: { action_type: string; summary?: string; payload?: Record<string, unknown>; connector_id?: string },
