@@ -83,7 +83,13 @@ export default function ReportsPage() {
     }
   }, [])
 
-  useEffect(() => { loadRecords() }, [loadRecords])
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      void loadRecords()
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [loadRecords])
 
   const loadArtifact = async (runId: string) => {
     if (artifactCache[runId]) {

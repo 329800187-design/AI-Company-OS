@@ -51,7 +51,13 @@ export default function WorkflowsPage() {
     }
   }
 
-  useEffect(() => { loadWorkflows() }, [])
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      void loadWorkflows()
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [])
 
   const loadDetail = async (name: string) => {
     try {

@@ -34,7 +34,13 @@ export default function UsagePage() {
     }
   }
 
-  useEffect(() => { loadData() }, [])
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      void loadData()
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [])
 
   return (
     <div className="space-y-6">

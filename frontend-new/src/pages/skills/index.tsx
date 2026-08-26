@@ -42,7 +42,13 @@ export default function SkillsPage() {
     }
   }
 
-  useEffect(() => { loadSkills() }, [])
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      void loadSkills()
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [])
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) { setMatches([]); return }

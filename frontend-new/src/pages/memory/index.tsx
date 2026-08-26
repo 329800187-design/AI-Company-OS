@@ -133,7 +133,11 @@ export default function MemoryPage() {
   }, [searchQuery])
 
   useEffect(() => {
-    loadMemories()
+    const timeoutId = window.setTimeout(() => {
+      void loadMemories()
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
   }, [loadMemories])
 
   const filteredMemories = useMemo(() => {
