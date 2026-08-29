@@ -6,14 +6,15 @@ Last updated: 2026-08-29
 
 Status: IN PROGRESS on `codex/capability-runtime-convergence`.
 
-- Canonical runtime observations are exposed through the capability scanner's `resources` projection.
+- `AIRegistry.scan_runtime_capabilities()` is the entry point for the canonical runtime capability snapshot; scanner observations are exposed through its `resources` projection.
 - Resource taxonomy distinguishes `agent`, `llm_provider`, `local_tool`, `browser`, and `local_service`.
 - Readiness is derived centrally from discovery, availability, configuration, verification, adapter, and authorization prerequisites; `ready` is not equivalent to `available`.
 - Runtime state is resolved under the user-level application data directory. Legacy database and enabled-agent locations are copied without deletion or overwriting an existing new database.
 - Migration behavior is covered for fresh, legacy-only, new-only, both-present, rerun, macOS, Windows, and Linux path semantics.
-- Phase 1 targeted backend tests currently pass: 87 passed, 1 skipped, plus 12 migration/contract/projection tests passed.
-- Frontend typecheck, production build, and lint pass. Agent Console E2E remains unverified in a running-app environment because localhost:8000 was unavailable.
-- Full backend regression and final commit/push gates are still pending.
+- Phase 1 targeted backend tests currently pass: 84 passed, 1 skipped in the convergence suite; runtime migration fixtures pass for fresh, legacy-only, new-only, both-present, rerun, and platform path semantics.
+- Frontend typecheck, production build, and lint pass. Agent Console E2E passes after starting the backend health endpoint.
+- Full backend regression remains 1615 passed, 15 failed, 7 skipped; all 15 failures reproduce on the GitHub baseline and are not introduced by this branch.
+- Phase 1 remains subject to architecture acceptance; no Phase 2 work is included.
 
 ## Current Goal
 

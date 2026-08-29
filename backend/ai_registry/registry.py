@@ -422,6 +422,7 @@ class AIRegistry:
 
     def __init__(self):
         self._services: Dict[str, AIService] = {}
+        self._runtime_capabilities: Optional[Dict[str, Any]] = None
         self._scanners = [
             CCScanner(), OllamaScanner(), LMStudioScanner(), LlamaCppScanner(),
             OpenClawScanner(), CodexScanner(), ChatGPTScanner(), KimiScanner(),
@@ -449,6 +450,13 @@ class AIRegistry:
         if success_count > 0:
             self._last_scan = now
         return self._services
+
+    def scan_runtime_capabilities(self, force: bool = False) -> Dict[str, Any]:
+        """Return the canonical runtime capability snapshot for projections."""
+        from backend.services.capability_scanner import get_capability_scanner
+
+        self._runtime_capabilities = get_capability_scanner().scan_all(force=force)
+        return self._runtime_capabilities
 
     def get_service(self, service_id: str) -> Optional[AIService]:
         """获取单个服务"""

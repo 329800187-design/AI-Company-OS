@@ -59,6 +59,23 @@ def test_both_locations_never_overwrite_new_database(tmp_path):
     assert (new / "company_os.db").read_bytes() == b"new-db"
 
 
+def test_legacy_agent_registry_is_migrated_with_runtime_state(tmp_path):
+    legacy = tmp_path / "legacy"
+    new = tmp_path / "new"
+    (legacy / "agent_registry").mkdir(parents=True)
+    source = legacy / "agent_registry" / "enabled_agents.json"
+    source.write_text('{"research": true}', encoding="utf-8")
+    resolver = RuntimePathResolver(new, legacy)
+
+    migrate_legacy_runtime_data(resolver)
+    rerun = migrate_legacy_runtime_data(resolver)
+
+    target = new / "agent_registry" / "enabled_agents.json"
+    assert target.read_text(encoding="utf-8") == '{"research": true}'
+    assert rerun.action == "fresh"
+    assert source.exists()
+
+
 def test_platform_directory_semantics(monkeypatch, tmp_path):
     resolver = RuntimePathResolver.from_platform(
         "Darwin", home=tmp_path, env={}
