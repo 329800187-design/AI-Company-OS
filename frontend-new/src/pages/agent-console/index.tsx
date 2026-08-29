@@ -56,6 +56,15 @@ interface DiscoveredAgent {
   reliability_score: number
   health: Record<string, unknown> & { error?: string }
   last_error?: string
+  llm_binding?: {
+    provider?: string
+    model?: string
+    configured?: boolean
+    credential_source?: string
+    ready?: boolean
+    configured_providers?: string[]
+  }
+  requires_llm?: boolean
 }
 
 interface DiscoveredSummary {
@@ -74,6 +83,11 @@ interface DiscoveredSummary {
     available_enabled: Array<{ id: string; name: string; capabilities: string[]; task_types: string[] }>
     message: string
   }
+  llm_providers?: Array<Record<string, unknown> & { id: string; name: string; status: string; model?: string; note?: string }>
+  local_services?: Array<Record<string, unknown> & { id: string; name: string; status: string }>
+  browsers?: Array<Record<string, unknown> & { id: string; name: string; status: string }>
+  tools?: Array<Record<string, unknown> & { id: string; name: string; status: string }>
+  machine_scan?: { machine_id?: string; scanned_at?: string; platform?: string; scope?: string }
 }
 
 interface BrowserVerificationRun {
@@ -195,6 +209,9 @@ export default function AgentConsolePage() {
     if (agent.risk_level === "high") {
       hints.push("建议人工确认或 sandbox")
     }
+    if (agent.requires_llm && !agent.llm_binding?.ready) {
+      hints.push("未找到已配置的 LLM，暂不参与真实任务")
+    }
     return hints
   }
 
@@ -281,6 +298,48 @@ export default function AgentConsolePage() {
           <p className="mt-1">PATH 命令：{summary?.scan_scope?.path_commands?.join("、")}</p>
           <p className="mt-1">本地服务：{summary?.scan_scope?.local_services?.join("、")}</p>
         </details>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-2" aria-label="本机实时资源">
+        <div className="border border-[#E5E5E5] bg-white p-5">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold">LLM / API Provider</h2>
+            <Badge variant="outline">不等于 Agent</Badge>
+          </div>
+          <div className="mt-3 space-y-2 text-xs">
+            {(summary?.llm_providers || []).map(provider => (
+              <div key={provider.id} className="flex items-center justify-between border border-[#E5E5E5] p-3">
+                <div>
+                  <p className="font-medium">{provider.name}</p>
+                  <p className="mt-1 text-[#8A8A8A]">{provider.model || "未指定模型"}</p>
+                </div>
+                <Badge variant={provider.status === "configured" ? "success" : "secondary"}>
+                  {provider.status === "configured" ? "已配置，未验证" : "未配置"}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="border border-[#E5E5E5] bg-white p-5">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold">本机工具与服务</h2>
+            <span className="text-xs text-[#8A8A8A]">实时扫描</span>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 text-xs">
+            {[...(summary?.tools || []), ...(summary?.local_services || []), ...(summary?.browsers || [])].map(item => (
+              <div key={`${item.category}-${item.id}`} className="flex items-center justify-between border border-[#E5E5E5] p-2">
+                <span>{item.name}</span>
+                <Badge variant={item.status === "available" ? "success" : "secondary"}>
+                  {item.status === "available" ? "可用" : "不可用"}
+                </Badge>
+              </div>
+            ))}
+          </div>
+          {summary?.machine_scan?.scanned_at && (
+            <p className="mt-3 text-[11px] text-[#8A8A8A]">扫描时间：{summary.machine_scan.scanned_at} · 机器：{summary.machine_scan.machine_id}</p>
+          )}
+        </div>
       </section>
 
       {/* Summary Cards */}
@@ -474,6 +533,13 @@ export default function AgentConsolePage() {
                               <span className="text-[#8A8A8A]">需要 API Key:</span>
                               <span className="ml-1">{agent.requires_api_key ? "是" : "否"}</span>
                             </div>
+                            {agent.requires_llm && (
+                              <div className="col-span-2">
+                                <span className="text-[#8A8A8A]">LLM:</span>
+                                <span className="ml-1">{agent.llm_binding?.provider || "未配置"} / {agent.llm_binding?.model || "未指定模型"}</span>
+                                <span className="ml-2 text-[#8A8A8A]">{agent.llm_binding?.ready ? "已就绪" : "未就绪"}</span>
+                              </div>
+                            )}
                             <div className="flex items-center gap-1">
                               <Clock className="w-3 h-3 text-[#8A8A8A]" />
                               <span className="text-[#8A8A8A]">超时:</span>

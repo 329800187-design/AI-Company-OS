@@ -1161,6 +1161,15 @@ class ApiClient {
         reliability_score: number
         health: Record<string, unknown>
         last_error?: string
+        llm_binding?: {
+          provider?: string
+          model?: string
+          configured?: boolean
+          credential_source?: string
+          ready?: boolean
+          configured_providers?: string[]
+        }
+        requires_llm?: boolean
       }>
       total: number
       enabled_count: number
@@ -1176,6 +1185,11 @@ class ApiClient {
         available_enabled: Array<{ id: string; name: string; capabilities: string[]; task_types: string[]; runnable?: boolean }>
         message: string
       }
+      llm_providers?: Array<Record<string, unknown> & { id: string; name: string; status: string; model?: string; note?: string }>
+      local_services?: Array<Record<string, unknown> & { id: string; name: string; status: string }>
+      browsers?: Array<Record<string, unknown> & { id: string; name: string; status: string }>
+      tools?: Array<Record<string, unknown> & { id: string; name: string; status: string }>
+      machine_scan?: { machine_id?: string; scanned_at?: string; platform?: string; scope?: string }
     }>("/agent-console/discovered")
   }
 

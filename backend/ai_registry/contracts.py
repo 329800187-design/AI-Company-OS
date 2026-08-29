@@ -1,0 +1,81 @@
+"""Canonical runtime capability contract."""
+from enum import StrEnum
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class ResourceType(StrEnum):
+    AGENT = "agent"
+    LLM_PROVIDER = "llm_provider"
+    LOCAL_TOOL = "local_tool"
+    BROWSER = "browser"
+    LOCAL_SERVICE = "local_service"
+
+
+class AuthorizationState(StrEnum):
+    NOT_REQUIRED = "not_required"
+    REQUIRED = "required"
+    APPROVED = "approved"
+    DENIED = "denied"
+
+
+class CapabilityResource(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
+    resource_id: str
+    resource_type: ResourceType
+    display_name: str
+    provider_type: str = ""
+    discovered: bool = False
+    available: bool = False
+    configured: bool = False
+    verified: bool = False
+    execution_unavailable: bool = False
+    requires_configuration: bool = False
+    requires_verification: bool = False
+    adapter_id: str | None = None
+    authorization: AuthorizationState = AuthorizationState.NOT_REQUIRED
+    last_scanned_at: str = ""
+    machine_id: str = ""
+    source: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def readiness_reasons(self) -> list[str]:
+        reasons: list[str] = []
+        if not self.discovered or not self.available:
+            reasons.append("resource_unavailable")
+        if self.requires_configuration and not self.configured:
+            reasons.append("not_configured")
+        if self.requires_verification and not self.verified:
+            reasons.append("not_verified")
+        if self.authorization == AuthorizationState.REQUIRED:
+            reasons.append("approval_required")
+        elif self.authorization == AuthorizationState.DENIED:
+            reasons.append("approval_denied")
+        if not self.adapter_id:
+            reasons.append("execution_unavailable")
+        if self.execution_unavailable:
+            reasons.append("execution_unavailable")
+        return list(dict.fromkeys(reasons))
+
+    @property
+    def ready(self) -> bool:
+        return not self.readiness_reasons
+
+    def safe_dict(self) -> dict[str, Any]:
+        def redact(value: Any, key: str = "") -> Any:
+            sensitive = ("key", "token", "secret", "password", "authorization", "cookie", "credential")
+            if any(part in key.lower() for part in sensitive):
+                return "[REDACTED]"
+            if isinstance(value, dict):
+                return {str(k): redact(v, str(k)) for k, v in value.items()}
+            if isinstance(value, list):
+                return [redact(v, key) for v in value]
+            return value
+
+        result = redact(self.model_dump(mode="json"))
+        result["ready"] = self.ready
+        result["readiness_reasons"] = self.readiness_reasons
+        return result

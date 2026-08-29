@@ -61,8 +61,10 @@ async def get_discovered_agents():
     """
     discovery = get_agent_discovery()
     agents = discovery.scan_all(force=True)
-    agent_list = [agent.to_dict() for agent in agents.values()]
-    enabled_count = sum(1 for a in agents.values() if a.enabled)
+    agent_list = [agent.to_dict() for agent in agents.values() if agent.kind != "llm"]
+    enabled_count = sum(1 for a in agents.values() if a.enabled and a.kind != "llm")
+    from backend.services.capability_scanner import get_capability_scanner
+    machine = get_capability_scanner().scan_all(force=True)
 
     return {
         "agents": agent_list,
@@ -74,10 +76,15 @@ async def get_discovered_agents():
                  {"id": agent.id, "name": agent.name, "capabilities": agent.capabilities,
                  "task_types": agent.task_types, "runnable": agent.runnable}
                 for agent in agents.values()
-                if agent.status == "available" and agent.enabled and agent.runnable
+                if agent.kind != "llm" and agent.status == "available" and agent.enabled and agent.runnable
             ],
             "message": "任务拆解只会使用状态为可用且已启用的 Agent",
         },
+        "llm_providers": machine["llm_providers"],
+        "local_services": machine["ai_services"],
+        "browsers": machine["browsers"],
+        "tools": machine["tools"],
+        "machine_scan": machine["scan"],
     }
 
 

@@ -13,16 +13,19 @@ import os
 import shutil
 import socket
 import subprocess
+import platform
+import time
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from backend.logger import get_logger
+from backend.runtime_paths import USER_DATA_DIR, ENABLED_AGENTS_PATH
 
 logger = get_logger()
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # ── Enabled Agents 配置管理 ──────────────────────────────────────
-_user_data_dir = Path(os.getenv("AI_COMPANY_OS_USER_DATA", "user_data"))
-_enabled_agents_file = _user_data_dir / "agent_registry" / "enabled_agents.json"
+_user_data_dir = USER_DATA_DIR
+_enabled_agents_file = ENABLED_AGENTS_PATH
 
 # 默认启用配置：内置 manifest agent 默认 enabled=true，外部 CLI/HTTP agent 默认 enabled=false
 _default_enabled_config: Dict[str, bool] = {
@@ -128,6 +131,8 @@ class AgentCapability:
         self.latency_level: str = kwargs.get("latency_level", "unknown")  # fast, medium, slow
         self.reliability_score: float = kwargs.get("reliability_score", 0.5)
         self.last_error: str = kwargs.get("last_error", "")
+        self.llm_binding: Dict[str, Any] = kwargs.get("llm_binding", {})
+        self.requires_llm: bool = kwargs.get("requires_llm", False)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -160,7 +165,9 @@ class AgentCapability:
             "cost_level": self.cost_level,
             "latency_level": self.latency_level,
             "reliability_score": self.reliability_score,
-            "last_error": self.last_error
+            "last_error": self.last_error,
+            "llm_binding": self.llm_binding,
+            "requires_llm": self.requires_llm,
         }
 
 
@@ -171,15 +178,24 @@ class AgentDiscovery:
         self._agents: Dict[str, AgentCapability] = {}
         self._scanned = False
         self._scan_scope: Dict[str, Any] = {}
+        self._scanned_at = 0.0
 
     def scan_all(self, force: bool = False) -> Dict[str, AgentCapability]:
         """扫描所有 Agent"""
-        if self._scanned and not force:
+        if self._scanned and not force and time.time() - self._scanned_at < 8:
             return self._agents
 
         logger.info("AgentDiscovery: Starting full scan...")
 
         self._agents.clear()
+        self._scan_scope = {
+            "project_root": str(PROJECT_ROOT),
+            "project_agent_dirs": [],
+            "path_commands": ["claude", "codex", "gemini", "aider", "cursor", "qwen", "opencode"],
+            "local_services": ["ollama", "lm_studio", "comfyui", "sd_webui", "n8n"],
+            "mcp_configs": ["~/.mcp.json", "~/.config/claude/mcp.json", "项目/.mcp.json"],
+            "filesystem_scan": "仅扫描项目 Agent、用户级 MCP 配置和 PATH 中的已知 Agent 命令；不递归读取整个系统磁盘。",
+        }
 
         # 1. CLI Agent
         self._scan_cli_agents()
@@ -200,6 +216,12 @@ class AgentDiscovery:
         self._apply_enabled_config()
 
         self._scanned = True
+        self._scanned_at = time.time()
+        self._scan_scope.update({
+            "machine_id": self._machine_id(),
+            "scanned_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "platform": platform.platform(),
+        })
         logger.info(f"AgentDiscovery: Found {len(self._agents)} agents")
         return self._agents
 
@@ -237,6 +259,34 @@ class AgentDiscovery:
             if agent.source == "unknown":
                 agent.source = agent.kind
 
+            # Agent 与 LLM Provider 分离；这里只返回模型元数据，不返回密钥。
+            if agent.kind not in ("llm", "mcp"):
+                try:
+                    from backend.config import get_current_provider, get_ai_config, get_provider_info
+                    current = get_current_provider()
+                    providers = get_provider_info()
+                    configured = [p for p in providers if p.get("configured")]
+                    selected = next((p for p in configured if p.get("id") == current), None)
+                    selected = selected or (configured[0] if configured else None)
+                    cfg = get_ai_config(selected["id"] if selected else current)
+                    agent.llm_binding = {
+                        "provider": cfg.get("provider", ""),
+                        "model": cfg.get("model", ""),
+                        "configured": bool(selected),
+                        "credential_source": "environment_variable" if cfg.get("api_key") else "none",
+                        "ready": bool(selected),
+                        "configured_providers": [p.get("id") for p in configured],
+                    }
+                    if agent.requires_llm and not agent.llm_binding["ready"]:
+                        agent.runnable = False
+                except Exception as exc:
+                    agent.llm_binding = {
+                        "provider": "", "model": "", "configured": False,
+                        "credential_source": "none", "ready": False,
+                        "configured_providers": [],
+                        "error": type(exc).__name__,
+                    }
+
     def get_agent(self, agent_id: str) -> Optional[AgentCapability]:
         """获取指定 Agent"""
         return self._agents.get(agent_id)
@@ -244,12 +294,22 @@ class AgentDiscovery:
     def get_available_agents(self) -> List[AgentCapability]:
         """获取所有可用 Agent"""
         return [a for a in self._agents.values()
-                if a.status == "available" and a.enabled]
+                if a.status == "available" and a.enabled and a.kind != "llm"]
 
     def get_agents_by_capability(self, capability: str) -> List[AgentCapability]:
         """根据能力获取 Agent"""
         return [a for a in self._agents.values()
                 if capability in a.capabilities and a.status == "available"]
+
+    def get_llm_providers(self) -> List[AgentCapability]:
+        """返回模型提供者，不把它们当作可执行 Agent。"""
+        return [a for a in self._agents.values() if a.kind == "llm"]
+
+    @staticmethod
+    def _machine_id() -> str:
+        import hashlib
+        raw = "|".join((platform.system(), platform.machine(), platform.node(), str(Path.home())))
+        return hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:16]
 
     def get_agents_by_task_type(self, task_type: str) -> List[AgentCapability]:
         """根据任务类型获取 Agent"""
@@ -276,18 +336,6 @@ class AgentDiscovery:
              "task_types": ["code"],
              "capabilities": ["code_execution", "git_integration"],
              "supports_code_execution": True},
-            {"id": "python", "name": "Python", "cmd": "python", "args": ["--version"],
-             "task_types": ["code", "data"],
-             "capabilities": ["code_execution", "data_analysis"],
-             "supports_code_execution": True, "supports_files": True},
-            {"id": "node", "name": "Node.js", "cmd": "node", "args": ["--version"],
-             "task_types": ["code"],
-             "capabilities": ["code_execution"],
-             "supports_code_execution": True},
-            {"id": "git", "name": "Git", "cmd": "git", "args": ["--version"],
-             "task_types": ["code"],
-             "capabilities": ["version_control"],
-             "supports_files": True},
             {"id": "cursor", "name": "Cursor Agent", "cmd": "cursor", "args": ["--version"],
              "task_types": ["code", "analysis"],
              "capabilities": ["code_execution", "file_analysis"],
@@ -517,7 +565,7 @@ class AgentDiscovery:
             return AgentCapability(
                 id="mimo",
                 name="MiMo",
-                kind="api",
+                kind="llm",
                 endpoint=os.getenv("MIMO_BASE_URL", ""),
                 status="available" if health.get("available") else "unavailable",
                 capabilities=["chat", "reasoning", "web_search"],
@@ -538,7 +586,7 @@ class AgentDiscovery:
             return AgentCapability(
                 id="mimo",
                 name="MiMo",
-                kind="api",
+                kind="llm",
                 status="unavailable",
                 requires_confirmation=False,
                 enabled=True,
@@ -559,7 +607,7 @@ class AgentDiscovery:
             return AgentCapability(
                 id=info["id"],
                 name=info["name"],
-                kind="api",
+                kind="llm",
                 status="unavailable",
                 capabilities=info.get("capabilities", []),
                 task_types=info.get("task_types", []),
@@ -575,7 +623,7 @@ class AgentDiscovery:
         return AgentCapability(
             id=info["id"],
             name=info["name"],
-            kind="api",
+            kind="llm",
             endpoint=base_url,
             status="available",
             capabilities=info.get("capabilities", []),
@@ -698,6 +746,7 @@ class AgentDiscovery:
                 cost_level="free",
                 latency_level="fast",
                 reliability_score=0.7 if status == "available" else 0.0,
+                requires_llm=manifest.id != "example_echo",
                 last_error=last_error,
             )
             self._agents[agent.id] = agent
@@ -743,7 +792,7 @@ class AgentDiscovery:
                 continue
 
             # 跳过已有 manifest 的 agent
-            if agent_dir.name in manifests or any(
+            if agent_dir.name in manifests or agent_dir.name.replace("_agent", "") in manifests or any(
                 m.id == agent_dir.name for m in manifests.values()
             ):
                 continue
@@ -790,14 +839,15 @@ class AgentDiscovery:
                 priority=40,
                 cost_level="free",
                 latency_level="fast",
-                reliability_score=0.7 if status == "available" else 0.0
+                reliability_score=0.7 if status == "available" else 0.0,
+                requires_llm=agent_dir.name not in {"system_agent", "qa_agent"}
             )
             self._agents[agent.id] = agent
 
         self._scan_scope = {
             "project_root": str(PROJECT_ROOT),
             "project_agent_dirs": [str(agents_dir), str(agents_dir / "installed")],
-            "path_commands": ["claude", "codex", "gemini", "aider", "python", "node", "git", "cursor", "qwen", "opencode"],
+            "path_commands": ["claude", "codex", "gemini", "aider", "cursor", "qwen", "opencode"],
             "local_services": ["ollama", "lm_studio", "comfyui", "sd_webui", "n8n"],
             "mcp_configs": ["~/.mcp.json", "~/.config/claude/mcp.json", "项目/.mcp.json"],
             "filesystem_scan": "仅扫描项目 Agent、用户级 MCP 配置和 PATH 中的已知 Agent 命令；不递归读取整个系统磁盘。",

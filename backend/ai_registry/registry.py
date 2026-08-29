@@ -431,16 +431,9 @@ class AIRegistry:
     # ── Scan ────────────────────────────────────────────────
 
     def scan_all(self, force: bool = False) -> Dict[str, AIService]:
-        """扫描所有 AI 资源（缓存 30 秒 + 应用级缓存）"""
-        from core.cache_store import cache
-        cache_key = "ai_registry_services"
-        if not force:
-            cached = cache.get(cache_key)
-            if cached:
-                self._services = cached
-                return self._services
+        """扫描所有 AI 资源，短 TTL 仅用于避免重复探测，不保存历史结果。"""
         now = time.time()
-        if not force and self._services and (now - self._last_scan) < 30:
+        if not force and self._services and (now - self._last_scan) < 8:
             return self._services
 
         success_count = 0
@@ -453,10 +446,8 @@ class AIRegistry:
             except Exception as e:
                 print(f"[AIRegistry] {scanner.__class__.__name__} 扫描失败: {e}", file=sys.stderr)
 
-        # 只有当至少一个扫描成功时才更新缓存
         if success_count > 0:
             self._last_scan = now
-            cache.set(cache_key, self._services, ttl=120)  # 应用级缓存 120s
         return self._services
 
     def get_service(self, service_id: str) -> Optional[AIService]:
