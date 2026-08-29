@@ -1,4 +1,5 @@
 from backend.services.capability_scanner import CapabilityScanner
+from backend.services.agent_discovery import AgentDiscovery
 
 
 def test_scan_exposes_one_canonical_resource_list():
@@ -27,3 +28,34 @@ def test_scan_cache_is_reused_until_force_refresh(monkeypatch):
     scanner.scan_all()
 
     assert calls["count"] == 1
+
+
+def test_agent_discovery_projects_machine_agents_from_canonical_snapshot(monkeypatch):
+    discovery = AgentDiscovery()
+    canonical = {
+        "resources": [{
+            "resource_id": "claude",
+            "resource_type": "agent",
+            "display_name": "Claude Code",
+            "available": True,
+            "configured": True,
+            "verified": True,
+            "ready": False,
+            "readiness_reasons": ["execution_unavailable"],
+            "source": "canonical-test",
+        }]
+    }
+    monkeypatch.setattr(
+        "backend.ai_registry.registry.get_registry",
+        lambda: type("Registry", (), {
+            "scan_runtime_capabilities": lambda self, force=False: canonical
+        })(),
+    )
+    monkeypatch.setattr(discovery, "_scan_mcp_servers", lambda: None)
+    monkeypatch.setattr(discovery, "_scan_local_agents", lambda: None)
+    monkeypatch.setattr(discovery, "_apply_enabled_config", lambda: None)
+
+    agents = discovery.scan_all(force=True)
+
+    assert agents["claude"].source == "canonical_registry"
+    assert agents["claude"].status == "available"

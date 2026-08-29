@@ -197,22 +197,13 @@ class AgentDiscovery:
             "filesystem_scan": "仅扫描项目 Agent、用户级 MCP 配置和 PATH 中的已知 Agent 命令；不递归读取整个系统磁盘。",
         }
 
-        # 1. CLI Agent
-        self._scan_cli_agents()
+        # Machine capabilities come from the canonical registry projection.
+        self._project_canonical_agents()
 
-        # 2. 本地 HTTP 服务
-        self._scan_http_services()
-
-        # 3. API Agent
-        self._scan_api_agents()
-
-        # 4. MCP Server
+        # MCP servers and project agents have compatibility-specific metadata.
         self._scan_mcp_servers()
-
-        # 5. 项目本地 Agents
         self._scan_local_agents()
 
-        # 6. 应用 enabled_agents.json 配置
         self._apply_enabled_config()
 
         self._scanned = True
@@ -224,6 +215,30 @@ class AgentDiscovery:
         })
         logger.info(f"AgentDiscovery: Found {len(self._agents)} agents")
         return self._agents
+
+    def _project_canonical_agents(self) -> None:
+        """Project machine Agent/Provider resources without rescanning them."""
+        from backend.ai_registry import get_registry
+
+        snapshot = get_registry().scan_runtime_capabilities(force=False)
+        for resource in snapshot.get("resources", []):
+            resource_type = resource.get("resource_type")
+            if resource_type not in {"agent", "llm_provider"}:
+                continue
+            is_provider = resource_type == "llm_provider"
+            self._agents[resource["resource_id"]] = AgentCapability(
+                id=resource["resource_id"],
+                name=resource.get("display_name", resource["resource_id"]),
+                kind="llm" if is_provider else "canonical_agent",
+                status="available" if resource.get("available") else "unavailable",
+                capabilities=resource.get("metadata", {}).get("capabilities", []),
+                enabled=get_agent_enabled(resource["resource_id"]) if not is_provider else True,
+                runnable=bool(resource.get("ready")),
+                source="canonical_registry",
+                endpoint=resource.get("metadata", {}).get("endpoint", ""),
+                llm_binding=resource.get("metadata", {}).get("llm_binding", {}),
+                last_error=";".join(resource.get("readiness_reasons", [])),
+            )
 
     def get_scan_scope(self) -> Dict[str, Any]:
         """Explain what was inspected so discovery is observable and bounded."""
