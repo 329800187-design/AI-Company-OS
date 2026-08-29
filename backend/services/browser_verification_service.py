@@ -16,7 +16,9 @@ except ImportError:  # pragma: no cover - exercised when Playwright is absent
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DB_PATH = PROJECT_ROOT / "backend" / "database" / "company_os.db"
+from backend.runtime_paths import DATABASE_PATH
+
+DEFAULT_DB_PATH = DATABASE_PATH
 BACKEND_HEALTH_URL = "http://127.0.0.1:8000/health"
 FRONTEND_URL = "http://127.0.0.1:5173/app?page=agent-console"
 

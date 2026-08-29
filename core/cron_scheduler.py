@@ -74,7 +74,8 @@ class CronScheduler:
 
     def __init__(self, db_path: str = None):
         if db_path is None:
-            db_path = Path(__file__).parent.parent / "backend" / "database" / "company_os.db"
+            from backend.runtime_paths import DATABASE_PATH
+            db_path = DATABASE_PATH
         self.db_path = str(db_path)
         self._jobs: Dict[str, Dict] = {}
         self._running = False

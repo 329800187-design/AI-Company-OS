@@ -24,7 +24,10 @@ from typing import Any, Dict, List, Optional
 
 # ── 配置 ──────────────────────────────────────────────
 
-DB_PATH = Path(__file__).parent.parent / "database" / "company_os.db"
+from backend.runtime_paths import DATABASE_PATH, ensure_user_data_dir
+
+ensure_user_data_dir()
+DB_PATH = DATABASE_PATH
 _local = threading.local()
 
 SUBSCRIPTION_TIERS = {

@@ -68,6 +68,13 @@ def close_all_connections():
 import atexit
 atexit.register(close_all_connections)
 
+from backend.runtime_paths import DATABASE_PATH, ensure_user_data_dir
+
+# User state is intentionally outside the source checkout.  A cloned project
+# therefore starts with an empty database on a new machine.
+DB_PATH = str(DATABASE_PATH)
+ensure_user_data_dir()
+
 
 @contextmanager
 def get_db():

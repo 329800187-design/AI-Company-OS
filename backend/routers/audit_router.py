@@ -4,7 +4,10 @@ from pathlib import Path
 from fastapi import APIRouter, Query
 
 router = APIRouter(prefix="/system", tags=["System / Audit"], include_in_schema=False)
-DB = Path(__file__).parent.parent / "database" / "company_os.db"
+from backend.runtime_paths import DATABASE_PATH, ensure_user_data_dir
+
+ensure_user_data_dir()
+DB = DATABASE_PATH
 
 @router.get("/audit")
 def audit_logs(limit: int = Query(100, le=1000), user_id: str = "", path: str = ""):

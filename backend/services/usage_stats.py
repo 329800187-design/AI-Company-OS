@@ -22,8 +22,10 @@ PRICING = {
 }
 
 # ── SQLite 持久化 ──────────────────────────────────────────
-_DB_DIR = Path(__file__).parent.parent / "database"
-_DB_PATH = _DB_DIR / "company_os.db"
+from backend.runtime_paths import DATABASE_PATH, ensure_user_data_dir
+
+ensure_user_data_dir()
+_DB_PATH = DATABASE_PATH
 _persist_lock = threading.Lock()
 
 

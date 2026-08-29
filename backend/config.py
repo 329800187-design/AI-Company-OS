@@ -13,11 +13,6 @@ try:
     _ENV_FILE = Path(__file__).parent.parent / ".env"
     if _ENV_FILE.exists():
         load_dotenv(_ENV_FILE)
-    else:
-        # 尝试从 .env.example 中读取（降级模式）
-        _EXAMPLE = Path(__file__).parent.parent / ".env.example"
-        if _EXAMPLE.exists():
-            load_dotenv(_EXAMPLE)
 except ImportError:
     pass
 

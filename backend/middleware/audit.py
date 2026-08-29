@@ -5,7 +5,10 @@ from pathlib import Path
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 
-DB = Path(__file__).parent.parent / "database" / "company_os.db"
+from backend.runtime_paths import DATABASE_PATH, ensure_user_data_dir
+
+ensure_user_data_dir()
+DB = DATABASE_PATH
 
 class AuditMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, skip_paths: tuple = None):

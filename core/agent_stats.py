@@ -4,7 +4,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-DB = Path(__file__).parent.parent / "backend" / "database" / "company_os.db"
+from backend.runtime_paths import DATABASE_PATH
+
+DB = DATABASE_PATH
 _lock = threading.Lock()
 
 def _init():
