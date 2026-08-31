@@ -133,6 +133,7 @@ class AgentCapability:
         self.last_error: str = kwargs.get("last_error", "")
         self.llm_binding: Dict[str, Any] = kwargs.get("llm_binding", {})
         self.requires_llm: bool = kwargs.get("requires_llm", False)
+        self.canonical_resource: Dict[str, Any] = kwargs.get("canonical_resource", {})
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -168,6 +169,7 @@ class AgentCapability:
             "last_error": self.last_error,
             "llm_binding": self.llm_binding,
             "requires_llm": self.requires_llm,
+            "canonical_resource": self.canonical_resource,
         }
 
 
@@ -221,23 +223,34 @@ class AgentDiscovery:
         from backend.ai_registry import get_registry
 
         snapshot = get_registry().scan_runtime_capabilities(force=False)
+        resources_by_id = {item.get("resource_id"): item for item in snapshot.get("resources", [])}
         for resource in snapshot.get("resources", []):
             resource_type = resource.get("resource_type")
             if resource_type not in {"agent", "llm_provider"}:
                 continue
             is_provider = resource_type == "llm_provider"
+            provider = resources_by_id.get(resource.get("bound_provider_id"))
+            llm_binding = {
+                "provider_id": resource.get("bound_provider_id"),
+                "ready": bool(provider and provider.get("ready") is True),
+                "readiness_reasons": [] if provider and provider.get("ready") is True
+                else (provider.get("readiness_reasons", []) if provider else ["llm_provider_missing"]),
+            } if not is_provider and resource.get("requires_llm") else {}
             self._agents[resource["resource_id"]] = AgentCapability(
                 id=resource["resource_id"],
                 name=resource.get("display_name", resource["resource_id"]),
                 kind="llm" if is_provider else "canonical_agent",
                 status="available" if resource.get("available") else "unavailable",
                 capabilities=resource.get("metadata", {}).get("capabilities", []),
+                task_types=resource.get("metadata", {}).get("task_types", []),
                 enabled=get_agent_enabled(resource["resource_id"]) if not is_provider else True,
                 runnable=bool(resource.get("ready")),
                 source="canonical_registry",
                 endpoint=resource.get("metadata", {}).get("endpoint", ""),
-                llm_binding=resource.get("metadata", {}).get("llm_binding", {}),
+                llm_binding=llm_binding,
                 last_error=";".join(resource.get("readiness_reasons", [])),
+                canonical_resource=resource,
+                requires_llm=bool(resource.get("requires_llm", False)),
             )
 
     def get_scan_scope(self) -> Dict[str, Any]:
@@ -275,7 +288,13 @@ class AgentDiscovery:
                 agent.source = agent.kind
 
             # Agent 与 LLM Provider 分离；这里只返回模型元数据，不返回密钥。
-            if agent.kind not in ("llm", "mcp"):
+            if agent.kind not in ("llm", "mcp", "canonical_agent"):
+                if agent.source == "compatibility_only":
+                    agent.llm_binding = {
+                        "provider_id": "", "ready": False,
+                        "readiness_reasons": ["canonical_resource_missing"],
+                    }
+                    continue
                 try:
                     from backend.config import get_current_provider, get_ai_config, get_provider_info
                     current = get_current_provider()
@@ -292,8 +311,10 @@ class AgentDiscovery:
                         "ready": bool(selected),
                         "configured_providers": [p.get("id") for p in configured],
                     }
-                    if agent.requires_llm and not agent.llm_binding["ready"]:
-                        agent.runnable = False
+                    # Compatibility fields are projections only; canonical readiness
+                    # is established by the registry scanner.
+                    if agent.canonical_resource:
+                        agent.runnable = bool(agent.canonical_resource.get("ready"))
                 except Exception as exc:
                     agent.llm_binding = {
                         "provider": "", "model": "", "configured": False,
@@ -309,12 +330,12 @@ class AgentDiscovery:
     def get_available_agents(self) -> List[AgentCapability]:
         """获取所有可用 Agent"""
         return [a for a in self._agents.values()
-                if a.status == "available" and a.enabled and a.kind != "llm"]
+                if a.canonical_resource.get("ready") is True and a.enabled and a.kind != "llm"]
 
     def get_agents_by_capability(self, capability: str) -> List[AgentCapability]:
         """根据能力获取 Agent"""
         return [a for a in self._agents.values()
-                if capability in a.capabilities and a.status == "available"]
+                if capability in a.capabilities and a.canonical_resource.get("ready") is True]
 
     def get_llm_providers(self) -> List[AgentCapability]:
         """返回模型提供者，不把它们当作可执行 Agent。"""
@@ -329,7 +350,7 @@ class AgentDiscovery:
     def get_agents_by_task_type(self, task_type: str) -> List[AgentCapability]:
         """根据任务类型获取 Agent"""
         return [a for a in self._agents.values()
-                if task_type in a.task_types and a.status == "available"]
+                if task_type in a.task_types and a.canonical_resource.get("ready") is True]
 
     # ── CLI Agent 扫描 ──────────────────────────────────────
 
@@ -676,6 +697,8 @@ class AgentDiscovery:
                         config = json.load(f)
                     # 解析 MCP 配置
                     for server_name, server_config in config.get("mcpServers", {}).items():
+                        if f"mcp_{server_name}" in self._agents:
+                            continue
                         agent = AgentCapability(
                             id=f"mcp_{server_name}",
                             name=f"MCP: {server_name}",
@@ -687,6 +710,8 @@ class AgentDiscovery:
                             requires_confirmation=False,
                             enabled=True,
                             source="mcp",
+                            runnable=False,
+                            last_error="canonical_resource_missing",
                             health={"config_path": str(config_path)},
                             priority=80,
                             reliability_score=0.6
@@ -713,6 +738,8 @@ class AgentDiscovery:
         manifests = scan_manifests(agents_dir.parent)
 
         for agent_id, manifest in manifests.items():
+            if agent_id in self._agents:
+                continue
             if not manifest.enabled:
                 logger.debug(f"Agent '{agent_id}' disabled in manifest, skipping")
                 continue
@@ -749,7 +776,7 @@ class AgentDiscovery:
                 requires_gpu=manifest.requires_gpu,
                 requires_confirmation=False,
                 enabled=True,
-                source="manifest",
+                source="compatibility_only",
                 health={
                     "module": module_path,
                     "class": class_name,
@@ -763,6 +790,7 @@ class AgentDiscovery:
                 reliability_score=0.7 if status == "available" else 0.0,
                 requires_llm=manifest.id != "example_echo",
                 last_error=last_error,
+                runnable=False,
             )
             self._agents[agent.id] = agent
 
@@ -804,6 +832,8 @@ class AgentDiscovery:
 
         for agent_dir in agents_dir.iterdir():
             if not agent_dir.is_dir() or agent_dir.name.startswith("_"):
+                continue
+            if agent_dir.name.replace("_agent", "") in self._agents:
                 continue
 
             # 跳过已有 manifest 的 agent
@@ -849,13 +879,14 @@ class AgentDiscovery:
                 supports_web_search=cap_config.get("supports_web_search", False),
                 requires_confirmation=False,
                 enabled=True,
-                source="fallback",
+                source="compatibility_only",
                 health={"module": module_name, "source": "fallback", "last_error": last_error},
                 priority=40,
                 cost_level="free",
                 latency_level="fast",
                 reliability_score=0.7 if status == "available" else 0.0,
-                requires_llm=agent_dir.name not in {"system_agent", "qa_agent"}
+                requires_llm=agent_dir.name not in {"system_agent", "qa_agent"},
+                runnable=False,
             )
             self._agents[agent.id] = agent
 

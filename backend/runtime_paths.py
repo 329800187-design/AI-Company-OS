@@ -7,6 +7,8 @@ previous machine's tasks and audit history.
 import os
 import platform
 import shutil
+import sqlite3
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -17,6 +19,10 @@ class RuntimeMigrationResult:
     action: str
     database_path: Path
     copied_paths: tuple[Path, ...] = ()
+
+
+class RuntimeMigrationError(RuntimeError):
+    """Raised when runtime state cannot be migrated safely."""
 
 
 class RuntimePathResolver:
@@ -93,18 +99,99 @@ def migrate_legacy_runtime_data(resolver: RuntimePathResolver) -> RuntimeMigrati
     elif new_db.exists():
         action = "new_existing"
     elif legacy_db is not None:
-        shutil.copy2(legacy_db, new_db)
-        copied.append(new_db)
-        action = "migrated"
+        if _backup_sqlite_database(legacy_db, new_db):
+            copied.append(new_db)
+            action = "migrated"
+        else:
+            action = "new_existing"
     else:
         action = "fresh"
 
     if not new_agents.exists() and legacy_agents is not None:
         new_agents.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(legacy_agents, new_agents)
+        _atomic_copy_regular_file(legacy_agents, new_agents)
         copied.append(new_agents)
 
     return RuntimeMigrationResult(action, new_db, tuple(copied))
+
+
+def _acquire_migration_lock(lock_path: Path):
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(lock_path, "a+")
+    try:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write("0")
+            handle.flush()
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        return handle
+    except Exception:
+        handle.close()
+        raise
+
+
+def _backup_sqlite_database(source: Path, destination: Path) -> bool:
+    lock = _acquire_migration_lock(destination.parent / ".migration.lock")
+    temp_path: Path | None = None
+    try:
+        if destination.exists():
+            return False
+        fd, raw_path = tempfile.mkstemp(prefix=".company_os.", suffix=".db", dir=destination.parent)
+        os.close(fd)
+        temp_path = Path(raw_path)
+        with sqlite3.connect(source) as src, sqlite3.connect(temp_path) as dst:
+            src.backup(dst)
+            check = dst.execute("PRAGMA quick_check").fetchone()
+            if not check or check[0] != "ok":
+                raise RuntimeMigrationError(f"SQLite quick_check failed: {check}")
+            dst.commit()
+        with open(temp_path, "rb") as db_file:
+            os.fsync(db_file.fileno())
+        os.replace(temp_path, destination)
+        temp_path = None
+        return True
+    except Exception as exc:
+        raise RuntimeMigrationError(f"SQLite migration failed: {exc}") from exc
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        _release_migration_lock(lock)
+
+
+def _atomic_copy_regular_file(source: Path, destination: Path) -> None:
+    if not source.is_file() or source.is_symlink():
+        raise RuntimeMigrationError(f"Unsafe migration source: {source}")
+    fd, raw_path = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
+    os.close(fd)
+    temp_path = Path(raw_path)
+    try:
+        shutil.copyfile(source, temp_path)
+        os.replace(temp_path, destination)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def _release_migration_lock(handle) -> None:
+    try:
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        handle.close()
+
+
+def bootstrap_runtime_storage() -> RuntimeMigrationResult:
+    """Explicitly initialize user-owned runtime storage during application startup."""
+    return migrate_legacy_runtime_data(_DEFAULT_RESOLVER)
 
 
 def _default_user_data_dir() -> Path:
@@ -123,4 +210,3 @@ def ensure_user_data_dir() -> Path:
 
 
 _DEFAULT_RESOLVER = RuntimePathResolver.from_platform()
-_DEFAULT_MIGRATION = migrate_legacy_runtime_data(_DEFAULT_RESOLVER)

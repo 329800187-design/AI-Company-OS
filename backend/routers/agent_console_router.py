@@ -11,6 +11,19 @@ logger = get_logger()
 router = APIRouter(prefix="/agent-console", tags=["Agent Console / 控制台"])
 
 
+def planning_candidates(agents, canonical_resources):
+    """Return enabled, canonical-ready Agent projections for planning."""
+    return [
+        {"id": agent.id, "name": agent.name, "capabilities": agent.capabilities,
+         "task_types": agent.task_types, "runnable": agent.runnable}
+        for agent in agents.values()
+        if agent.kind != "llm"
+        and agent.enabled
+        and canonical_resources.get(agent.id, {}).get("resource_type") == "agent"
+        and canonical_resources[agent.id].get("ready") is True
+    ]
+
+
 @router.get("/agents", summary="获取所有 Agent")
 async def get_agents():
     """获取所有已发现的 Agent"""
@@ -65,6 +78,7 @@ async def get_discovered_agents():
     enabled_count = sum(1 for a in agents.values() if a.enabled and a.kind != "llm")
     from backend.ai_registry import get_registry
     machine = get_registry().scan_runtime_capabilities()
+    canonical_resources = {r.get("resource_id"): r for r in machine["resources"]}
 
     return {
         "agents": agent_list,
@@ -72,12 +86,7 @@ async def get_discovered_agents():
         "enabled_count": enabled_count,
         "scan_scope": discovery.get_scan_scope(),
         "planning": {
-            "available_enabled": [
-                 {"id": agent.id, "name": agent.name, "capabilities": agent.capabilities,
-                 "task_types": agent.task_types, "runnable": agent.runnable}
-                for agent in agents.values()
-                if agent.kind != "llm" and agent.status == "available" and agent.enabled and agent.runnable
-            ],
+            "available_enabled": planning_candidates(agents, canonical_resources),
             "message": "任务拆解只会使用状态为可用且已启用的 Agent",
         },
         "llm_providers": machine["llm_providers"],

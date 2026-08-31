@@ -255,10 +255,12 @@ class CommanderAgent:
 
         # 实例化所有内置 Agent（使用延迟加载）
         self._agents = {}
+        from backend.ai_registry.eligibility import get_canonical_resource
+        runtime_snapshot = get_registry().scan_runtime_capabilities()
         agent_names = ["ceo", "codex", "qa", "cto", "openclaw", "system", "image", "marketing", "video", "data", "research", "website"]
         for name in agent_names:
             agent = _get_agent(name)
-            if agent is not None:
+            if agent is not None and get_canonical_resource(name, runtime_snapshot):
                 self._agents[agent.AGENT_ID] = agent
             else:
                 _cmd_logger.warning(f"[Commander] Agent '{name}' unavailable")
@@ -272,7 +274,7 @@ class CommanderAgent:
             discovered = get_agent_discovery().scan_all(force=True)
             for agent_id, manifest in manifests.items():
                 capability = discovered.get(agent_id)
-                if not capability or not capability.enabled or capability.status != "available":
+                if not capability or not capability.enabled or not capability.canonical_resource.get("ready", False):
                     continue
                 if agent_id in self._agents:
                     continue
@@ -287,7 +289,8 @@ class CommanderAgent:
         try:
             from agents.user_plugins.adapter import discover_plugins
             for plugin in discover_plugins():
-                self._agents[plugin.AGENT_ID] = plugin
+                if get_canonical_resource(plugin.AGENT_ID, runtime_snapshot):
+                    self._agents[plugin.AGENT_ID] = plugin
         except Exception as e:
             _cmd_logger.warning(f"[Commander] 加载用户插件失败: {e}")
 
@@ -706,7 +709,15 @@ class CommanderAgent:
             details["context"] = (details.get("context", "") +
                                   f"\n[用户补充信息] {user_response}")
 
-        executor = self._get_executor(agent_name)
+        from backend.ai_registry.eligibility import get_canonical_resource
+        canonical_id = agent_name.removesuffix("_agent")
+        canonical = get_canonical_resource(canonical_id, get_registry().scan_runtime_capabilities())
+        if not canonical:
+            return {"step": step_num, "status": "失败", "result": "canonical_resource_missing"}
+        if not canonical.get("ready", False):
+            return {"step": step_num, "status": "失败", "result": canonical.get("readiness_reasons", ["agent_not_ready"])}
+
+        executor = self._get_executor(agent_name) or self._get_executor(canonical_id)
 
         # 如果传统 Agent 不认识，尝试通过 AI Registry 路由
         if not executor:

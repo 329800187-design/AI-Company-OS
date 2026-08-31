@@ -17,6 +17,7 @@ from backend.schemas.agent_protocol import AgentTask, AgentRunResult
 from backend.schemas.agent_manifest import scan_manifests
 from backend.services.agent_loader import load_agent_instance, AGENT_REGISTRY
 from backend.services.agent_discovery import get_agent_enabled
+from backend.ai_registry import get_registry
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,18 @@ def execute_agent(agent_id: str, task: AgentTask) -> AgentRunResult:
     task_id = task.task_id or f"exec_{uuid.uuid4().hex[:8]}"
 
     try:
+        from backend.ai_registry.eligibility import get_canonical_resource
+        snapshot = get_registry().scan_runtime_capabilities()
+        canonical = get_canonical_resource(agent_id, snapshot)
+        if canonical is None:
+            return AgentRunResult(ok=False, agent_id=agent_id,
+                                  error="agent_not_in_canonical_registry: not found",
+                                  metadata={"task_id": task_id})
+        if not canonical.get("ready", False):
+            return AgentRunResult(ok=False, agent_id=agent_id,
+                                  error="agent_not_ready",
+                                  metadata={"task_id": task_id,
+                                            "readiness_reasons": canonical.get("readiness_reasons", [])})
         # ── 0. 检查 agent 是否启用 ──
         if not get_agent_enabled(agent_id):
             available = _list_available_agents()

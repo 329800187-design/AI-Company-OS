@@ -103,6 +103,9 @@ class CapabilityScanner:
                     execution_unavailable=not bool(item.get("execution_ready", False)) and resource_type == ResourceType.AGENT,
                     requires_configuration=resource_type == ResourceType.LLM_PROVIDER,
                     requires_verification=requires_verification,
+                    requires_adapter=resource_type == ResourceType.AGENT,
+                    requires_llm=bool(item.get("requires_llm", False)),
+                    bound_provider_id=item.get("bound_provider_id"),
                     adapter_id=adapter_id,
                     last_scanned_at=observations["scan"]["scanned_at"],
                     machine_id=observations["scan"]["machine_id"],
@@ -110,7 +113,24 @@ class CapabilityScanner:
                     metadata=item,
                 )
                 resources.append(resource.safe_dict())
-        return resources
+        providers = {}
+        for item in resources:
+            if item["resource_type"] != ResourceType.LLM_PROVIDER.value:
+                continue
+            provider_data = dict(item)
+            if provider_data.get("authorization") == "[REDACTED]":
+                provider_data["authorization"] = "not_required"
+            providers[item["resource_id"]] = CapabilityResource(**provider_data)
+        resolved = []
+        for item in resources:
+            resource_data = dict(item)
+            if resource_data.get("authorization") == "[REDACTED]":
+                resource_data["authorization"] = "not_required"
+            resource = CapabilityResource(**resource_data)
+            if resource.requires_llm:
+                resource = resource.with_provider_dependency(providers.get(resource.bound_provider_id))
+            resolved.append(resource.safe_dict())
+        return resolved
 
     def get_available_tools(self) -> List[str]:
         return [x["id"] for x in self.scan_all()["tools"] if x["status"] == "available"]
@@ -218,6 +238,48 @@ class CapabilityScanner:
                                        path=path, version=self._version(path) if path else "",
                                        execution_ready=False, adapter="none",
                                        error="未检测到命令" if not path else "发现命令但没有安全执行适配器"))
+        try:
+            from backend.schemas.agent_manifest import scan_manifests
+            manifests = scan_manifests()
+            for manifest in manifests.values():
+                if manifest.enabled:
+                    result.append(self._result(
+                        manifest.id, manifest.name, "agent", "available",
+                        manifest.capabilities, source="project_manifest",
+                        task_types=manifest.task_types, execution_ready=True,
+                        adapter="project_agent_adapter", requires_llm=manifest.requires_api_key,
+                        bound_provider_id=os.getenv("AI_PROVIDER", ""),
+                    ))
+            agents_root = Path(__file__).resolve().parents[2] / "agents"
+            for agent_dir in agents_root.iterdir() if agents_root.exists() else ():
+                if not agent_dir.is_dir() or not (agent_dir / "agent.py").exists():
+                    continue
+                agent_id = agent_dir.name.replace("_agent", "")
+                if agent_id in manifests or agent_id.replace("_agent", "") in manifests:
+                    continue
+                result.append(self._result(
+                    agent_id, agent_id.replace("_", " ").title(), "agent", "available",
+                    ["local_agent"], source="project_agent", task_types=[agent_id.replace("_agent", "")],
+                    execution_ready=True, adapter="project_agent_adapter",
+                    requires_llm=False,
+                    bound_provider_id=os.getenv("AI_PROVIDER", ""),
+                ))
+        except Exception:
+            pass
+        for config_path in (Path.home() / ".mcp.json", Path(".mcp.json"),
+                            Path.home() / ".config" / "claude" / "mcp.json"):
+            try:
+                import json
+                config = json.loads(config_path.read_text(encoding="utf-8"))
+                for server_name, server in config.get("mcpServers", {}).items():
+                    result.append(self._result(
+                        f"mcp_{server_name}", f"MCP: {server_name}", "agent", "available",
+                        ["mcp_tools"], source="mcp", endpoint=server.get("command", ""),
+                        task_types=["chat", "code"], execution_ready=True,
+                        adapter="mcp_adapter", requires_llm=False,
+                    ))
+            except (OSError, ValueError, TypeError):
+                continue
         return result
 
     @staticmethod

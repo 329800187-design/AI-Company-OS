@@ -226,6 +226,8 @@ def auth_config(request: AuthConfigRequest):
 # 启动时初始化数据库
 @app.on_event("startup")
 def startup():
+    from backend.runtime_paths import bootstrap_runtime_storage
+    bootstrap_runtime_storage()
     init_db()
     log_info("system", "AI Company OS 启动完成", version="1.0.0", provider=config.AI_PROVIDER)
 
