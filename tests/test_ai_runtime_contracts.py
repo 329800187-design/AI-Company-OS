@@ -14,6 +14,7 @@ def test_ready_requires_all_execution_prerequisites():
         available=True,
         configured=True,
         verified=True,
+        requires_adapter=True,
         adapter_id="openclaw_gateway_adapter",
         authorization=AuthorizationState.NOT_REQUIRED,
     )
@@ -30,6 +31,7 @@ def test_available_resource_without_adapter_is_not_ready():
         available=True,
         configured=True,
         verified=True,
+        requires_adapter=True,
     )
     assert resource.ready is False
     assert "execution_unavailable" in resource.readiness_reasons

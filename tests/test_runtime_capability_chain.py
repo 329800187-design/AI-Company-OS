@@ -25,9 +25,12 @@ def test_agent_registry_excludes_disabled_agents():
 
     registry = AgentRegistry()
     registry._agents = {
-        "enabled": AgentCapability(id="enabled", name="Enabled", status="available", enabled=True),
-        "disabled": AgentCapability(id="disabled", name="Disabled", status="available", enabled=False),
-        "offline": AgentCapability(id="offline", name="Offline", status="unavailable", enabled=True),
+        "enabled": AgentCapability(id="enabled", name="Enabled", status="available", enabled=True,
+                                    canonical_resource={"resource_id": "enabled", "resource_type": "agent", "ready": True}),
+        "disabled": AgentCapability(id="disabled", name="Disabled", status="available", enabled=False,
+                                     canonical_resource={"resource_id": "disabled", "resource_type": "agent", "ready": True}),
+        "offline": AgentCapability(id="offline", name="Offline", status="unavailable", enabled=True,
+                                    canonical_resource={"resource_id": "offline", "resource_type": "agent", "ready": False}),
     }
 
     assert [agent.id for agent in registry.get_available_agents()] == ["enabled"]
