@@ -10,6 +10,13 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-26-capability-runtime-architecture-design.md`
 
+> **Phase 1 closure status (2026-08-31): COMPLETE.** Canonical lifecycle,
+> readiness single-source, and LLM dependency propagation gates are closed on
+> `codex/capability-runtime-convergence`. Historical unchecked boxes below
+> remain an implementation record, not outstanding Phase 1 work. The 15
+> baseline-only backend failures remain out of scope; no Phase 2 work is
+> included in this closure.
+
 ## Global Constraints
 
 - 不回滚或覆盖当前工作区已有的未提交修改；每个任务只提交自己新增或修改的文件。
