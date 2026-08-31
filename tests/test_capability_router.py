@@ -24,7 +24,17 @@ from backend.services.capability_router import route_capability, RoutingResult
 # 默认让所有 agent 通过 agent_discovery 检查（除非测试中显式 mock）
 @pytest.fixture(autouse=True)
 def _mock_agent_discovery_enabled():
-    with patch("backend.services.capability_router.get_agent_enabled", return_value=True):
+    class _Registry:
+        def scan_runtime_capabilities(self):
+            return {"resources": [
+                {"resource_id": agent_id, "resource_type": "agent", "ready": True, "enabled": True}
+                for agent_id in {
+                    "marketing", "image", "data", "example_echo", "test_agent", "z_agent", "a_agent",
+                    "high_risk", "low_risk", "disabled1", "disabled", "enabled", "disabled_by_config",
+                }
+            ]}
+
+    with patch("backend.services.capability_router.get_agent_enabled", return_value=True), patch("backend.services.capability_router.get_registry", return_value=_Registry()):
         yield
 
 
@@ -274,3 +284,50 @@ class TestScanFailure:
         result = route_capability("any_cap")
         assert result.assigned_agent_id is None
         assert "scan failed" in result.reason
+
+
+def _canonical(*resources):
+    return {"resources": list(resources)}
+
+
+def _resource(agent_id, *, ready=True, enabled=True, resource_type="agent"):
+    return {"resource_id": agent_id, "resource_type": resource_type, "ready": ready, "enabled": enabled}
+
+
+class TestCanonicalSnapshotGate:
+    def test_manifest_only_agent_is_not_routable(self):
+        manifest = _manifest(id="manifest_only", capabilities=["cap_x"])
+        result = route_capability("cap_x", manifests={manifest.id: manifest}, canonical_snapshot=_canonical())
+        assert result.assigned_agent_id is None
+
+    def test_canonical_unready_agent_is_not_routable(self):
+        manifest = _manifest(id="unready", capabilities=["cap_x"])
+        result = route_capability(
+            "cap_x", manifests={manifest.id: manifest},
+            canonical_snapshot=_canonical(_resource("unready", ready=False)),
+        )
+        assert result.assigned_agent_id is None
+
+    def test_canonical_ready_enabled_agent_is_routable(self):
+        manifest = _manifest(id="ready", capabilities=["cap_x"])
+        result = route_capability(
+            "cap_x", manifests={manifest.id: manifest},
+            canonical_snapshot=_canonical(_resource("ready", ready=True, enabled=True)),
+        )
+        assert result.assigned_agent_id == "ready"
+
+    def test_disabled_canonical_agent_is_not_routable(self):
+        manifest = _manifest(id="disabled", capabilities=["cap_x"])
+        result = route_capability(
+            "cap_x", manifests={manifest.id: manifest},
+            canonical_snapshot=_canonical(_resource("disabled", ready=True, enabled=False)),
+        )
+        assert result.assigned_agent_id is None
+
+    def test_ready_non_agent_resource_is_not_routable(self):
+        manifest = _manifest(id="provider", capabilities=["cap_x"])
+        result = route_capability(
+            "cap_x", manifests={manifest.id: manifest},
+            canonical_snapshot=_canonical(_resource("provider", ready=True, enabled=True, resource_type="llm_provider")),
+        )
+        assert result.assigned_agent_id is None

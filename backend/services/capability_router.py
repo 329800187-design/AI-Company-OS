@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from backend.schemas.agent_manifest import AgentManifest, scan_manifests
+from backend.ai_registry import get_registry
 from backend.services.agent_discovery import get_agent_enabled
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ def route_capability(
     required_capability: str,
     task_type: str = "",
     manifests: Optional[Dict[str, AgentManifest]] = None,
+    canonical_snapshot: Optional[Dict] = None,
 ) -> RoutingResult:
     """
     根据 required_capability 和 task_type 路由到最合适的 agent。
@@ -65,10 +67,36 @@ def route_capability(
             logger.warning(f"CapabilityRouter: manifest scan failed: {e}")
             return RoutingResult(reason=f"manifest scan failed: {e}")
 
+    if canonical_snapshot is None:
+        try:
+            canonical_snapshot = get_registry().scan_runtime_capabilities()
+        except Exception as e:
+            logger.warning(f"CapabilityRouter: canonical capability scan failed: {e}")
+            return RoutingResult(reason=f"canonical capability scan failed: {e}")
+
+    if not isinstance(canonical_snapshot, dict):
+        return RoutingResult(reason="canonical capability snapshot unavailable")
+
+    canonical_agents = {
+        str(resource.get("resource_id")): resource
+        for resource in canonical_snapshot.get("resources", [])
+        if isinstance(resource, dict)
+        and resource.get("resource_type") == "agent"
+        and resource.get("ready") is True
+        # Current canonical CapabilityResource has no top-level enabled field.
+        # When a snapshot supplies it, false is always a hard rejection; the
+        # existing manifest/config enabled projection remains the compatibility
+        # gate for snapshots produced by the current contract.
+        and resource.get("enabled", True) is True
+        and resource.get("resource_id")
+    }
+    if not canonical_agents:
+        return RoutingResult(reason="no canonical ready agents found")
+
     # 过滤 enabled agents（manifest.enabled + agent_discovery enabled 双重检查）
     enabled = {
         mid: m for mid, m in manifests.items()
-        if m.enabled and get_agent_enabled(mid)
+        if mid in canonical_agents and m.enabled and get_agent_enabled(mid)
     }
 
     if not enabled:
