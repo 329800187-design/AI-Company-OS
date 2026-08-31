@@ -197,6 +197,17 @@ def save_config(data: ConfigSaveData):
         "CLAUDE_MODEL": "claude_model",
         "AUTH_TOKEN": "auth_token",
     }
+    provider_by_config_field = {
+        "deepseek_api_key": "deepseek",
+        "deepseek_base_url": "deepseek",
+        "deepseek_model": "deepseek",
+        "openai_api_key": "openai",
+        "openai_base_url": "openai",
+        "openai_model": "openai",
+        "claude_api_key": "claude",
+        "claude_base_url": "claude",
+        "claude_model": "claude",
+    }
 
     verify_invalidation: set[str] = set()
 
@@ -208,8 +219,8 @@ def save_config(data: ConfigSaveData):
             # 双重保险：再次过滤注入字符
             sanitized = _sanitize_env_value(val)
             existing[env_key] = sanitized
-            if json_key.endswith("_base_url") or json_key.endswith("_model") or json_key.endswith("_api_key"):
-                provider = json_key.rsplit("_", 1)[0]
+            if json_key in provider_by_config_field:
+                provider = provider_by_config_field[json_key]
                 verify_invalidation.add(provider)
 
     runtime_values = {

@@ -31,6 +31,57 @@ def test_save_does_not_switch_or_clear_existing_api_key(monkeypatch, tmp_path):
     assert config_router.get_current_provider() == "deepseek"
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "expected_provider"),
+    [
+        ("openai_api_key", "new-key", "openai"),
+        ("openai_base_url", "https://example.test/v1", "openai"),
+        ("openai_model", "new-model", "openai"),
+        ("deepseek_api_key", "new-key", "deepseek"),
+        ("claude_base_url", "https://example.test/v1", "claude"),
+    ],
+)
+def test_save_config_invalidates_the_explicit_provider(monkeypatch, tmp_path, field, value, expected_provider):
+    import backend.routers.config_router as config_router
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("AI_PROVIDER=deepseek\n", encoding="utf-8")
+    invalidated = []
+    monkeypatch.setattr(config_router, "ENV_FILE", env_file)
+    monkeypatch.setattr(config_router, "invalidate_provider", invalidated.append)
+    monkeypatch.setattr(config_router, "get_current_provider", lambda: "deepseek")
+    monkeypatch.setattr(
+        "core.brain_manager.get_brain_manager",
+        lambda: type("FakeManager", (), {"get_current": lambda self: {"brain_id": "deepseek"}})(),
+    )
+
+    result = config_router.save_config(config_router.ConfigSaveData(**{field: value}))
+
+    assert result["status"] == "ok"
+    assert invalidated == [expected_provider]
+
+
+def test_save_config_empty_api_key_preserves_old_key_without_invalidation(monkeypatch, tmp_path):
+    import backend.routers.config_router as config_router
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("AI_PROVIDER=deepseek\nOPENAI_API_KEY=old-key\n", encoding="utf-8")
+    invalidated = []
+    monkeypatch.setattr(config_router, "ENV_FILE", env_file)
+    monkeypatch.setattr(config_router, "invalidate_provider", invalidated.append)
+    monkeypatch.setattr(config_router, "get_current_provider", lambda: "deepseek")
+    monkeypatch.setattr(
+        "core.brain_manager.get_brain_manager",
+        lambda: type("FakeManager", (), {"get_current": lambda self: {"brain_id": "deepseek"}})(),
+    )
+
+    result = config_router.save_config(config_router.ConfigSaveData(openai_api_key=""))
+
+    assert result["status"] == "ok"
+    assert "OPENAI_API_KEY=old-key" in env_file.read_text(encoding="utf-8")
+    assert invalidated == []
+
+
 def test_switch_rejects_unverified_provider(monkeypatch):
     import backend.routers.config_router as config_router
 
