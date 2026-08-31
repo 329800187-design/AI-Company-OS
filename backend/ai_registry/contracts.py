@@ -89,7 +89,10 @@ class CapabilityResource(BaseModel):
     def safe_dict(self) -> dict[str, Any]:
         def redact(value: Any, key: str = "") -> Any:
             sensitive = ("key", "token", "secret", "password", "authorization", "cookie", "credential")
-            if any(part in key.lower() for part in sensitive):
+            lowered = key.lower()
+            if any(part in lowered for part in sensitive):
+                if lowered == "authorization" and isinstance(value, str) and value in {s.value for s in AuthorizationState}:
+                    return value
                 return "[REDACTED]"
             if isinstance(value, dict):
                 return {str(k): redact(v, str(k)) for k, v in value.items()}

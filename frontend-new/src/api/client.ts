@@ -135,7 +135,14 @@ class ApiClient {
   }
 
   async testConnection(provider: string) {
-    return this.request<{ status: "ok" | "error"; message: string }>("/config/test", {
+    return this.request<{ status: "ok" | "error"; message: string; verified?: boolean }>("/config/test", {
+      method: "POST",
+      body: { provider },
+    })
+  }
+
+  async switchProvider(provider: string) {
+    return this.request<{ status: string; message: string; current_provider: string }>("/config/switch", {
       method: "POST",
       body: { provider },
     })

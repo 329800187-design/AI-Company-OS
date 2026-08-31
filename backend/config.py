@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from backend.services.provider_verification import get_provider_verification
+
 # 尝试加载 .env 文件
 try:
     from dotenv import load_dotenv
@@ -130,6 +132,8 @@ def get_ai_config(provider: Optional[str] = None) -> dict:
 
 def get_provider_info() -> list[dict]:
     """返回所有 Provider 的信息（不含 Key）"""
+    verified_flags = {provider: get_provider_verification(provider).get("verified", False)
+                      for provider in ("deepseek", "openai", "claude")}
     return [
         {
             "id": "deepseek",
@@ -137,6 +141,7 @@ def get_provider_info() -> list[dict]:
             "model": os.getenv("DEEPSEEK_MODEL", DEEPSEEK_MODEL),
             "configured": bool(os.getenv("DEEPSEEK_API_KEY", DEEPSEEK_API_KEY)),
             "base_url": os.getenv("DEEPSEEK_BASE_URL", DEEPSEEK_BASE_URL),
+            "verified": bool(verified_flags.get("deepseek")),
         },
         {
             "id": "openai",
@@ -144,6 +149,7 @@ def get_provider_info() -> list[dict]:
             "model": os.getenv("OPENAI_MODEL", OPENAI_MODEL),
             "configured": bool(os.getenv("OPENAI_API_KEY", OPENAI_API_KEY)),
             "base_url": os.getenv("OPENAI_BASE_URL", OPENAI_BASE_URL),
+            "verified": bool(verified_flags.get("openai")),
         },
         {
             "id": "claude",
@@ -151,6 +157,7 @@ def get_provider_info() -> list[dict]:
             "model": os.getenv("CLAUDE_MODEL", CLAUDE_MODEL),
             "configured": bool(os.getenv("CLAUDE_API_KEY", CLAUDE_API_KEY) or os.getenv("ANTHROPIC_API_KEY", "")),
             "base_url": os.getenv("CLAUDE_BASE_URL", CLAUDE_BASE_URL),
+            "verified": bool(verified_flags.get("claude")),
         },
     ]
 

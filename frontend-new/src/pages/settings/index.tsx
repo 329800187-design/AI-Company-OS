@@ -146,6 +146,7 @@ export default function SettingsPage() {
   const [brains, setBrains] = useState<BrainItem[]>([])
   const [currentBrain, setCurrentBrain] = useState("")
   const [switchingBrain, setSwitchingBrain] = useState("")
+  const [switchingProvider, setSwitchingProvider] = useState(false)
 
   const [providerHealth, setProviderHealth] = useState<{
     search: ProviderHealthItem
@@ -229,6 +230,20 @@ export default function SettingsPage() {
     }
   }
 
+  const handleSwitchProvider = async () => {
+    setSwitchingProvider(true)
+    setSaveError("")
+    try {
+      await api.switchProvider(provider)
+      await loadConfig()
+      await loadHealth()
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Provider 切换失败")
+    } finally {
+      setSwitchingProvider(false)
+    }
+  }
+
   const loadHealth = async () => {
     setLoadingHealth(true)
     try {
@@ -301,9 +316,7 @@ export default function SettingsPage() {
     setIsLoading(true)
     setSaveError("")
     try {
-      const configData: Record<string, unknown> = {
-        ai_provider: provider,
-      }
+      const configData: Record<string, unknown> = {}
 
       if (apiKey) {
         configData[`${provider}_api_key`] = apiKey
@@ -669,6 +682,16 @@ export default function SettingsPage() {
             <Save className="w-4 h-4" />
           )}
           {isSaved ? "已保存" : "保存设置"}
+        </Button>
+        <Button
+          onClick={handleSwitchProvider}
+          disabled={switchingProvider || health.currentProvider === provider}
+          variant="outline"
+          size="lg"
+          className="w-full mt-3"
+        >
+          {switchingProvider ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+          {health.currentProvider === provider ? "当前 Provider" : "切换到此 Provider"}
         </Button>
       </motion.div>
       {saveError && (

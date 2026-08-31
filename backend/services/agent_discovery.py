@@ -335,7 +335,8 @@ class AgentDiscovery:
     def get_agents_by_capability(self, capability: str) -> List[AgentCapability]:
         """根据能力获取 Agent"""
         return [a for a in self._agents.values()
-                if capability in a.capabilities and a.canonical_resource.get("ready") is True]
+                if capability in a.capabilities and a.enabled
+                and a.kind != "llm" and a.canonical_resource.get("ready") is True]
 
     def get_llm_providers(self) -> List[AgentCapability]:
         """返回模型提供者，不把它们当作可执行 Agent。"""
@@ -350,7 +351,8 @@ class AgentDiscovery:
     def get_agents_by_task_type(self, task_type: str) -> List[AgentCapability]:
         """根据任务类型获取 Agent"""
         return [a for a in self._agents.values()
-                if task_type in a.task_types and a.canonical_resource.get("ready") is True]
+                if task_type in a.task_types and a.enabled
+                and a.kind != "llm" and a.canonical_resource.get("ready") is True]
 
     # ── CLI Agent 扫描 ──────────────────────────────────────
 

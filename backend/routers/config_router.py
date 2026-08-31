@@ -16,6 +16,11 @@ from backend.config import (
     LOG_LEVEL, LOG_DIR, LOG_MAX_DAYS,
     get_provider_info, get_ai_config, get_current_provider, apply_runtime_config,
 )
+from backend.services.provider_verification import (
+    get_provider_verification,
+    invalidate_provider,
+    set_provider_verification,
+)
 from backend.middleware.auth_middleware import set_auth_token, set_auth_enabled
 
 router = APIRouter(prefix="/config", tags=["配置管理 / Config"])
@@ -70,6 +75,10 @@ class ConfigSaveData(BaseModel):
 
 class TestConnectionData(BaseModel):
     """测试连接请求"""
+    provider: str = "deepseek"
+
+
+class SwitchProviderData(BaseModel):
     provider: str = "deepseek"
 
 
@@ -166,18 +175,6 @@ def save_config(data: ConfigSaveData):
     """将配置写入 .env 文件（Pydantic 校验 + 防注入）"""
     data_dict = data.model_dump(exclude_none=True)
 
-    # Provider 切换必须在同一次请求中具备凭据，避免界面显示“已切换”但聊天实际失败。
-    if "ai_provider" in data_dict:
-        requested_provider = str(data_dict["ai_provider"])
-        provider_info = next((p for p in get_provider_info() if p["id"] == requested_provider), None)
-        key_field = f"{requested_provider}_api_key"
-        has_pending_key = bool(data_dict.get(key_field))
-        if provider_info and not provider_info.get("configured") and not has_pending_key:
-            raise HTTPException(
-                status_code=400,
-                detail=f"{requested_provider} 尚未配置 API Key，请先填写密钥后再切换主脑",
-            )
-
     # 读取现有内容
     existing = {}
     if ENV_FILE.exists():
@@ -189,7 +186,6 @@ def save_config(data: ConfigSaveData):
 
     # 合并新值
     env_map = {
-        "AI_PROVIDER": "ai_provider",
         "DEEPSEEK_API_KEY": "deepseek_api_key",
         "DEEPSEEK_BASE_URL": "deepseek_base_url",
         "DEEPSEEK_MODEL": "deepseek_model",
@@ -202,24 +198,36 @@ def save_config(data: ConfigSaveData):
         "AUTH_TOKEN": "auth_token",
     }
 
+    verify_invalidation: set[str] = set()
+
     for env_key, json_key in env_map.items():
         if json_key in data_dict:
             val = str(data_dict[json_key])
+            if json_key.endswith("_api_key") and not val.strip():
+                continue
             # 双重保险：再次过滤注入字符
-            existing[env_key] = _sanitize_env_value(val)
+            sanitized = _sanitize_env_value(val)
+            existing[env_key] = sanitized
+            if json_key.endswith("_base_url") or json_key.endswith("_model") or json_key.endswith("_api_key"):
+                provider = json_key.rsplit("_", 1)[0]
+                verify_invalidation.add(provider)
 
     runtime_values = {
         env_key: _sanitize_env_value(str(data_dict[json_key]))
         for env_key, json_key in env_map.items()
         if json_key in data_dict
     }
+
+    # 空 API Key 不覆盖旧值：在此过滤后仅写入非空值
+    runtime_values = {
+        env_key: value
+        for env_key, value in runtime_values.items()
+        if not env_key.endswith("_API_KEY") or value.strip()
+    }
     apply_runtime_config(runtime_values)
 
-    if "ai_provider" in data_dict:
-        from core.brain_manager import get_brain_manager
-        brain_result = get_brain_manager().switch_to(str(data_dict["ai_provider"]))
-        if not brain_result.get("ok"):
-            raise HTTPException(status_code=400, detail=brain_result.get("error", "Provider 不可用"))
+    for provider in verify_invalidation:
+        invalidate_provider(provider)
 
     # 认证配置特殊处理：运行时生效
     if "auth_token" in data_dict:
@@ -241,7 +249,31 @@ def save_config(data: ConfigSaveData):
     from core.brain_manager import get_brain_manager
     return {
         "status": "ok",
-        "message": "配置已保存并已在当前服务生效",
+        "message": "配置已保存",
+        "current_provider": get_current_provider(),
+        "current_brain": get_brain_manager().get_current(),
+    }
+
+
+@router.post("/switch", summary="切换 AI Provider")
+def switch_provider(data: SwitchProviderData):
+    """只切换运行中的 Provider，不写入配置。"""
+    provider = (data.provider or "").strip()
+    provider_info = next((p for p in get_provider_info() if p.get("id") == provider), None)
+    if not provider_info:
+        raise HTTPException(status_code=400, detail="不支持的 provider")
+    if not provider_info.get("configured"):
+        raise HTTPException(status_code=400, detail="该 Provider 未配置 API Key，无法切换")
+    if not get_provider_verification(provider).get("verified"):
+        raise HTTPException(status_code=400, detail="该 Provider 未通过测试验证，请先执行连接测试")
+
+    from core.brain_manager import get_brain_manager
+    result = get_brain_manager().switch_to(provider)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Provider 不可用"))
+    return {
+        "status": "ok",
+        "message": result.get("message", "Provider 已切换"),
         "current_provider": get_current_provider(),
         "current_brain": get_brain_manager().get_current(),
     }
@@ -280,6 +312,13 @@ def test_connection(data: TestConnectionData):
 
         resp = httpx.post(url, headers=headers, json=body, timeout=15)
         resp.raise_for_status()
-        return {"status": "ok", "message": f"[OK] {provider} connection success"}
+        message = f"[OK] {provider} connection success"
+        set_provider_verification(provider, verified=True, message=message)
+        return {"status": "ok", "message": message, "verified": True}
     except Exception as e:
-        return {"status": "error", "message": f"[FAIL] {provider} connection failed: {str(e)}"}
+        message = f"[FAIL] {provider} connection failed: {str(e)}"
+        try:
+            set_provider_verification(provider, verified=False, message=message)
+        except ValueError:
+            pass
+        return {"status": "error", "message": message, "verified": False}

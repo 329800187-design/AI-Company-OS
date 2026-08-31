@@ -10,8 +10,9 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from backend.config import get_provider_info
+from backend.config import get_current_provider, get_provider_info
 from backend.ai_registry.contracts import CapabilityResource, ResourceType
+from backend.services.provider_verification import get_provider_verification
 
 _KNOWN_AGENTS = {
     "claude": ("Claude Code", ["code", "analysis"]),
@@ -187,12 +188,13 @@ class CapabilityScanner:
         providers = []
         for item in get_provider_info():
             configured = bool(item.get("configured"))
+            verified = bool(get_provider_verification(item["id"]).get("verified", False))
             providers.append(self._result(item["id"], item["name"], "llm_provider",
                                           "configured" if configured else "unavailable",
                                           ["chat", "reasoning"], model=item.get("model", ""),
                                           base_url=item.get("base_url", ""), configured=configured,
                                           credential_source="environment_variable" if configured else "none",
-                                          credential_present=configured, execution_ready=False,
+                                          credential_present=configured, execution_ready=False, verified=verified,
                                           note="已配置不等于已验证连接"))
         return providers
 
@@ -248,7 +250,7 @@ class CapabilityScanner:
                         manifest.capabilities, source="project_manifest",
                         task_types=manifest.task_types, execution_ready=True,
                         adapter="project_agent_adapter", requires_llm=manifest.requires_api_key,
-                        bound_provider_id=os.getenv("AI_PROVIDER", ""),
+                        bound_provider_id=get_current_provider(),
                     ))
             agents_root = Path(__file__).resolve().parents[2] / "agents"
             for agent_dir in agents_root.iterdir() if agents_root.exists() else ():
@@ -262,7 +264,7 @@ class CapabilityScanner:
                     ["local_agent"], source="project_agent", task_types=[agent_id.replace("_agent", "")],
                     execution_ready=True, adapter="project_agent_adapter",
                     requires_llm=False,
-                    bound_provider_id=os.getenv("AI_PROVIDER", ""),
+                    bound_provider_id=get_current_provider(),
                 ))
         except Exception:
             pass
