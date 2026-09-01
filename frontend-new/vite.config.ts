@@ -7,10 +7,10 @@ import path from 'path'
 const backendRoutes = [
   '/admin', '/agent-console', '/agents', '/ai', '/auth', '/boss', '/brain',
   '/browser-verification',
-  '/capabilities', '/commander', '/commanders', '/config', '/cron', '/cto',
+  '/capabilities', '/config',
   '/data', '/export', '/image', '/marketplace', '/marketing', '/memory',
-  '/health', '/minidelivery', '/payment', '/pipeline', '/plugins', '/search', '/skills', '/swarm',
-  '/system', '/tasks', '/templates', '/usage', '/user', '/workflows',
+  '/health', '/minidelivery', '/payment', '/pipeline', '/plugins', '/search', '/skills',
+  '/system', '/tasks', '/templates', '/usage', '/user',
   '/integrations',
 ]
 

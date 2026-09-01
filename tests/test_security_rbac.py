@@ -2,36 +2,6 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-def test_sandbox_safe_code():
-    from agents.codex_agent.agent import CodexAgent
-    ca = CodexAgent(timeout=5)
-    r = ca.run({"task_id":"t1","task_type":"code_execute","code":"print(42)"})
-    assert r.get("success") == True
-
-def test_sandbox_block_eval():
-    from agents.codex_agent.agent import CodexAgent
-    ca = CodexAgent(timeout=5)
-    r = ca.run({"task_id":"t2","task_type":"code_execute","code":"eval('1+1')"})
-    assert r.get("success") == False
-
-def test_sandbox_block_os():
-    from agents.codex_agent.agent import CodexAgent
-    ca = CodexAgent(timeout=5)
-    r = ca.run({"task_id":"t3","task_type":"code_execute","code":"import os; os.system('echo x')"})
-    assert r.get("success") == False
-
-def test_sandbox_block_subprocess():
-    from agents.codex_agent.agent import CodexAgent
-    ca = CodexAgent(timeout=5)
-    r = ca.run({"task_id":"t4","task_type":"code_execute","code":"import subprocess; subprocess.run(['echo','x'])"})
-    assert r.get("success") == False
-
-def test_sandbox_math_works():
-    from agents.codex_agent.agent import CodexAgent
-    ca = CodexAgent(timeout=5)
-    r = ca.run({"task_id":"t5","task_type":"code_execute","code":"import math; print(math.sqrt(144))"})
-    assert r.get("success") == True
-
 def test_rbac_permissions():
     from backend.auth.rbac import has_permission, require_permission
     assert has_permission({"role":"admin"},"agent_run")
@@ -77,18 +47,7 @@ def test_db_rollback():
             db.execute("DROP TABLE _rb_test")
             assert cnt == 0, f"Expected 0 rows after rollback, got {cnt}"
 
-def test_dangerous_commands_detected():
-    from agents.system_agent.agent import DANGEROUS_COMMANDS
-    assert len(DANGEROUS_COMMANDS) >= 30
-    # Check key patterns are there
-    assert any("format" in d.lower() or "del /f" in d.lower() or "rm -rf" in d.lower() for d in DANGEROUS_COMMANDS)
-
 if __name__ == "__main__":
-    test_sandbox_safe_code(); print("[OK] sandbox safe")
-    test_sandbox_block_eval(); print("[OK] sandbox block eval")
-    test_sandbox_block_os(); print("[OK] sandbox block os")
-    test_sandbox_block_subprocess(); print("[OK] sandbox block subprocess")
-    test_sandbox_math_works(); print("[OK] sandbox math works")
     test_rbac_permissions(); print("[OK] RBAC permissions")
     test_rbac_require_raises(); print("[OK] RBAC require raises")
     test_ws_not_whitelisted(); print("[OK] WS not whitelisted")

@@ -80,7 +80,7 @@ def get_logger(source: str = "system"):
     """获取带 source 标签的 logger
 
     Args:
-        source: 日志来源标识（如 commander, ceo, codex, openclaw, api, system）
+        source: 日志来源标识
 
     Returns:
         绑定了 source 的 logger 实例
@@ -122,7 +122,7 @@ def log_agent_call(agent: str, action: str, duration_ms: int, success: bool, det
     """记录 Agent 调用
 
     Args:
-        agent: Agent 名称（ceo/codex/openclaw/qa/commander）
+        agent: Agent 名称
         action: 操作描述
         duration_ms: 耗时（毫秒）
         success: 是否成功

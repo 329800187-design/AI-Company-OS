@@ -1,5 +1,5 @@
 """
-PDF Export Service — generate PDF from Commander sessions / research reports / MiniDelivery artifacts
+PDF Export Service — generate PDF from execution sessions / research reports / MiniDelivery artifacts
 
 Uses: reportlab (pure Python, no system deps) — install with: pip install reportlab
 Falls back to printable HTML if reportlab not available.
@@ -66,8 +66,8 @@ pre {{ background: #f5f5f5; padding: 12px; border-radius: 4px; font-size: 12px; 
 
 
 def export_session_pdf(session: dict, steps: List[dict], format: str = "pdf") -> str:
-    """Export Commander session as PDF. Returns file path."""
-    title = session.get("goal", "Commander Report")[:80]
+    """Export an execution session as PDF. Returns file path."""
+    title = session.get("goal", "Execution Report")[:80]
     summary = session.get("summary", "") or ""
 
     content = f"<h2>Status: {session.get('status','?')}</h2>\n"

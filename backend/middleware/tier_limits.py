@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from backend.auth.user_system import get_user_manager, SUBSCRIPTION_TIERS
 
-LIMITED_PATHS = ("/commander/run", "/agents/", "/workflows/", "/swarm/", "/image/", "/marketing/")
+LIMITED_PATHS = ("/agents/", "/image/", "/marketing/")
 
 class TierLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):

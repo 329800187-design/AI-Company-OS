@@ -15,54 +15,7 @@ from unittest.mock import patch, MagicMock
 
 
 # ════════════════════════════════════════════════════════════════
-# Finding 1: Research tasks bypass browser approval
-# ════════════════════════════════════════════════════════════════
-
-class TestResearchBrowserApproval:
-    """Research/deep_research must be blocked when allow_browser_automation=False"""
-
-    def _make_agent(self, allow_browser: bool = False):
-        from agents.openclaw_agent.agent import OpenClawAgent
-        agent = OpenClawAgent(allow_browser_automation=allow_browser)
-        return agent
-
-    def test_research_blocked_without_approval(self):
-        agent = self._make_agent(allow_browser=False)
-        task = {"task_id": "t1", "task_type": "research", "goal": "Find competitors"}
-        result = agent.run(task)
-        assert result.get("blocked") is True or "审批" in str(result.get("error", "")) \
-            or "授权" in str(result.get("error", "")) or result.get("ok") is False
-
-    def test_deep_research_blocked_without_approval(self):
-        agent = self._make_agent(allow_browser=False)
-        task = {"task_id": "t2", "task_type": "deep_research", "goal": "Deep market analysis"}
-        result = agent.run(task)
-        assert result.get("blocked") is True or result.get("ok") is False
-
-    def test_research_allowed_with_approval(self):
-        """When approved, research should proceed (may fail for other reasons, but not blocked)"""
-        agent = self._make_agent(allow_browser=True)
-        task = {"task_id": "t3", "task_type": "research", "goal": "test"}
-        result = agent.run(task)
-        # Should not be blocked by browser approval — may fail due to missing Playwright etc.
-        assert result.get("blocked") is not True
-
-    def test_verify_blocked_without_approval(self):
-        agent = self._make_agent(allow_browser=False)
-        task = {"task_id": "t5", "task_type": "verify", "goal": "fact check claims"}
-        result = agent.run(task)
-        assert result.get("blocked") is True or result.get("ok") is False
-
-    def test_browser_still_blocked_without_approval(self):
-        """Existing browser task types should still be blocked"""
-        agent = self._make_agent(allow_browser=False)
-        task = {"task_id": "t4", "task_type": "browser_scrape", "goal": "scrape"}
-        result = agent.run(task)
-        assert result.get("blocked") is True or result.get("ok") is False
-
-
-# ════════════════════════════════════════════════════════════════
-# Finding 2: Malformed website/code outputs pass as partial
+# Malformed website/code outputs pass as partial
 # ════════════════════════════════════════════════════════════════
 
 class TestResultVerifierStrictArtifact:

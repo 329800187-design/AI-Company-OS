@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from "framer-motion"
 import {
   Home,
   Briefcase,
-  MessageSquare,
   FileText,
   Image,
   BarChart3,
@@ -11,7 +10,6 @@ import {
   Globe,
   Settings,
   ChevronDown,
-  Brain,
   Activity,
   Menu,
   X,
@@ -23,7 +21,6 @@ import {
   Coins,
   Puzzle,
   Shield,
-  GitBranch,
   Package,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -51,7 +48,6 @@ interface NavItemProps {
 const navItems = [
   { id: "home", label: "首页", icon: Home },
   { id: "boss", label: "老板指挥台", icon: Briefcase, legacy: true },
-  { id: "chat", label: "AI 助手", icon: MessageSquare },
 ]
 
 const featureItems = [
@@ -65,12 +61,10 @@ const featureItems = [
 ]
 
 const advancedItems = [
-  { id: "commander", label: "智能任务", icon: Brain },
   { id: "missions", label: "任务中心", icon: Briefcase, legacy: true },
   { id: "reports", label: "报告中心", icon: ClipboardList },
   { id: "memory", label: "知识库", icon: BookOpen },
   { id: "skills", label: "技能库", icon: Puzzle },
-  { id: "workflows", label: "工作流", icon: GitBranch, legacy: true },
   { id: "governance", label: "Governance", icon: Shield },
   { id: "usage", label: "用量统计", icon: Coins },
   { id: "agent-console", label: "Agent 控制台", icon: Cpu },

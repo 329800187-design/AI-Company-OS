@@ -1,7 +1,7 @@
 """AI Company OS — Core 最小启动入口
 
 加载 Governance + Boss Command Center + Agent 发现/启用/执行 +
-Collaboration + MiniDelivery。旧 Workflow/Pipeline/Commander 等路由不在此入口。
+Collaboration + MiniDelivery。旧编排路由不在此入口。
 
 启动命令:
     uvicorn backend.core_app:app --reload --port 8000

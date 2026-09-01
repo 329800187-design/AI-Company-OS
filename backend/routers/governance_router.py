@@ -584,7 +584,7 @@ def api_entrypoints():
                 "description": "旧小红书文案包兼容入口",
             },
         ],
-        "deprecated_execution": "旧 workflow/template/commander continue 执行入口已返回 410，不应再直接调用",
+        "deprecated_execution": "旧编排执行入口已停用，不应再直接调用",
         "test_page": {
             "path": "/governance/test-page",
             "method": "GET",

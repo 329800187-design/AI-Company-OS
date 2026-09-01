@@ -89,17 +89,6 @@ LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 LOG_DIR: str = os.getenv("LOG_DIR", "./logs")
 LOG_MAX_DAYS: int = _int(os.getenv("LOG_MAX_DAYS", "7"), 7)
 
-# ── Feishu / Lark Bot ─────────────────────────────────────
-FEISHU_BOT_ENABLED: bool = _bool(os.getenv("FEISHU_BOT_ENABLED", "false"), False)
-FEISHU_APP_ID: str = os.getenv("FEISHU_APP_ID", "")
-FEISHU_APP_SECRET: str = os.getenv("FEISHU_APP_SECRET", "")
-FEISHU_VERIFICATION_TOKEN: str = os.getenv("FEISHU_VERIFICATION_TOKEN", "")
-FEISHU_ENCRYPT_KEY: str = os.getenv("FEISHU_ENCRYPT_KEY", "")
-FEISHU_REPLY_ONLY_MENTION: bool = _bool(os.getenv("FEISHU_REPLY_ONLY_MENTION", "true"), True)
-FEISHU_MAX_REPLY_CHARS: int = _int(os.getenv("FEISHU_MAX_REPLY_CHARS", "1800"), 1800)
-FEISHU_CONNECTION_MODE: str = os.getenv("FEISHU_CONNECTION_MODE", "long_connection")
-
-
 def get_current_provider() -> str:
     """Read the provider at call time so Web UI changes work without restart."""
     return os.getenv("AI_PROVIDER", AI_PROVIDER) or "deepseek"

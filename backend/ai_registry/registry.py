@@ -510,7 +510,7 @@ class AIRegistry:
     def route_by_goal(self, goal: str) -> Dict[str, Any]:
         """
         根据用户目标关键词智能路由到最合适的 AI 服务。
-        这是给 Commander 用的核心方法。
+        这是给兼容调用方使用的核心方法。
         """
         goal_lower = goal.lower()
 

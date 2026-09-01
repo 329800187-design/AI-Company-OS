@@ -36,50 +36,14 @@ class ApiClient {
     return response.json()
   }
 
-  // Chat API
-  async chat(message: string, history: Array<{ role: string; content: string }> = []) {
-    return this.request<{ reply: string; model: string; provider: string }>("/commander/chat/send", {
-      method: "POST",
-      body: { message, history },
-    })
-  }
-
-  // Commander APIs
-  async runCommander(goal: string) {
-    return this.request<{ session_id: string; status: string; message?: string }>("/commander/run", {
-      method: "POST",
-      body: { 目标: goal },
-    })
-  }
-
-  async getCommanderStatus(sessionId: string) {
-    return this.request<{
-      session_id: string
-      status: string
-      steps: Array<{
-        name: string
-        status: string
-        result?: string
-      }>
-      final_result?: string
-    }>(`/commander/sessions/${sessionId}`)
-  }
-
   // Agent APIs
-  async runAgent(agentName: string, task: string, allowBrowserAutomation = false) {
+  async runAgent(agentName: string, task: string) {
     const body: Record<string, unknown> = { goal: task }
     if (agentName === "marketing") {
       body.prompt = task
       body.platform = "xiaohongshu"
-    } else if (agentName === "codex") {
-      body.code = task
     } else if (agentName === "image") {
       body.prompt = task
-    } else if (agentName === "video") {
-      body.prompt = task
-    }
-    if (agentName === "openclaw") {
-      body.allow_browser_automation = allowBrowserAutomation
     }
 
     return this.request<{ status: string; data?: Record<string, unknown> }>(`/agents/${agentName}/run`, {
@@ -185,31 +149,6 @@ class ApiClient {
 
   async getBrowserVerificationRuns() {
     return this.request<{ runs: BrowserVerificationRun[] }>("/browser-verification/runs")
-  }
-
-  // Pipeline API - 统一任务执行
-  async executePipeline(message: string, context?: Record<string, unknown>) {
-    return this.request<{
-      ok: boolean
-      mode: string
-      task_id: string
-      task_type: string
-      used_tools: string[]
-      tool_trace: Array<{ tool: string; action: string; status: string; summary: string }>
-      used_web_search: boolean
-      search_mode: string
-      sources: Array<{ title: string; url: string; summary: string }>
-      analysis: string
-      final_answer: string
-      deliverables: Record<string, unknown>
-      qa: { passed: boolean; score: number; problems: string[]; suggestions: string[] }
-      confidence: number
-      warnings: string[]
-      error: string
-    }>("/pipeline/execute", {
-      method: "POST",
-      body: { message, context: context || {} },
-    })
   }
 
   // Boss Command Center APIs
@@ -899,42 +838,6 @@ class ApiClient {
     return this.request<{ status: string; skill: Record<string, unknown> }>("/skills/create", {
       method: "POST",
       body: skill,
-    })
-  }
-
-  // ── Workflows (DAG) ────────────────────────────────────────────────────────
-
-  async listWorkflows() {
-    return this.request<{
-      workflows: Array<{ name: string; count: number }>
-      total: number
-    }>("/workflows/dag/list")
-  }
-
-  async getWorkflow(name: string) {
-    return this.request<{
-      name: string
-      title: string
-      description: string
-      version: string
-      triggers: string[]
-      steps: Array<{
-        name: string
-        agent: string
-        task_type: string
-        depends_on: string[]
-      }>
-    }>(`/workflows/dag/${encodeURIComponent(name)}`)
-  }
-
-  async runWorkflow(name: string, variables: Record<string, string> = {}) {
-    return this.request<{
-      status: string
-      workflow: string
-      results: Record<string, unknown>
-    }>("/workflows/dag/run", {
-      method: "POST",
-      body: { workflow: name, inputs: variables },
     })
   }
 

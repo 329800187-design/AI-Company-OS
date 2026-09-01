@@ -33,7 +33,7 @@ class TaskCreate(BaseModel):
 
     project_id: str = Field(default="default_project", alias="项目ID", description="所属项目 ID")
     created_by: str = Field(default="user", alias="创建者", description="任务创建者")
-    assigned_to: str = Field(..., alias="分配给", description="分配给哪个智能体：codex_agent / openclaw_agent / qa_agent")
+    assigned_to: str = Field(..., alias="分配给", description="分配给哪个核心智能体")
     task_type: str = Field(..., alias="任务类型", description="任务类型：code_execute / browser_screenshot / qa_review 等")
     priority: str = Field(default="normal", alias="优先级", description="优先级：high / normal / low")
     goal: str = Field(..., alias="目标", description="任务目标描述（必填）")

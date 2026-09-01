@@ -33,7 +33,7 @@ def extract_goal_from_payload(payload: dict) -> str:
             if isinstance(val, str) and val.strip():
                 return val.strip()
 
-    # 嵌套 chain/tasks 数组（swarm 路由）
+    # 嵌套 chain/tasks 数组
     for array_key in ["chain", "tasks"]:
         arr = payload.get(array_key)
         if isinstance(arr, list):
