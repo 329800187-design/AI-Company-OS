@@ -1128,7 +1128,6 @@ class ApiClient {
         memories: Array<{ key: string; content: string; source: string }>
         skills: Array<{ name: string; title: string; score: number }>
         sessions: Array<{ goal: string; status: string; created_at: string }>
-        workflows: Array<{ name: string; description: string }>
       }
     }>(`/search?q=${encodeURIComponent(query)}&scope=${scope}&limit=${limit}`)
   }

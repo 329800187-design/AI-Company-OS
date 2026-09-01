@@ -8,7 +8,6 @@ const MODULES = [
   { name: "Data", label: "数据", icon: "○" },
   { name: "Reports", label: "报告", icon: "□" },
   { name: "Memory", label: "记忆", icon: "△" },
-  { name: "Workflow", label: "工作流", icon: "⬡" },
 ]
 
 interface LandingPageProps {

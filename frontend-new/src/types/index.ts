@@ -191,45 +191,6 @@ export interface Skill {
   triggers: string[]
 }
 
-// ── Workflow ────────────────────────────────────────────────────────────────
-
-export interface WorkflowStep {
-  name: string
-  agent: string
-  task_type: string
-  depends_on: string[]
-}
-
-export interface Workflow {
-  name: string
-  title: string
-  description: string
-  version: string
-  triggers: string[]
-  steps: WorkflowStep[]
-}
-
-// ── Pipeline ────────────────────────────────────────────────────────────────
-
-export interface PipelineResult {
-  ok: boolean
-  mode: string
-  task_id: string
-  task_type: string
-  used_tools: string[]
-  tool_trace: Array<{ tool: string; action: string; status: string; summary: string }>
-  used_web_search: boolean
-  search_mode: string
-  sources: Array<{ title: string; url: string; summary: string }>
-  analysis: string
-  final_answer: string
-  deliverables: Record<string, unknown>
-  qa: { passed: boolean; score: number; problems: string[]; suggestions: string[] }
-  confidence: number
-  warnings: string[]
-  error: string
-}
-
 // ── Collaboration / Governance ───────────────────────────────────────────────
 
 export interface CollaborationStepView {

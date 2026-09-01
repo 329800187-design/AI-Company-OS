@@ -13,7 +13,7 @@ async function dismissLanding(page: Page) {
 /** Navigate to a sidebar page. Advanced items need the "更多功能" expand first. */
 async function navigateTo(page: Page, pageId: string, label: string) {
   const advancedPages = [
-    "reports", "memory", "commander", "missions",
+    "reports", "memory", "missions",
     "agent-console", "dashboard",
   ]
 
@@ -391,85 +391,6 @@ test.describe("系统状态页面 — API 验证", () => {
   })
 })
 
-// ── Chat Page Tests (API Verification) ───────────────────────────────────────
-
-test.describe("对话页面 — API 验证", () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto("/app")
-    await dismissLanding(page)
-    await navigateTo(page, "chat", "AI 助手")
-  })
-
-  test("发送消息并验证 chat API 调用和响应渲染", async ({ page }) => {
-    let chatRequestBody: Record<string, unknown> | null = null
-    let chatResponseSent = false
-
-    await page.route("**/commander/chat/send", async (route) => {
-      chatRequestBody = JSON.parse(route.request().postData() || "{}")
-      chatResponseSent = true
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          reply: "E2E 测试自动回复",
-          model: "deepseek-chat",
-          provider: "deepseek",
-        }),
-      })
-    })
-
-    // Type and send a message
-    const textarea = page.locator("textarea")
-    await textarea.fill("E2E 测试消息")
-    await page.locator("button", { hasText: "发送" }).click()
-
-    // Verify API was called with correct body
-    await page.waitForTimeout(2000)
-    expect(chatResponseSent).toBeTruthy()
-    expect(chatRequestBody).not.toBeNull()
-    expect(chatRequestBody!.message).toBe("E2E 测试消息")
-    expect(Array.isArray(chatRequestBody!.history)).toBeTruthy()
-
-    // Verify the response is rendered in the UI
-    await expect(page.locator("text=E2E 测试自动回复")).toBeVisible({ timeout: 5000 })
-  })
-
-  test("API 错误时显示友好的错误消息", async ({ page }) => {
-    await page.route("**/commander/chat/send", async (route) => {
-      await route.fulfill({
-        status: 401,
-        contentType: "application/json",
-        body: JSON.stringify({ detail: "API key not configured" }),
-      })
-    })
-
-    const textarea = page.locator("textarea")
-    await textarea.fill("触发错误的消息")
-    await page.locator("button", { hasText: "发送" }).click()
-
-    // Should show error message in chat
-    await page.waitForTimeout(2000)
-    const errorInChat = page.locator("text=API Key 未配置或已失效")
-    await expect(errorInChat).toBeVisible({ timeout: 5000 })
-  })
-
-  test("config/status 检查 API 配置状态", async ({ page }) => {
-    let configChecked = false
-    await page.route("**/config/status", async (route) => {
-      configChecked = true
-      const response = await route.fetch()
-      await route.fulfill({ response })
-    })
-
-    await page.reload()
-    await dismissLanding(page)
-    await navigateTo(page, "chat", "AI 助手")
-    await page.waitForTimeout(2000)
-
-    expect(configChecked).toBeTruthy()
-  })
-})
-
 // ── Settings Page Tests (API Verification) ───────────────────────────────────
 
 test.describe("设置页面 — API 验证", () => {
@@ -599,16 +520,6 @@ test.describe("Boss 指挥台 — 模板 API 验证", () => {
     expect(data).toHaveProperty("skills")
     expect(data).toHaveProperty("count")
     expect(Array.isArray(data.skills)).toBeTruthy()
-  })
-
-  test("Workflows API 返回工作流列表", async ({ page }) => {
-    const response = await page.request.get("/workflows/dag/list")
-    expect(response.ok()).toBeTruthy()
-
-    const data = await response.json()
-    expect(data).toHaveProperty("workflows")
-    expect(data).toHaveProperty("total")
-    expect(Array.isArray(data.workflows)).toBeTruthy()
   })
 
   test("Usage API 返回用量统计", async ({ page }) => {

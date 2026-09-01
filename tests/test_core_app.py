@@ -56,7 +56,6 @@ def test_core_app_excludes_legacy_routes():
     route_paths = [route.path for route in app.routes]
 
     # 不应包含的旧路由；Boss Command Center 已在 Core 入口中保留。
-    assert "/workflows" not in route_paths, "Should not include /workflows routes"
     assert "/pipeline/execute" not in route_paths, "Should not include /pipeline/execute"
 
 
