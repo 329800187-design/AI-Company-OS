@@ -296,15 +296,10 @@ test.describe("报告中心页面 (/app/reports)", () => {
     }
   })
 
-  test("导出按钮下拉菜单（JSON / Markdown）", async ({ page }) => {
+  test("有产物的报告提供 Markdown 导出按钮", async ({ page }) => {
     const exportBtn = page.locator("button", { hasText: "导出" }).first()
     if (await exportBtn.isVisible()) {
-      await exportBtn.hover()
-
-      const jsonOption = page.locator("button", { hasText: "JSON" }).first()
-      const mdOption = page.locator("button", { hasText: "Markdown" }).first()
-      await expect(jsonOption).toBeVisible()
-      await expect(mdOption).toBeVisible()
+      await expect(exportBtn).toBeEnabled()
     }
   })
 })
@@ -331,14 +326,15 @@ test.describe("系统状态页面 — API 验证", () => {
     await navigateTo(page, "dashboard", "系统状态")
     await page.waitForTimeout(2000)
 
-    // Verify capabilities is an object with tool entries
+    // The scanner returns categorized observations plus canonical resources.
     expect(typeof capabilitiesData).toBe("object")
 
-    // Each capability should have the expected structure
-    for (const [, cap] of Object.entries(capabilitiesData)) {
-      const capability = cap as Record<string, unknown>
-      expect(capability).toHaveProperty("available")
-      expect(typeof capability.available).toBe("boolean")
+    const data = capabilitiesData as { resources?: unknown }
+    expect(data).toHaveProperty("resources")
+    expect(Array.isArray(data.resources)).toBeTruthy()
+    for (const resource of data.resources as Array<Record<string, unknown>>) {
+      expect(resource).toHaveProperty("available")
+      expect(typeof resource.available).toBe("boolean")
     }
   })
 

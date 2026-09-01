@@ -46,6 +46,7 @@ from backend.routers.plugin_config_router import router as plugin_config_router
 from backend.routers.brain_router import router as brain_router
 from backend.routers.pipeline_router import router as pipeline_router
 from backend.routers.capabilities_router import router as capabilities_router
+from backend.routers.browser_verification_router import router as browser_verification_router
 from backend.routers.agent_console_router import router as agent_console_router
 from backend.routers.boss_router import router as boss_router
 from backend.routers.collaboration_router import router as collaboration_router
@@ -149,6 +150,7 @@ app.include_router(plugin_config_router)
 app.include_router(brain_router)
 app.include_router(pipeline_router)
 app.include_router(capabilities_router)
+app.include_router(browser_verification_router)
 app.include_router(boss_router)
 app.include_router(agent_console_router)
 app.include_router(collaboration_router)
@@ -224,6 +226,8 @@ def auth_config(request: AuthConfigRequest):
 # 启动时初始化数据库
 @app.on_event("startup")
 def startup():
+    from backend.runtime_paths import bootstrap_runtime_storage
+    bootstrap_runtime_storage()
     init_db()
     log_info("system", "AI Company OS 启动完成", version="1.0.0", provider=config.AI_PROVIDER)
 

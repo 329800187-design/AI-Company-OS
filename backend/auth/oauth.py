@@ -109,7 +109,8 @@ def _login_or_register(username: str, email: str, oauth_id: str) -> Dict:
     from backend.auth.user_system import UserManager
     # Direct login by finding user and creating session
     import sqlite3
-    db_path = __import__('pathlib').Path(__file__).parent.parent / "database" / "company_os.db"
+    from backend.runtime_paths import DATABASE_PATH
+    db_path = DATABASE_PATH
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     user_row = conn.execute("SELECT * FROM users WHERE username=? OR email=?", (username, email)).fetchone()

@@ -7,17 +7,14 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from backend.services.provider_verification import get_provider_verification
+
 # 尝试加载 .env 文件
 try:
     from dotenv import load_dotenv
     _ENV_FILE = Path(__file__).parent.parent / ".env"
     if _ENV_FILE.exists():
         load_dotenv(_ENV_FILE)
-    else:
-        # 尝试从 .env.example 中读取（降级模式）
-        _EXAMPLE = Path(__file__).parent.parent / ".env.example"
-        if _EXAMPLE.exists():
-            load_dotenv(_EXAMPLE)
 except ImportError:
     pass
 
@@ -103,59 +100,81 @@ FEISHU_MAX_REPLY_CHARS: int = _int(os.getenv("FEISHU_MAX_REPLY_CHARS", "1800"), 
 FEISHU_CONNECTION_MODE: str = os.getenv("FEISHU_CONNECTION_MODE", "long_connection")
 
 
+def get_current_provider() -> str:
+    """Read the provider at call time so Web UI changes work without restart."""
+    return os.getenv("AI_PROVIDER", AI_PROVIDER) or "deepseek"
+
+
 def get_ai_config(provider: Optional[str] = None) -> dict:
     """获取当前 AI Provider 的配置"""
-    provider = provider or AI_PROVIDER
+    provider = provider or get_current_provider()
     configs = {
         "deepseek": {
-            "api_key": DEEPSEEK_API_KEY,
-            "base_url": DEEPSEEK_BASE_URL,
-            "model": DEEPSEEK_MODEL,
+            "api_key": os.getenv("DEEPSEEK_API_KEY", DEEPSEEK_API_KEY),
+            "base_url": os.getenv("DEEPSEEK_BASE_URL", DEEPSEEK_BASE_URL),
+            "model": os.getenv("DEEPSEEK_MODEL", DEEPSEEK_MODEL),
         },
         "openai": {
-            "api_key": OPENAI_API_KEY,
-            "base_url": OPENAI_BASE_URL,
-            "model": OPENAI_MODEL,
+            "api_key": os.getenv("OPENAI_API_KEY", OPENAI_API_KEY),
+            "base_url": os.getenv("OPENAI_BASE_URL", OPENAI_BASE_URL),
+            "model": os.getenv("OPENAI_MODEL", OPENAI_MODEL),
         },
         "claude": {
-            "api_key": CLAUDE_API_KEY,
-            "base_url": CLAUDE_BASE_URL,
-            "model": CLAUDE_MODEL,
+            "api_key": os.getenv("CLAUDE_API_KEY", CLAUDE_API_KEY) or os.getenv("ANTHROPIC_API_KEY", ""),
+            "base_url": os.getenv("CLAUDE_BASE_URL", CLAUDE_BASE_URL),
+            "model": os.getenv("CLAUDE_MODEL", CLAUDE_MODEL),
         },
     }
-    cfg = configs.get(provider, configs["deepseek"])
-    if not cfg["api_key"]:
-        raise RuntimeError(
-            f"未设置 {provider.upper()}_API_KEY。请在 .env 文件或 Web UI 设置页面中填写。"
-        )
+    cfg = configs.get(provider, configs["deepseek"]).copy()
+    cfg["provider"] = provider
     return cfg
 
 
 def get_provider_info() -> list[dict]:
     """返回所有 Provider 的信息（不含 Key）"""
+    verified_flags = {provider: get_provider_verification(provider).get("verified", False)
+                      for provider in ("deepseek", "openai", "claude")}
     return [
         {
             "id": "deepseek",
             "name": "DeepSeek",
-            "model": DEEPSEEK_MODEL,
-            "configured": bool(DEEPSEEK_API_KEY),
-            "base_url": DEEPSEEK_BASE_URL,
+            "model": os.getenv("DEEPSEEK_MODEL", DEEPSEEK_MODEL),
+            "configured": bool(os.getenv("DEEPSEEK_API_KEY", DEEPSEEK_API_KEY)),
+            "base_url": os.getenv("DEEPSEEK_BASE_URL", DEEPSEEK_BASE_URL),
+            "verified": bool(verified_flags.get("deepseek")),
         },
         {
             "id": "openai",
             "name": "OpenAI",
-            "model": OPENAI_MODEL,
-            "configured": bool(OPENAI_API_KEY),
-            "base_url": OPENAI_BASE_URL,
+            "model": os.getenv("OPENAI_MODEL", OPENAI_MODEL),
+            "configured": bool(os.getenv("OPENAI_API_KEY", OPENAI_API_KEY)),
+            "base_url": os.getenv("OPENAI_BASE_URL", OPENAI_BASE_URL),
+            "verified": bool(verified_flags.get("openai")),
         },
         {
             "id": "claude",
             "name": "Anthropic Claude",
-            "model": CLAUDE_MODEL,
-            "configured": bool(CLAUDE_API_KEY),
-            "base_url": CLAUDE_BASE_URL,
+            "model": os.getenv("CLAUDE_MODEL", CLAUDE_MODEL),
+            "configured": bool(os.getenv("CLAUDE_API_KEY", CLAUDE_API_KEY) or os.getenv("ANTHROPIC_API_KEY", "")),
+            "base_url": os.getenv("CLAUDE_BASE_URL", CLAUDE_BASE_URL),
+            "verified": bool(verified_flags.get("claude")),
         },
     ]
+
+
+def apply_runtime_config(values: dict) -> None:
+    """Apply Web UI provider changes to the current process without restart."""
+    allowed = {
+        "AI_PROVIDER", "DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "DEEPSEEK_MODEL",
+        "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL",
+        "CLAUDE_API_KEY", "CLAUDE_BASE_URL", "CLAUDE_MODEL",
+    }
+    for key, value in values.items():
+        if key not in allowed:
+            continue
+        text = str(value or "")
+        os.environ[key] = text
+        globals()[key] = text
 
 
 # ── 新增：Brain Manager 和 Capability Scanner 集成 ──────────

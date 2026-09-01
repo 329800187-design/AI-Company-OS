@@ -16,7 +16,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from agents.base_agent import BaseAgent
-from backend.config import get_ai_config, AI_PROVIDER
+from backend.config import get_ai_config, get_current_provider
 from core.agent_timing import timed
 
 
@@ -248,7 +248,7 @@ class CEOAgent(BaseAgent):
                 f"{planning_context}"
             ) if planning_context else ""
             user_message = f"请将以下目标拆解为任务：{goal}{context_block}"
-            if AI_PROVIDER == "claude":
+            if get_current_provider() == "claude":
                 resp = client.post(
                     f"{self.api_base}/messages",
                     json={
@@ -437,19 +437,20 @@ class CEOAgent(BaseAgent):
                 "constraints": {},
             })
         else:
-            # 非代码/非浏览器类目标：qa 直接评估
+            # 无 AI 时不能把未拆解的业务目标伪装成 QA 任务。
+            # 返回一个明确的规划任务，等待用户配置主脑后再执行。
             tasks.append({
                 "project_id": "project_001",
                 "created_by": "ceo_agent",
-                "assigned_to": "qa_agent",
-                "task_type": "qa_review",
+                "assigned_to": "ceo_agent",
+                "task_type": "task_planning",
                 "priority": "normal",
                 "goal": goal,
-                "context": f"用户请求: {goal}。请对此任务进行规划评估。",
+                "context": f"用户请求: {goal}。当前没有可用的 AI 主脑，先保留为待拆解目标。",
                 "input": {},
                 "expected_output": {
-                    "type": "review_result",
-                    "description": "对任务做出评估和建议",
+                    "type": "plan",
+                    "description": "配置可用 AI 主脑后生成可执行计划",
                 },
                 "constraints": {},
             })

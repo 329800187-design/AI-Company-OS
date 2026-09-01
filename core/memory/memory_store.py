@@ -20,7 +20,8 @@ class MemoryStore:
 
     def __init__(self, db_path: Optional[Path] = None):
         if db_path is None:
-            db_path = Path(__file__).parent.parent.parent / "backend" / "database" / "company_os.db"
+            from backend.runtime_paths import DATABASE_PATH
+            db_path = DATABASE_PATH
         self.db_path = Path(db_path)
         self._local = threading.local()
         self._init_table()

@@ -303,13 +303,21 @@ async def get_discovered_agents():
     """
     discovery = get_agent_discovery()
     agents = discovery.scan_all(force=True)
-    agent_list = [agent.to_dict() for agent in agents.values()]
-    enabled_count = sum(1 for a in agents.values() if a.enabled)
+    agent_list = [agent.to_dict() for agent in agents.values() if agent.kind != "llm"]
+    enabled_count = sum(1 for a in agents.values() if a.enabled and a.kind != "llm")
+    from backend.ai_registry import get_registry
+    machine = get_registry().scan_runtime_capabilities()
 
     return {
         "agents": agent_list,
         "total": len(agent_list),
         "enabled_count": enabled_count,
+        "llm_providers": machine["llm_providers"],
+        "local_services": machine["ai_services"],
+        "browsers": machine["browsers"],
+        "tools": machine["tools"],
+        "canonical_resources": machine["resources"],
+        "machine_scan": machine["scan"],
     }
 
 

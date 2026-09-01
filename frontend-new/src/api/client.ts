@@ -135,7 +135,14 @@ class ApiClient {
   }
 
   async testConnection(provider: string) {
-    return this.request<{ ok: boolean; message: string }>("/config/test", {
+    return this.request<{ status: "ok" | "error"; message: string; verified?: boolean }>("/config/test", {
+      method: "POST",
+      body: { provider },
+    })
+  }
+
+  async switchProvider(provider: string) {
+    return this.request<{ status: string; message: string; current_provider: string }>("/config/switch", {
       method: "POST",
       body: { provider },
     })
@@ -169,6 +176,15 @@ class ApiClient {
   // Health check
   async healthCheck() {
     return this.request<{ status: string; version: string }>("/health")
+  }
+
+  // Local browser verification
+  async runBrowserVerification() {
+    return this.request<BrowserVerificationRun>("/browser-verification/runs", { method: "POST" })
+  }
+
+  async getBrowserVerificationRuns() {
+    return this.request<{ runs: BrowserVerificationRun[] }>("/browser-verification/runs")
   }
 
   // Pipeline API - 统一任务执行
@@ -1135,6 +1151,7 @@ class ApiClient {
         requires_gpu: boolean
         requires_confirmation: boolean
         enabled: boolean
+        runnable: boolean
         source: string
         timeout_seconds: number
         input_schema?: Record<string, unknown> | null
@@ -1151,9 +1168,35 @@ class ApiClient {
         reliability_score: number
         health: Record<string, unknown>
         last_error?: string
+        llm_binding?: {
+          provider?: string
+          model?: string
+          configured?: boolean
+          credential_source?: string
+          ready?: boolean
+          configured_providers?: string[]
+        }
+        requires_llm?: boolean
       }>
       total: number
       enabled_count: number
+      scan_scope?: {
+        project_root?: string
+        project_agent_dirs?: string[]
+        path_commands?: string[]
+        local_services?: string[]
+        mcp_configs?: string[]
+        filesystem_scan?: string
+      }
+      planning?: {
+        available_enabled: Array<{ id: string; name: string; capabilities: string[]; task_types: string[]; runnable?: boolean }>
+        message: string
+      }
+      llm_providers?: Array<Record<string, unknown> & { id: string; name: string; status: string; model?: string; note?: string }>
+      local_services?: Array<Record<string, unknown> & { id: string; name: string; status: string }>
+      browsers?: Array<Record<string, unknown> & { id: string; name: string; status: string }>
+      tools?: Array<Record<string, unknown> & { id: string; name: string; status: string }>
+      machine_scan?: { machine_id?: string; scanned_at?: string; platform?: string; scope?: string }
     }>("/agent-console/discovered")
   }
 
@@ -1715,6 +1758,17 @@ class ApiClient {
       },
     })
   }
+}
+
+interface BrowserVerificationRun {
+  run_id: string
+  status: "passed" | "failed"
+  started_at: string
+  finished_at: string
+  targets: string[]
+  checks: Array<{ id: string; target: string; passed: boolean; message: string }>
+  passed_count: number
+  total_count: number
 }
 
 export const api = new ApiClient()

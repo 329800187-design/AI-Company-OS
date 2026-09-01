@@ -17,6 +17,9 @@ import {
   AlertTriangle,
   Clock,
   Wrench,
+  MonitorCheck,
+  Play,
+  XCircle,
 } from "lucide-react"
 import { api } from "@/api/client"
 import { Button } from "@/components/ui/button"
@@ -36,6 +39,7 @@ interface DiscoveredAgent {
   requires_gpu: boolean
   requires_confirmation: boolean
   enabled: boolean
+  runnable: boolean
   source: string
   timeout_seconds: number
   input_schema?: Record<string, unknown> | null
@@ -52,12 +56,49 @@ interface DiscoveredAgent {
   reliability_score: number
   health: Record<string, unknown> & { error?: string }
   last_error?: string
+  llm_binding?: {
+    provider?: string
+    model?: string
+    configured?: boolean
+    credential_source?: string
+    ready?: boolean
+    configured_providers?: string[]
+  }
+  requires_llm?: boolean
 }
 
 interface DiscoveredSummary {
   agents: DiscoveredAgent[]
   total: number
   enabled_count: number
+  scan_scope?: {
+    project_root?: string
+    project_agent_dirs?: string[]
+    path_commands?: string[]
+    local_services?: string[]
+    mcp_configs?: string[]
+    filesystem_scan?: string
+  }
+  planning?: {
+    available_enabled: Array<{ id: string; name: string; capabilities: string[]; task_types: string[] }>
+    message: string
+  }
+  llm_providers?: Array<Record<string, unknown> & { id: string; name: string; status: string; model?: string; note?: string }>
+  local_services?: Array<Record<string, unknown> & { id: string; name: string; status: string }>
+  browsers?: Array<Record<string, unknown> & { id: string; name: string; status: string }>
+  tools?: Array<Record<string, unknown> & { id: string; name: string; status: string }>
+  machine_scan?: { machine_id?: string; scanned_at?: string; platform?: string; scope?: string }
+}
+
+interface BrowserVerificationRun {
+  run_id: string
+  status: "passed" | "failed"
+  started_at: string
+  finished_at: string
+  targets: string[]
+  checks: Array<{ id: string; target: string; passed: boolean; message: string }>
+  passed_count: number
+  total_count: number
 }
 
 const kindIcons: Record<string, ElementType> = {
@@ -88,6 +129,8 @@ export default function AgentConsolePage() {
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null)
   const [togglingAgent, setTogglingAgent] = useState<string | null>(null)
   const [expandedSchemas, setExpandedSchemas] = useState<Set<string>>(new Set())
+  const [verification, setVerification] = useState<BrowserVerificationRun | null>(null)
+  const [isVerifying, setIsVerifying] = useState(false)
 
   const loadAgents = useCallback(async () => {
     setIsLoading(true)
@@ -137,6 +180,18 @@ export default function AgentConsolePage() {
     })
   }
 
+  const runLocalVerification = async () => {
+    setIsVerifying(true)
+    try {
+      setVerification(await api.runBrowserVerification())
+    } catch (error) {
+      console.error("Failed to run local browser verification:", error)
+      setVerification(null)
+    } finally {
+      setIsVerifying(false)
+    }
+  }
+
   const byKind = (summary?.agents || []).reduce<Record<string, DiscoveredAgent[]>>((acc, agent) => {
     ;(acc[agent.kind] ||= []).push(agent)
     return acc
@@ -153,6 +208,9 @@ export default function AgentConsolePage() {
     }
     if (agent.risk_level === "high") {
       hints.push("建议人工确认或 sandbox")
+    }
+    if (agent.requires_llm && !agent.llm_binding?.ready) {
+      hints.push("未找到已配置的 LLM，暂不参与真实任务")
     }
     return hints
   }
@@ -175,6 +233,114 @@ export default function AgentConsolePage() {
           重新扫描
         </Button>
       </div>
+
+      <section className="border border-[#E5E5E5] bg-white p-5" aria-labelledby="browser-verification-title">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center bg-primary/10">
+              <MonitorCheck className="h-5 w-5 text-[#0B0B0B]" />
+            </div>
+            <div>
+              <h2 id="browser-verification-title" className="font-semibold">本地浏览器验收</h2>
+              <p className="text-xs text-[#8A8A8A]">127.0.0.1:8000/health · 127.0.0.1:5173/app</p>
+            </div>
+          </div>
+          <Button onClick={runLocalVerification} disabled={isVerifying} data-testid="browser-verification-run-button">
+            {isVerifying ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+            运行验收
+          </Button>
+        </div>
+
+        {verification && (
+          <div className="mt-4 border-t border-[#E5E5E5] pt-4" data-testid="browser-verification-result">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <Badge variant={verification.status === "passed" ? "success" : "secondary"}>
+                {verification.status === "passed" ? "验收通过" : "验收失败"}
+              </Badge>
+              <span className="text-xs text-[#8A8A8A]">{verification.passed_count} / {verification.total_count}</span>
+              <span className="text-xs text-[#8A8A8A]">{new Date(verification.finished_at).toLocaleString()}</span>
+            </div>
+            <div className="grid gap-2 md:grid-cols-2">
+              {verification.checks.map(check => (
+                <div key={check.id} className="flex items-start gap-2 border border-[#E5E5E5] p-3 text-xs">
+                  {check.passed ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red" />}
+                  <div className="min-w-0">
+                    <p className="font-medium">{check.id === "backend_health" ? "后端健康状态" : "前端页面加载"}</p>
+                    <p className="mt-1 break-all text-[#8A8A8A]">{check.message}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className="border border-[#E5E5E5] bg-white p-5" aria-labelledby="agent-discovery-title" data-testid="agent-discovery-scope">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 id="agent-discovery-title" className="font-semibold">本机能力盘点</h2>
+            <p className="mt-1 text-xs text-[#8A8A8A]">已启用且可用的 Agent 才会进入任务拆解和调度</p>
+          </div>
+          <Badge variant="outline">{summary?.planning?.available_enabled.length || 0} 个可调度</Badge>
+        </div>
+        <div className="mt-4 grid gap-2 md:grid-cols-2">
+          {(summary?.planning?.available_enabled || []).map(agent => (
+            <div key={agent.id} className="border border-[#E5E5E5] p-3 text-xs">
+              <p className="font-medium">{agent.name} <span className="font-mono text-[#8A8A8A]">{agent.id}</span></p>
+              <p className="mt-1 text-[#8A8A8A]">{agent.capabilities.slice(0, 4).join(" · ") || "未声明能力"}</p>
+            </div>
+          ))}
+        </div>
+        <details className="mt-4 text-xs text-[#8A8A8A]">
+          <summary className="cursor-pointer font-medium text-[#0B0B0B]">查看扫描范围</summary>
+          <p className="mt-2">{summary?.scan_scope?.filesystem_scan}</p>
+          <p className="mt-1 break-all">项目路径：{summary?.scan_scope?.project_root}</p>
+          <p className="mt-1">PATH 命令：{summary?.scan_scope?.path_commands?.join("、")}</p>
+          <p className="mt-1">本地服务：{summary?.scan_scope?.local_services?.join("、")}</p>
+        </details>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-2" aria-label="本机实时资源">
+        <div className="border border-[#E5E5E5] bg-white p-5">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold">LLM / API Provider</h2>
+            <Badge variant="outline">不等于 Agent</Badge>
+          </div>
+          <div className="mt-3 space-y-2 text-xs">
+            {(summary?.llm_providers || []).map(provider => (
+              <div key={provider.id} className="flex items-center justify-between border border-[#E5E5E5] p-3">
+                <div>
+                  <p className="font-medium">{provider.name}</p>
+                  <p className="mt-1 text-[#8A8A8A]">{provider.model || "未指定模型"}</p>
+                </div>
+                <Badge variant={provider.status === "configured" ? "success" : "secondary"}>
+                  {provider.status === "configured" ? "已配置，未验证" : "未配置"}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="border border-[#E5E5E5] bg-white p-5">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold">本机工具与服务</h2>
+            <span className="text-xs text-[#8A8A8A]">实时扫描</span>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 text-xs">
+            {[...(summary?.tools || []), ...(summary?.local_services || []), ...(summary?.browsers || [])].map(item => (
+              <div key={`${item.category}-${item.id}`} className="flex items-center justify-between border border-[#E5E5E5] p-2">
+                <span>{item.name}</span>
+                <Badge variant={item.status === "available" ? "success" : "secondary"}>
+                  {item.status === "available" ? "可用" : "不可用"}
+                </Badge>
+              </div>
+            ))}
+          </div>
+          {summary?.machine_scan?.scanned_at && (
+            <p className="mt-3 text-[11px] text-[#8A8A8A]">扫描时间：{summary.machine_scan.scanned_at} · 机器：{summary.machine_scan.machine_id}</p>
+          )}
+        </div>
+      </section>
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -279,7 +445,9 @@ export default function AgentConsolePage() {
                               {agent.last_error || "不可用"}
                             </Badge>
                           ) : agent.enabled ? (
-                            <Badge variant="success" className="text-xs">已启用</Badge>
+                            <Badge variant={agent.runnable ? "success" : "warning"} className="text-xs">
+                              {agent.runnable ? "已启用" : "已启用但未接入适配器"}
+                            </Badge>
                           ) : (
                             <Badge variant="secondary" className="text-xs">未启用</Badge>
                           )}
@@ -365,6 +533,13 @@ export default function AgentConsolePage() {
                               <span className="text-[#8A8A8A]">需要 API Key:</span>
                               <span className="ml-1">{agent.requires_api_key ? "是" : "否"}</span>
                             </div>
+                            {agent.requires_llm && (
+                              <div className="col-span-2">
+                                <span className="text-[#8A8A8A]">LLM:</span>
+                                <span className="ml-1">{agent.llm_binding?.provider || "未配置"} / {agent.llm_binding?.model || "未指定模型"}</span>
+                                <span className="ml-2 text-[#8A8A8A]">{agent.llm_binding?.ready ? "已就绪" : "未就绪"}</span>
+                              </div>
+                            )}
                             <div className="flex items-center gap-1">
                               <Clock className="w-3 h-3 text-[#8A8A8A]" />
                               <span className="text-[#8A8A8A]">超时:</span>

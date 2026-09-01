@@ -6,6 +6,7 @@ import path from 'path'
 // 后端所有路由前缀
 const backendRoutes = [
   '/admin', '/agent-console', '/agents', '/ai', '/auth', '/boss', '/brain',
+  '/browser-verification',
   '/capabilities', '/commander', '/commanders', '/config', '/cron', '/cto',
   '/data', '/export', '/image', '/marketplace', '/marketing', '/memory',
   '/health', '/minidelivery', '/payment', '/pipeline', '/plugins', '/search', '/skills', '/swarm',

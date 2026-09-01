@@ -90,6 +90,8 @@ class AgentRouter:
         is_research = plan.task_type in {"research", "competitor_analysis", "market_analysis"}
 
         for agent in self._registry.get_available_agents():
+            if not self._registry._canonical_ready(agent):
+                continue
             # 检查是否满足必需能力
             has_required = all(cap in agent.capabilities for cap in plan.required_capabilities)
             if not has_required and is_research:
@@ -124,6 +126,11 @@ class AgentRouter:
 
     def _has_executor(self, agent: AgentCapability) -> bool:
         """检查 Agent 是否有可执行的 adapter"""
+        from backend.ai_registry.eligibility import canonical_ready
+        if not canonical_ready(agent.id, {"resources": [agent.canonical_resource]}):
+            return False
+        if agent.kind == "canonical_agent":
+            return True
         # 有 executable 路径的本地 Agent
         if agent.kind == "local" and agent.executable:
             return True

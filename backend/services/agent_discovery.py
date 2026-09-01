@@ -13,15 +13,19 @@ import os
 import shutil
 import socket
 import subprocess
+import platform
+import time
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from backend.logger import get_logger
+from backend.runtime_paths import USER_DATA_DIR, ENABLED_AGENTS_PATH
 
 logger = get_logger()
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # ── Enabled Agents 配置管理 ──────────────────────────────────────
-_user_data_dir = Path(os.getenv("AI_COMPANY_OS_USER_DATA", "user_data"))
-_enabled_agents_file = _user_data_dir / "agent_registry" / "enabled_agents.json"
+_user_data_dir = USER_DATA_DIR
+_enabled_agents_file = ENABLED_AGENTS_PATH
 
 # 默认启用配置：内置 manifest agent 默认 enabled=true，外部 CLI/HTTP agent 默认 enabled=false
 _default_enabled_config: Dict[str, bool] = {
@@ -29,6 +33,8 @@ _default_enabled_config: Dict[str, bool] = {
     "marketing": True,
     "image": True,
     "data": True,
+    "research": True,
+    "website": True,
     "example_echo": True,
     # 内置 legacy agents（默认启用）
     "ceo_agent": True,
@@ -107,6 +113,8 @@ class AgentCapability:
         self.requires_gpu: bool = kwargs.get("requires_gpu", False)
         self.requires_confirmation: bool = kwargs.get("requires_confirmation", False)
         self.enabled: bool = kwargs.get("enabled", True)
+        # “发现”不等于“可执行”。CLI 只有在接入专用适配器后才可进入路由。
+        self.runnable: bool = kwargs.get("runnable", self.kind != "cli")
         self.source: str = kwargs.get("source", "unknown")  # manifest, cli, http, api, mcp, fallback
         self.timeout_seconds: int = kwargs.get("timeout_seconds", 60)
         self.input_schema: Optional[Dict[str, Any]] = kwargs.get("input_schema", None)
@@ -123,6 +131,9 @@ class AgentCapability:
         self.latency_level: str = kwargs.get("latency_level", "unknown")  # fast, medium, slow
         self.reliability_score: float = kwargs.get("reliability_score", 0.5)
         self.last_error: str = kwargs.get("last_error", "")
+        self.llm_binding: Dict[str, Any] = kwargs.get("llm_binding", {})
+        self.requires_llm: bool = kwargs.get("requires_llm", False)
+        self.canonical_resource: Dict[str, Any] = kwargs.get("canonical_resource", {})
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -139,6 +150,7 @@ class AgentCapability:
             "requires_gpu": self.requires_gpu,
             "requires_confirmation": self.requires_confirmation,
             "enabled": self.enabled,
+            "runnable": self.runnable,
             "source": self.source,
             "timeout_seconds": self.timeout_seconds,
             "input_schema": self.input_schema,
@@ -154,7 +166,10 @@ class AgentCapability:
             "cost_level": self.cost_level,
             "latency_level": self.latency_level,
             "reliability_score": self.reliability_score,
-            "last_error": self.last_error
+            "last_error": self.last_error,
+            "llm_binding": self.llm_binding,
+            "requires_llm": self.requires_llm,
+            "canonical_resource": self.canonical_resource,
         }
 
 
@@ -164,37 +179,85 @@ class AgentDiscovery:
     def __init__(self):
         self._agents: Dict[str, AgentCapability] = {}
         self._scanned = False
+        self._scan_scope: Dict[str, Any] = {}
+        self._scanned_at = 0.0
 
     def scan_all(self, force: bool = False) -> Dict[str, AgentCapability]:
         """扫描所有 Agent"""
-        if self._scanned and not force:
+        if self._scanned and not force and time.time() - self._scanned_at < 8:
             return self._agents
 
         logger.info("AgentDiscovery: Starting full scan...")
 
         self._agents.clear()
+        self._scan_scope = {
+            "project_root": str(PROJECT_ROOT),
+            "project_agent_dirs": [],
+            "path_commands": ["claude", "codex", "gemini", "aider", "cursor", "qwen", "opencode"],
+            "local_services": ["ollama", "lm_studio", "comfyui", "sd_webui", "n8n"],
+            "mcp_configs": ["~/.mcp.json", "~/.config/claude/mcp.json", "项目/.mcp.json"],
+            "filesystem_scan": "仅扫描项目 Agent、用户级 MCP 配置和 PATH 中的已知 Agent 命令；不递归读取整个系统磁盘。",
+        }
 
-        # 1. CLI Agent
-        self._scan_cli_agents()
+        # Machine capabilities come from the canonical registry projection.
+        self._project_canonical_agents()
 
-        # 2. 本地 HTTP 服务
-        self._scan_http_services()
-
-        # 3. API Agent
-        self._scan_api_agents()
-
-        # 4. MCP Server
+        # MCP servers and project agents have compatibility-specific metadata.
         self._scan_mcp_servers()
-
-        # 5. 项目本地 Agents
         self._scan_local_agents()
 
-        # 6. 应用 enabled_agents.json 配置
         self._apply_enabled_config()
 
         self._scanned = True
+        self._scanned_at = time.time()
+        self._scan_scope.update({
+            "machine_id": self._machine_id(),
+            "scanned_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "platform": platform.platform(),
+        })
         logger.info(f"AgentDiscovery: Found {len(self._agents)} agents")
         return self._agents
+
+    def _project_canonical_agents(self) -> None:
+        """Project machine Agent/Provider resources without rescanning them."""
+        from backend.ai_registry import get_registry
+
+        snapshot = get_registry().scan_runtime_capabilities(force=False)
+        resources_by_id = {item.get("resource_id"): item for item in snapshot.get("resources", [])}
+        for resource in snapshot.get("resources", []):
+            resource_type = resource.get("resource_type")
+            if resource_type not in {"agent", "llm_provider"}:
+                continue
+            is_provider = resource_type == "llm_provider"
+            provider = resources_by_id.get(resource.get("bound_provider_id"))
+            llm_binding = {
+                "provider_id": resource.get("bound_provider_id"),
+                "ready": bool(provider and provider.get("ready") is True),
+                "readiness_reasons": [] if provider and provider.get("ready") is True
+                else (provider.get("readiness_reasons", []) if provider else ["llm_provider_missing"]),
+            } if not is_provider and resource.get("requires_llm") else {}
+            self._agents[resource["resource_id"]] = AgentCapability(
+                id=resource["resource_id"],
+                name=resource.get("display_name", resource["resource_id"]),
+                kind="llm" if is_provider else "canonical_agent",
+                status="available" if resource.get("available") else "unavailable",
+                capabilities=resource.get("metadata", {}).get("capabilities", []),
+                task_types=resource.get("metadata", {}).get("task_types", []),
+                enabled=get_agent_enabled(resource["resource_id"]) if not is_provider else True,
+                runnable=bool(resource.get("ready")),
+                source="canonical_registry",
+                endpoint=resource.get("metadata", {}).get("endpoint", ""),
+                llm_binding=llm_binding,
+                last_error=";".join(resource.get("readiness_reasons", [])),
+                canonical_resource=resource,
+                requires_llm=bool(resource.get("requires_llm", False)),
+            )
+
+    def get_scan_scope(self) -> Dict[str, Any]:
+        """Explain what was inspected so discovery is observable and bounded."""
+        if not self._scanned:
+            self.scan_all()
+        return dict(self._scan_scope)
 
     def _apply_enabled_config(self):
         """应用 enabled_agents.json 配置到扫描结果"""
@@ -224,23 +287,72 @@ class AgentDiscovery:
             if agent.source == "unknown":
                 agent.source = agent.kind
 
+            # Agent 与 LLM Provider 分离；这里只返回模型元数据，不返回密钥。
+            if agent.kind not in ("llm", "mcp", "canonical_agent"):
+                if agent.source == "compatibility_only":
+                    agent.llm_binding = {
+                        "provider_id": "", "ready": False,
+                        "readiness_reasons": ["canonical_resource_missing"],
+                    }
+                    continue
+                try:
+                    from backend.config import get_current_provider, get_ai_config, get_provider_info
+                    current = get_current_provider()
+                    providers = get_provider_info()
+                    configured = [p for p in providers if p.get("configured")]
+                    selected = next((p for p in configured if p.get("id") == current), None)
+                    selected = selected or (configured[0] if configured else None)
+                    cfg = get_ai_config(selected["id"] if selected else current)
+                    agent.llm_binding = {
+                        "provider": cfg.get("provider", ""),
+                        "model": cfg.get("model", ""),
+                        "configured": bool(selected),
+                        "credential_source": "environment_variable" if cfg.get("api_key") else "none",
+                        "ready": bool(selected),
+                        "configured_providers": [p.get("id") for p in configured],
+                    }
+                    # Compatibility fields are projections only; canonical readiness
+                    # is established by the registry scanner.
+                    if agent.canonical_resource:
+                        agent.runnable = bool(agent.canonical_resource.get("ready"))
+                except Exception as exc:
+                    agent.llm_binding = {
+                        "provider": "", "model": "", "configured": False,
+                        "credential_source": "none", "ready": False,
+                        "configured_providers": [],
+                        "error": type(exc).__name__,
+                    }
+
     def get_agent(self, agent_id: str) -> Optional[AgentCapability]:
         """获取指定 Agent"""
         return self._agents.get(agent_id)
 
     def get_available_agents(self) -> List[AgentCapability]:
         """获取所有可用 Agent"""
-        return [a for a in self._agents.values() if a.status == "available"]
+        return [a for a in self._agents.values()
+                if a.canonical_resource.get("ready") is True and a.enabled and a.kind != "llm"]
 
     def get_agents_by_capability(self, capability: str) -> List[AgentCapability]:
         """根据能力获取 Agent"""
         return [a for a in self._agents.values()
-                if capability in a.capabilities and a.status == "available"]
+                if capability in a.capabilities and a.enabled
+                and a.kind != "llm" and a.canonical_resource.get("ready") is True]
+
+    def get_llm_providers(self) -> List[AgentCapability]:
+        """返回模型提供者，不把它们当作可执行 Agent。"""
+        return [a for a in self._agents.values() if a.kind == "llm"]
+
+    @staticmethod
+    def _machine_id() -> str:
+        import hashlib
+        raw = "|".join((platform.system(), platform.machine(), platform.node(), str(Path.home())))
+        return hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:16]
 
     def get_agents_by_task_type(self, task_type: str) -> List[AgentCapability]:
         """根据任务类型获取 Agent"""
         return [a for a in self._agents.values()
-                if task_type in a.task_types and a.status == "available"]
+                if task_type in a.task_types and a.enabled
+                and a.kind != "llm" and a.canonical_resource.get("ready") is True]
 
     # ── CLI Agent 扫描 ──────────────────────────────────────
 
@@ -262,18 +374,18 @@ class AgentDiscovery:
              "task_types": ["code"],
              "capabilities": ["code_execution", "git_integration"],
              "supports_code_execution": True},
-            {"id": "python", "name": "Python", "cmd": "python", "args": ["--version"],
-             "task_types": ["code", "data"],
-             "capabilities": ["code_execution", "data_analysis"],
+            {"id": "cursor", "name": "Cursor Agent", "cmd": "cursor", "args": ["--version"],
+             "task_types": ["code", "analysis"],
+             "capabilities": ["code_execution", "file_analysis"],
              "supports_code_execution": True, "supports_files": True},
-            {"id": "node", "name": "Node.js", "cmd": "node", "args": ["--version"],
-             "task_types": ["code"],
-             "capabilities": ["code_execution"],
+            {"id": "qwen_code", "name": "Qwen Code", "cmd": "qwen", "args": ["--version"],
+             "task_types": ["code", "analysis"],
+             "capabilities": ["code_execution", "reasoning"],
              "supports_code_execution": True},
-            {"id": "git", "name": "Git", "cmd": "git", "args": ["--version"],
-             "task_types": ["code"],
-             "capabilities": ["version_control"],
-             "supports_files": True},
+            {"id": "opencode", "name": "OpenCode", "cmd": "opencode", "args": ["--version"],
+             "task_types": ["code", "analysis"],
+             "capabilities": ["code_execution", "reasoning"],
+             "supports_code_execution": True},
         ]
 
         for agent_info in cli_agents:
@@ -320,7 +432,8 @@ class AgentDiscovery:
             priority=50,
             cost_level="free",
             latency_level="fast",
-            reliability_score=0.9 if available else 0.0
+            reliability_score=0.9 if available else 0.0,
+            runnable=False,
         )
 
     # ── HTTP 服务扫描 ──────────────────────────────────────
@@ -490,7 +603,7 @@ class AgentDiscovery:
             return AgentCapability(
                 id="mimo",
                 name="MiMo",
-                kind="api",
+                kind="llm",
                 endpoint=os.getenv("MIMO_BASE_URL", ""),
                 status="available" if health.get("available") else "unavailable",
                 capabilities=["chat", "reasoning", "web_search"],
@@ -511,7 +624,7 @@ class AgentDiscovery:
             return AgentCapability(
                 id="mimo",
                 name="MiMo",
-                kind="api",
+                kind="llm",
                 status="unavailable",
                 requires_confirmation=False,
                 enabled=True,
@@ -523,6 +636,8 @@ class AgentDiscovery:
     def _check_api_agent(self, info: Dict[str, Any]) -> Optional[AgentCapability]:
         """检查 API Agent"""
         api_key = os.getenv(info["env_key"], "")
+        if info["id"] == "claude_api" and not api_key:
+            api_key = os.getenv("ANTHROPIC_API_KEY", "")
         base_url = os.getenv(info.get("base_url_env", ""), "")
         model = os.getenv(info.get("model_env", ""), "")
 
@@ -530,7 +645,7 @@ class AgentDiscovery:
             return AgentCapability(
                 id=info["id"],
                 name=info["name"],
-                kind="api",
+                kind="llm",
                 status="unavailable",
                 capabilities=info.get("capabilities", []),
                 task_types=info.get("task_types", []),
@@ -546,7 +661,7 @@ class AgentDiscovery:
         return AgentCapability(
             id=info["id"],
             name=info["name"],
-            kind="api",
+            kind="llm",
             endpoint=base_url,
             status="available",
             capabilities=info.get("capabilities", []),
@@ -584,6 +699,8 @@ class AgentDiscovery:
                         config = json.load(f)
                     # 解析 MCP 配置
                     for server_name, server_config in config.get("mcpServers", {}).items():
+                        if f"mcp_{server_name}" in self._agents:
+                            continue
                         agent = AgentCapability(
                             id=f"mcp_{server_name}",
                             name=f"MCP: {server_name}",
@@ -595,6 +712,8 @@ class AgentDiscovery:
                             requires_confirmation=False,
                             enabled=True,
                             source="mcp",
+                            runnable=False,
+                            last_error="canonical_resource_missing",
                             health={"config_path": str(config_path)},
                             priority=80,
                             reliability_score=0.6
@@ -612,7 +731,7 @@ class AgentDiscovery:
         1. 读取 agent.json manifest（声明式注册）
         2. 无 manifest 的旧 agent 走兼容 fallback（硬编码能力映射）
         """
-        agents_dir = Path("agents")
+        agents_dir = PROJECT_ROOT / "agents"
         if not agents_dir.exists():
             return
 
@@ -621,6 +740,8 @@ class AgentDiscovery:
         manifests = scan_manifests(agents_dir.parent)
 
         for agent_id, manifest in manifests.items():
+            if agent_id in self._agents:
+                continue
             if not manifest.enabled:
                 logger.debug(f"Agent '{agent_id}' disabled in manifest, skipping")
                 continue
@@ -657,7 +778,7 @@ class AgentDiscovery:
                 requires_gpu=manifest.requires_gpu,
                 requires_confirmation=False,
                 enabled=True,
-                source="manifest",
+                source="compatibility_only",
                 health={
                     "module": module_path,
                     "class": class_name,
@@ -669,7 +790,9 @@ class AgentDiscovery:
                 cost_level="free",
                 latency_level="fast",
                 reliability_score=0.7 if status == "available" else 0.0,
+                requires_llm=manifest.id != "example_echo",
                 last_error=last_error,
+                runnable=False,
             )
             self._agents[agent.id] = agent
 
@@ -712,9 +835,11 @@ class AgentDiscovery:
         for agent_dir in agents_dir.iterdir():
             if not agent_dir.is_dir() or agent_dir.name.startswith("_"):
                 continue
+            if agent_dir.name.replace("_agent", "") in self._agents:
+                continue
 
             # 跳过已有 manifest 的 agent
-            if agent_dir.name in manifests or any(
+            if agent_dir.name in manifests or agent_dir.name.replace("_agent", "") in manifests or any(
                 m.id == agent_dir.name for m in manifests.values()
             ):
                 continue
@@ -756,14 +881,25 @@ class AgentDiscovery:
                 supports_web_search=cap_config.get("supports_web_search", False),
                 requires_confirmation=False,
                 enabled=True,
-                source="fallback",
+                source="compatibility_only",
                 health={"module": module_name, "source": "fallback", "last_error": last_error},
                 priority=40,
                 cost_level="free",
                 latency_level="fast",
-                reliability_score=0.7 if status == "available" else 0.0
+                reliability_score=0.7 if status == "available" else 0.0,
+                requires_llm=agent_dir.name not in {"system_agent", "qa_agent"},
+                runnable=False,
             )
             self._agents[agent.id] = agent
+
+        self._scan_scope = {
+            "project_root": str(PROJECT_ROOT),
+            "project_agent_dirs": [str(agents_dir), str(agents_dir / "installed")],
+            "path_commands": ["claude", "codex", "gemini", "aider", "cursor", "qwen", "opencode"],
+            "local_services": ["ollama", "lm_studio", "comfyui", "sd_webui", "n8n"],
+            "mcp_configs": ["~/.mcp.json", "~/.config/claude/mcp.json", "项目/.mcp.json"],
+            "filesystem_scan": "仅扫描项目 Agent、用户级 MCP 配置和 PATH 中的已知 Agent 命令；不递归读取整个系统磁盘。",
+        }
 
     # ── Helper ──────────────────────────────────────────────
 

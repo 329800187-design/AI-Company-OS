@@ -1,6 +1,23 @@
 # Current Project State
 
-Last updated: 2026-08-23
+Last updated: 2026-08-29
+
+## Capability Runtime Convergence — Phase 1
+
+Status: COMPLETE for Phase 1 Closure on `codex/capability-runtime-convergence`; pending architecture acceptance.
+
+- `AIRegistry.scan_runtime_capabilities()` is the canonical entry point for the runtime capability snapshot; scanner observations are exposed through its `resources` projection.
+- Agent Discovery is a compatibility projection for canonical Agent/LLM resources and retains only MCP/project-specific discovery metadata.
+- `core/capability_scanner.py` is a compatibility facade with no independent cache or state model.
+- Resource taxonomy distinguishes `agent`, `llm_provider`, `local_tool`, `browser`, and `local_service`.
+- Readiness is derived centrally from discovery, availability, configuration, verification, adapter, and authorization prerequisites; `ready` is not equivalent to `available`.
+- Runtime state is resolved under the user-level application data directory. Legacy database and enabled-agent locations are copied without deletion or overwriting an existing new database.
+- Migration behavior is covered for fresh, legacy-only, new-only, both-present, rerun, macOS, Windows, and Linux path semantics.
+- Phase 1 targeted backend tests currently pass: 86 passed, 1 skipped in the convergence suite; runtime migration fixtures pass for fresh, legacy-only, new-only, both-present, rerun, and platform path semantics.
+- Frontend typecheck, production build, and lint pass. Agent Console E2E passes after starting the backend health endpoint.
+- Full backend regression is 1620 passed, 15 failed, 7 skipped; all 15 failures reproduce on the GitHub baseline and are not introduced by this branch.
+- Agent Console E2E passes with the formal backend health endpoint running; canonical projection identity/status/readiness equality was verified across Agent Console and Core Agent routes.
+- No Phase 2 work is included.
 
 ## Current Goal
 

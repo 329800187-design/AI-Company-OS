@@ -29,13 +29,18 @@ class AgentRegistry:
 
     def get_available_agents(self) -> List[AgentCapability]:
         """获取所有可用 Agent"""
-        return [a for a in self._agents.values() if a.status == "available"]
+        return [a for a in self._agents.values()
+                if a.enabled and self._canonical_ready(a)]
+
+    @staticmethod
+    def _canonical_ready(agent: AgentCapability) -> bool:
+        return bool(agent.canonical_resource and agent.canonical_resource.get("ready") is True)
 
     def get_agents_for_task(self, task_type: str) -> List[AgentCapability]:
         """获取能处理指定任务的 Agent"""
         candidates = []
         for agent in self._agents.values():
-            if agent.status != "available":
+            if not self._canonical_ready(agent) or not agent.enabled:
                 continue
             if task_type in agent.task_types:
                 candidates.append(agent)
@@ -47,7 +52,7 @@ class AgentRegistry:
     def get_agents_by_capability(self, capability: str) -> List[AgentCapability]:
         """根据能力获取 Agent"""
         return [a for a in self._agents.values()
-                if capability in a.capabilities and a.status == "available"]
+                if capability in a.capabilities and self._canonical_ready(a) and a.enabled]
 
     def get_summary(self) -> Dict[str, Any]:
         """获取摘要"""

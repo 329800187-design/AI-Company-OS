@@ -39,6 +39,13 @@ interface BrainItem {
   enabled: boolean
 }
 
+interface ProviderConfig {
+  id: string
+  base_url?: string
+  model?: string
+  configured?: boolean
+}
+
 interface SystemHealth {
   backend: boolean
   database: boolean
@@ -117,11 +124,13 @@ function ProviderItem({ label, isMock, icon: Icon, fixHint }: ProviderItemProps)
 export default function SettingsPage() {
   const [provider, setProvider] = useState("deepseek")
   const [apiKey, setApiKey] = useState("")
+  const [baseUrl, setBaseUrl] = useState("")
   const [model, setModel] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [isSaved, setIsSaved] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [saveError, setSaveError] = useState("")
   const [health, setHealth] = useState<SystemHealth>({
     backend: false,
     database: false,
@@ -133,9 +142,11 @@ export default function SettingsPage() {
   })
   const [loadingHealth, setLoadingHealth] = useState(true)
   const [providers, setProviders] = useState(defaultProviders)
+  const [providerConfigs, setProviderConfigs] = useState<Record<string, ProviderConfig>>({})
   const [brains, setBrains] = useState<BrainItem[]>([])
   const [currentBrain, setCurrentBrain] = useState("")
   const [switchingBrain, setSwitchingBrain] = useState("")
+  const [switchingProvider, setSwitchingProvider] = useState(false)
 
   const [providerHealth, setProviderHealth] = useState<{
     search: ProviderHealthItem
@@ -146,10 +157,28 @@ export default function SettingsPage() {
   const loadConfig = async () => {
     try {
       const config = await api.getConfig()
-      setProvider(config.current_provider || "deepseek")
+      const currentProvider = config.current_provider || "deepseek"
+      setProvider(currentProvider)
+      const configMap = Object.fromEntries(
+        (config.providers || []).map((item) => [String(item.id), item as unknown as ProviderConfig])
+      )
+      setProviderConfigs(configMap)
+      const current = config.providers?.find((item) => item.id === currentProvider)
+      setBaseUrl(String(current?.base_url || ""))
+      setModel(String(current?.model || ""))
     } catch (error) {
       console.error("Failed to load config:", error)
     }
+  }
+
+  const handleProviderSelect = (providerId: string) => {
+    const selected = providerConfigs[providerId]
+    setProvider(providerId)
+    setApiKey("")
+    setBaseUrl(String(selected?.base_url || ""))
+    setModel(String(selected?.model || ""))
+    setTestResult(null)
+    setSaveError("")
   }
 
   const loadProviders = async () => {
@@ -195,9 +224,23 @@ export default function SettingsPage() {
       await api.switchBrain(brainId)
       setCurrentBrain(brainId)
     } catch (e) {
-      console.error("Failed to switch brain:", e)
+      setSaveError(e instanceof Error ? e.message : "主脑切换失败")
     } finally {
       setSwitchingBrain("")
+    }
+  }
+
+  const handleSwitchProvider = async () => {
+    setSwitchingProvider(true)
+    setSaveError("")
+    try {
+      await api.switchProvider(provider)
+      await loadConfig()
+      await loadHealth()
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Provider 切换失败")
+    } finally {
+      setSwitchingProvider(false)
     }
   }
 
@@ -271,10 +314,9 @@ export default function SettingsPage() {
 
   const handleSave = async () => {
     setIsLoading(true)
+    setSaveError("")
     try {
-      const configData: Record<string, unknown> = {
-        ai_provider: provider,
-      }
+      const configData: Record<string, unknown> = {}
 
       if (apiKey) {
         configData[`${provider}_api_key`] = apiKey
@@ -284,12 +326,18 @@ export default function SettingsPage() {
         configData[`${provider}_model`] = model
       }
 
+      if (baseUrl) {
+        configData[`${provider}_base_url`] = baseUrl
+      }
+
       await api.saveConfig(configData)
       setIsSaved(true)
       setTimeout(() => setIsSaved(false), 2000)
       loadHealth() // Refresh health
+      loadBrains()
+      loadConfig()
     } catch (error) {
-      console.error("Failed to save config:", error)
+      setSaveError(error instanceof Error ? error.message : "保存配置失败")
     } finally {
       setIsLoading(false)
     }
@@ -300,7 +348,7 @@ export default function SettingsPage() {
     setTestResult(null)
     try {
       const result = await api.testConnection(provider)
-      setTestResult(result)
+      setTestResult({ ok: result.status === "ok", message: result.message })
     } catch {
       setTestResult({ ok: false, message: "连接测试失败" })
     } finally {
@@ -447,7 +495,7 @@ export default function SettingsPage() {
             <Button
               key={p.id}
               variant={provider === p.id ? "default" : "outline"}
-              onClick={() => setProvider(p.id)}
+              onClick={() => handleProviderSelect(p.id)}
               className="flex-col h-auto py-4"
             >
               <span className="font-semibold">{p.label}</span>
@@ -524,6 +572,7 @@ export default function SettingsPage() {
           onChange={(e) => setApiKey(e.target.value)}
           placeholder={`输入 ${provider.toUpperCase()} API Key（留空保持当前配置）`}
         />
+        <p className="text-xs text-[#8A8A8A] mt-2">当前状态：{health.currentProvider === provider && health.apiConfigured ? "已配置（密钥不会回显）" : "未配置"}</p>
         <p className="text-xs text-[#8A8A8A] mt-2">
           获取 API Key：
           {provider === "deepseek" && " https://platform.deepseek.com"}
@@ -554,6 +603,25 @@ export default function SettingsPage() {
                 : "claude-sonnet-4-20250514"
           }）`}
         />
+      </motion.div>
+
+      {/* Base URL */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.27 }}
+        className="p-6 rounded-2xl border border-[#E5E5E5] bg-white"
+      >
+        <div className="flex items-center gap-2 mb-4">
+          <Globe className="w-5 h-5 text-[#0B0B0B]" />
+          <h3 className="font-semibold">Base URL</h3>
+        </div>
+        <Input
+          value={baseUrl}
+          onChange={(e) => setBaseUrl(e.target.value)}
+          placeholder="留空使用默认地址"
+        />
+        <p className="text-xs text-[#8A8A8A] mt-2">支持 OpenAI 兼容网关或公司内部代理地址。</p>
       </motion.div>
 
       {/* Test Connection */}
@@ -615,7 +683,22 @@ export default function SettingsPage() {
           )}
           {isSaved ? "已保存" : "保存设置"}
         </Button>
+        <Button
+          onClick={handleSwitchProvider}
+          disabled={switchingProvider || health.currentProvider === provider}
+          variant="outline"
+          size="lg"
+          className="w-full mt-3"
+        >
+          {switchingProvider ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+          {health.currentProvider === provider ? "当前 Provider" : "切换到此 Provider"}
+        </Button>
       </motion.div>
+      {saveError && (
+        <div className="p-3 rounded-lg text-sm bg-destructive/10 text-destructive border border-destructive/20">
+          {saveError}
+        </div>
+      )}
     </div>
   )
 }

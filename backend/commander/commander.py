@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from backend.database.database import SessionDB, StepDB, TaskDB
-from backend.config import get_ai_config, AI_PROVIDER, get_brain_manager
+from backend.config import get_ai_config, get_current_provider, get_brain_manager
 from backend.services.usage_stats import record_usage
 from backend.services.agent_loader import load_agent, load_agent_instance
 from backend.ai_registry.registry import get_registry
@@ -39,6 +39,8 @@ def _get_agent(name: str, **kwargs):
             "marketing": ("agents.marketing_agent.agent", "MarketingAgent"),
             "video": ("agents.video_agent.agent", "VideoAgent"),
             "data": ("agents.data_agent.agent", "DataAgent"),
+            "research": ("agents.research_agent.agent", "ResearchAgent"),
+            "website": ("agents.website_agent.agent", "WebsiteAgent"),
         }
         if name in agent_map:
             entrypoint, class_name = agent_map[name]
@@ -79,7 +81,7 @@ def _get_ai_client() -> _httpx.Client:
     """获取或创建共享的 AI HTTP 客户端（连接复用）"""
     global _ai_client, _ai_client_key
     config = get_ai_config()
-    current_key = (AI_PROVIDER, config["api_key"][:8] if config["api_key"] else "")
+    current_key = (get_current_provider(), config["api_key"][:8] if config["api_key"] else "")
 
     if _ai_client is None or _ai_client_key != current_key:
         if _ai_client:
@@ -103,7 +105,8 @@ def _call_ai_legacy(prompt: str, system: str = "", temperature: float = 0.3) -> 
     start = _time.time()
 
     # 构建请求 URL
-    if AI_PROVIDER == "claude":
+    provider = get_current_provider()
+    if provider == "claude":
         url = f"{base_url}/v1/messages"
         headers = {
             "x-api-key": api_key,
@@ -139,7 +142,7 @@ def _call_ai_legacy(prompt: str, system: str = "", temperature: float = 0.3) -> 
         # 提取 token 使用量
         prompt_tokens = 0
         completion_tokens = 0
-        if AI_PROVIDER == "claude":
+        if provider == "claude":
             prompt_tokens = data.get("usage", {}).get("input_tokens", 0)
             completion_tokens = data.get("usage", {}).get("output_tokens", 0)
             result = data["content"][0]["text"].strip()
@@ -150,7 +153,7 @@ def _call_ai_legacy(prompt: str, system: str = "", temperature: float = 0.3) -> 
 
         # 记录使用量
         record_usage(
-            provider=AI_PROVIDER,
+            provider=provider,
             model=model,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
@@ -162,7 +165,7 @@ def _call_ai_legacy(prompt: str, system: str = "", temperature: float = 0.3) -> 
     except Exception as e:
         duration_ms = int((_time.time() - start) * 1000)
         record_usage(
-            provider=AI_PROVIDER,
+            provider=provider,
             model=model,
             source="commander",
             duration_ms=duration_ms,
@@ -252,19 +255,42 @@ class CommanderAgent:
 
         # 实例化所有内置 Agent（使用延迟加载）
         self._agents = {}
-        agent_names = ["ceo", "codex", "qa", "cto", "openclaw", "system", "image", "marketing", "video", "data"]
+        from backend.ai_registry.eligibility import get_canonical_resource
+        runtime_snapshot = get_registry().scan_runtime_capabilities()
+        agent_names = ["ceo", "codex", "qa", "cto", "openclaw", "system", "image", "marketing", "video", "data", "research", "website"]
         for name in agent_names:
             agent = _get_agent(name)
-            if agent is not None:
+            if agent is not None and get_canonical_resource(name, runtime_snapshot):
                 self._agents[agent.AGENT_ID] = agent
             else:
                 _cmd_logger.warning(f"[Commander] Agent '{name}' unavailable")
+
+        # Merge the real local manifest registry into Commander so installed
+        # agents can participate in decomposition and execution.
+        try:
+            from backend.schemas.agent_manifest import scan_manifests
+            from backend.services.agent_discovery import get_agent_discovery
+            manifests = scan_manifests()
+            discovered = get_agent_discovery().scan_all(force=True)
+            for agent_id, manifest in manifests.items():
+                capability = discovered.get(agent_id)
+                if not capability or not capability.enabled or not capability.canonical_resource.get("ready", False):
+                    continue
+                if agent_id in self._agents:
+                    continue
+                module_path, class_name = manifest.parse_entrypoint()
+                agent = load_agent_instance(module_path, class_name)
+                if agent is not None:
+                    self._agents[agent_id] = agent
+        except Exception as e:
+            _cmd_logger.warning(f"[Commander] 动态加载本机 Agent 失败: {e}")
 
         # 加载用户插件
         try:
             from agents.user_plugins.adapter import discover_plugins
             for plugin in discover_plugins():
-                self._agents[plugin.AGENT_ID] = plugin
+                if get_canonical_resource(plugin.AGENT_ID, runtime_snapshot):
+                    self._agents[plugin.AGENT_ID] = plugin
         except Exception as e:
             _cmd_logger.warning(f"[Commander] 加载用户插件失败: {e}")
 
@@ -402,6 +428,18 @@ class CommanderAgent:
             context_parts.append(f"## 可用技能\n{str(skill_context)[:2000]}")
         if memory_context:
             context_parts.append(str(memory_context)[:3000])
+        roster = [
+            {
+                "id": agent_id,
+                "name": getattr(agent, "DISPLAY_NAME", agent_id),
+                "task_types": getattr(agent, "TASK_TYPES", []),
+            }
+            for agent_id, agent in sorted(self._agents.items())
+        ]
+        context_parts.append(
+            "## 当前可调度 Agent（仅可分配给以下已加载 Agent）\n" +
+            json.dumps(roster, ensure_ascii=False)[:5000]
+        )
         planning_context = "\n\n".join(context_parts)
         self.pending_clarifying_questions = []
         steps = self._ceo_decompose(goal, session_id, planning_context=planning_context)
@@ -671,7 +709,15 @@ class CommanderAgent:
             details["context"] = (details.get("context", "") +
                                   f"\n[用户补充信息] {user_response}")
 
-        executor = self._get_executor(agent_name)
+        from backend.ai_registry.eligibility import get_canonical_resource
+        canonical_id = agent_name.removesuffix("_agent")
+        canonical = get_canonical_resource(canonical_id, get_registry().scan_runtime_capabilities())
+        if not canonical:
+            return {"step": step_num, "status": "失败", "result": "canonical_resource_missing"}
+        if not canonical.get("ready", False):
+            return {"step": step_num, "status": "失败", "result": canonical.get("readiness_reasons", ["agent_not_ready"])}
+
+        executor = self._get_executor(agent_name) or self._get_executor(canonical_id)
 
         # 如果传统 Agent 不认识，尝试通过 AI Registry 路由
         if not executor:
