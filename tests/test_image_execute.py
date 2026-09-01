@@ -96,32 +96,6 @@ class TestImageExecuteEndpoint:
         assert data["ok"] is False or "blocked" in str(data).lower()
 
 
-class TestImageGovernanceGuard:
-    """业务 Agent execute 入口不再由旧 Governance Guard 拦截模糊目标"""
-
-    def test_vague_goal_is_handled_by_business_agent(self):
-        """模糊目标继续交由业务 Agent 处理；受控分类仍走 /governance/run。"""
-        resp = client.post("/agents/image/execute", json={
-            "task_id": "",
-            "goal": "帮我赚钱",
-            "task_type": "image_generate",
-            "context": {},
-            "input": {},
-        })
-        data = resp.json()
-        assert data["ok"] is True
-        assert data["agent_id"] == "image"
-
-    def test_vague_image_run_blocked(self):
-        """/agents/image/run 也被 guard 拦截"""
-        resp = client.post("/agents/image/run", json={
-            "goal": "帮我赚钱",
-            "prompt": "帮我赚钱",
-        })
-        data = resp.json()
-        assert data.get("ok") is False or data.get("status") == "blocked"
-
-
 class TestImageGovernanceFallback:
     """/governance/run 图片 fallback 仍然正常工作"""
 

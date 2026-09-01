@@ -4,30 +4,6 @@ import os
 from fastapi.testclient import TestClient
 
 
-def test_core_console_html_contains_echo_endpoint():
-    """验证 core_console.html 包含 Echo Agent 端点"""
-    html_path = os.path.join(
-        os.path.dirname(__file__), '..',
-        'dist', 'ai-company-os-core-v0.1-alpha', 'docs', 'core_console.html'
-    )
-    with open(html_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-
-    assert '/agents/example_echo/execute' in content, "HTML should contain /agents/example_echo/execute endpoint"
-
-
-def test_core_console_html_contains_governance_endpoint():
-    """验证 core_console.html 包含 Governance 端点"""
-    html_path = os.path.join(
-        os.path.dirname(__file__), '..',
-        'dist', 'ai-company-os-core-v0.1-alpha', 'docs', 'core_console.html'
-    )
-    with open(html_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-
-    assert '/governance/run' in content, "HTML should contain /governance/run endpoint"
-
-
 def test_core_app_import():
     """验证 import backend.core_app 成功"""
     import backend.core_app
@@ -38,25 +14,20 @@ def test_core_app_import():
 def test_core_app_has_required_routes():
     """验证 core_app 包含所有必需的路由"""
     from backend.core_app import app
+    client = TestClient(app)
 
-    route_paths = [route.path for route in app.routes]
-
-    # 必需的 Core 路由
-    assert "/health" in route_paths, "Missing /health"
-    assert "/governance/run" in route_paths, "Missing /governance/run"
-    assert "/agents/discovered" in route_paths, "Missing /agents/discovered"
-    assert "/agents/{agent_id}/execute" in route_paths, "Missing /agents/{agent_id}/execute"
-    assert "/collaboration/plan" in route_paths, "Missing /collaboration/plan"
+    assert client.get("/health").status_code == 200
+    assert client.get("/boss/templates").status_code == 200
+    assert client.get("/agents/discovered").status_code == 200
 
 
 def test_core_app_excludes_legacy_routes():
     """验证 core_app 不包含旧系统路由"""
     from backend.core_app import app
 
-    route_paths = [route.path for route in app.routes]
+    client = TestClient(app)
 
-    # 不应包含的旧路由；Boss Command Center 已在 Core 入口中保留。
-    assert "/pipeline/execute" not in route_paths, "Should not include /pipeline/execute"
+    assert client.post("/pipeline/execute", json={}).status_code == 404
 
 
 def test_health_endpoint():

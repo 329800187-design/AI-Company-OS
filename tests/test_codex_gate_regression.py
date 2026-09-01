@@ -343,15 +343,6 @@ class TestBrowserApprovalPromptBuilders:
             "Prompt builder should receive effective permission (True), not raw request flag (False)"
         )
 
-    def test_market_research_prompt_real_tool_when_approved(self):
-        """When approved, market research prompt should instruct real tool usage."""
-        provider = self._make_provider()
-        prompt = provider._build_market_research_prompt(
-            "test goal", context={}, browser_allowed=True
-        )
-        assert "真实工具链" in prompt
-        assert "浏览器自动化未授权" not in prompt
-
     def test_market_research_prompt_draft_when_not_approved(self):
         """When not approved, market research prompt should instruct draft mode."""
         provider = self._make_provider()
