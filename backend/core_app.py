@@ -1,7 +1,7 @@
 """AI Company OS — Core 最小启动入口
 
-只加载 Governance + Agent 发现/启用/执行 + Collaboration + MiniDelivery，
-不加载旧 Boss/Workflow/Pipeline/Commander 等路由。
+加载 Governance + Boss Command Center + Agent 发现/启用/执行 +
+Collaboration + MiniDelivery。旧 Workflow/Pipeline/Commander 等路由不在此入口。
 
 启动命令:
     uvicorn backend.core_app:app --reload --port 8000
@@ -24,10 +24,11 @@ from backend.routers.governance_router import router as governance_router
 from backend.routers.collaboration_router import router as collaboration_router
 from backend.routers.minidelivery_router import router as minidelivery_router
 from backend.routers.core_agent_router import router as core_agent_router
+from backend.routers.boss_router import router as boss_router
 
 app = FastAPI(
     title="AI Company OS Core",
-    description="最小 Core 启动入口 — Governance + Agent 管理 + Collaboration + MiniDelivery",
+    description="Core 启动入口 — Governance + Boss Command Center + Agent 管理 + Collaboration + MiniDelivery",
     version=VERSION,
 )
 
@@ -46,6 +47,7 @@ app.add_middleware(
 
 # ── 注册路由 ───────────────────────────────────────────
 app.include_router(governance_router)
+app.include_router(boss_router)
 app.include_router(collaboration_router)
 app.include_router(minidelivery_router)
 app.include_router(core_agent_router)
