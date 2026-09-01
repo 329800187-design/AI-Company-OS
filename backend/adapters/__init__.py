@@ -10,7 +10,6 @@ from .base_adapter import BaseAdapter
 from .claude_code_adapter import ClaudeCodeAdapter
 from .comfyui_adapter import ComfyUIAdapter
 from .ollama_adapter import OllamaAdapter
-from .openclaw_adapter import OpenClawAdapter
 from .data_adapter import DataAdapter
 from .api_model_adapter import ApiModelAdapter
 from .mimo_adapter import MiMoAdapter
@@ -21,7 +20,6 @@ __all__ = [
     "ClaudeCodeAdapter",
     "ComfyUIAdapter",
     "OllamaAdapter",
-    "OpenClawAdapter",
     "DataAdapter",
     "ApiModelAdapter",
     "MiMoAdapter",

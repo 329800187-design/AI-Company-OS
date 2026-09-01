@@ -78,16 +78,11 @@ def _frontend_check() -> Dict[str, Any]:
 
 def _agent_import_checks() -> Dict[str, Any]:
     agents = {
-        "ceo": "agents.ceo_agent.agent",
-        "codex": "agents.codex_agent.agent",
-        "qa": "agents.qa_agent.agent",
-        "cto": "agents.cto_agent.agent",
-        "system": "agents.system_agent.agent",
-        "openclaw": "agents.openclaw_agent.agent",
         "image": "agents.image_agent.agent",
         "marketing": "agents.marketing_agent.agent",
-        "video": "agents.video_agent.agent",
         "data": "agents.data_agent.agent",
+        "research": "agents.research_agent.agent",
+        "website": "agents.website_agent.agent",
     }
     results: Dict[str, str] = {}
     errors: Dict[str, str] = {}
@@ -219,53 +214,11 @@ def get_capability_matrix() -> Dict[str, Any]:
 
     rows = [
         {
-            "id": "commander",
-            "label": "Commander task orchestration",
-            "status": "ready" if current_configured else "degraded",
-            "mode": "ai" if current_configured else "rule_fallback",
-            "note": "Uses the configured provider for planning when available.",
-        },
-        {
-            "id": "codex",
-            "label": "Codex code execution",
-            "status": "ready",
-            "mode": "local_sandbox",
-            "note": "Python sandbox execution is local and does not require model tokens.",
-        },
-        {
-            "id": "qa",
-            "label": "QA validation",
-            "status": "ready" if current_configured else "degraded",
-            "mode": "ai_or_rule_fallback",
-            "note": "Can score with AI, then falls back to rules.",
-        },
-        {
-            "id": "cto",
-            "label": "CTO review and decomposition",
-            "status": "ready" if current_configured else "degraded",
-            "mode": "ai_or_static_analysis",
-            "note": "Static checks catch obvious risks even without an API key.",
-        },
-        {
-            "id": "openclaw",
-            "label": "Browser automation",
-            "status": "ready" if service_status.get("openclaw") in ("online", "running") else "partial",
-            "mode": "playwright_local",
-            "note": "Agent can use local Playwright; OpenClaw service is optional but currently tracked separately.",
-        },
-        {
             "id": "image",
             "label": "Image generation",
             "status": "ready" if openai_configured else "degraded",
             "mode": "openai_images" if openai_configured else "prompt_only",
             "note": "Without OpenAI image support it returns an optimized prompt instead of an image.",
-        },
-        {
-            "id": "video",
-            "label": "Video generation",
-            "status": "stub",
-            "mode": "script_storyboard_only",
-            "note": "Script and storyboard generation work; direct video rendering is a placeholder.",
         },
         {
             "id": "marketing",

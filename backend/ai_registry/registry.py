@@ -610,91 +610,20 @@ class AIRegistry:
             return {"success": False, "error": str(e), "service": "cc-switch"}
 
     def _exec_openclaw(self, svc: AIService, payload: Dict) -> Dict[str, Any]:
-        """通过 OpenClaw Agent 执行浏览器任务"""
-        try:
-            from agents.openclaw_agent.agent import OpenClawAgent
-
-            goal = payload.get("goal", payload.get("prompt", ""))
-            url = payload.get("url", payload.get("目标URL", ""))
-            task_type = payload.get("task_type", "browser_scrape")
-            selector = payload.get("selector", "")
-
-            agent = OpenClawAgent(
-                headless=payload.get("headless", True),
-                timeout=payload.get("timeout", 30),
-                allow_browser_automation=payload.get("allow_browser_automation", False),
-            )
-
-            task = {
-                "task_id": f"registry_openclaw_{uuid.uuid4().hex[:8]}",
-                "task_type": task_type,
-                "goal": goal or f"浏览器操作: {url}",
-                "url": url,
-                "selector": selector,
-                "extract_type": payload.get("extract_type", "text"),
-                "full_page": payload.get("full_page", False),
-            }
-
-            result = agent.run(task)
-            # 检查浏览器授权拦截
-            if result.get("status") == "blocked":
-                return {
-                    "success": False,
-                    "service": "openclaw",
-                    "error": result.get("message", "需要用户授权浏览器采集"),
-                    "blocked_reason": result.get("blocked_reason", "browser_automation_approval_required"),
-                }
-            return {
-                "success": result.get("success", False),
-                "service": "openclaw",
-                "result": result.get("result", ""),
-                "data": result.get("data", []),
-                "screenshot_path": result.get("screenshot_path", ""),
-                "page_title": result.get("page_title", ""),
-                "agent_result": result,
-            }
-        except ImportError:
-            return {
-                "success": False,
-                "service": "openclaw",
-                "error": "Playwright 未安装。请运行: pip install playwright && playwright install chromium",
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "service": "openclaw",
-                "error": f"OpenClaw 执行失败: {str(e)}",
-            }
+        """Legacy browser execution is no longer available in Core."""
+        return {
+            "success": False,
+            "service": svc.service_id,
+            "error": "Legacy browser execution is unavailable; use governed Boss research flows.",
+        }
 
     def _exec_local_python(self, svc: AIService, payload: Dict) -> Dict[str, Any]:
-        """通过 CodexAgent 的安全沙箱执行 Python 代码"""
-        code = payload.get("code", payload.get("代码内容", ""))
-        if not code:
-            return {"success": False, "error": "缺少 code 字段"}
-
-        try:
-            from agents.codex_agent.agent import CodexAgent
-            agent = CodexAgent(timeout=payload.get("timeout", 30))
-            task = {
-                "task_id": f"registry_codex_{uuid.uuid4().hex[:8]}",
-                "task_type": "code_execute",
-                "goal": payload.get("goal", "代码执行"),
-                "code": code,
-            }
-            result = agent.run(task)
-            success = result.get("success", False)
-            return {
-                "success": success,
-                "service": "codex-cli",
-                "result": result.get("result", result.get("stdout", ""))[:5000],
-                "stderr": result.get("stderr", "")[:5000],
-                "exit_code": result.get("exit_code", -1),
-                "sandbox_path": result.get("sandbox_path", ""),
-            }
-        except ImportError:
-            return {"success": False, "error": "Codex Agent 不可用", "service": "codex-cli"}
-        except Exception as e:
-            return {"success": False, "error": f"沙箱执行失败: {str(e)}", "service": "codex-cli"}
+        """Legacy local code execution is no longer available in Core."""
+        return {
+            "success": False,
+            "service": svc.service_id,
+            "error": "Legacy local code execution is unavailable in Core.",
+        }
 
     def _exec_desktop_app(self, svc: AIService, payload: Dict) -> Dict[str, Any]:
         """启动桌面 AI 应用"""
