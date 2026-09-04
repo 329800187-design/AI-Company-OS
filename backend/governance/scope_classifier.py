@@ -1,4 +1,8 @@
-"""Governance Guard — 旧主入口轻量守卫"""
+"""Business scope classifier for supported-goal checks.
+
+This module classifies requests against the supported business scope.  It is
+not a security, authorization, or permission-control mechanism.
+"""
 import os
 from typing import Tuple, Optional
 

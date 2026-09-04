@@ -242,7 +242,7 @@ class TestBossV2API:
     def _bypass_governance(self):
         from unittest.mock import patch
         from backend.governance.classifier import ClassificationResult
-        with patch("backend.governance.guard.guard_payload") as mock_guard:
+        with patch("backend.governance.scope_classifier.guard_payload") as mock_guard:
             mock_guard.return_value = (False, ClassificationResult(ok=True, confidence=1.0, reason="test bypass"))
             yield
 

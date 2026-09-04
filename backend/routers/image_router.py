@@ -36,7 +36,7 @@ def generate_image(request: ImageGenerateRequest):
         raise HTTPException(status_code=400, detail="请提供图片描述")
 
     # Governance Guard
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
     blocked, classification = guard_payload(request.model_dump())
     if blocked:
         return governance_block_response(classification)
@@ -59,7 +59,7 @@ def analyze_image(request: ImageAnalyzeRequest):
         raise HTTPException(status_code=400, detail="请提供 image_url 或 image_path")
 
     # Governance Guard
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
     blocked, classification = guard_payload(request.model_dump())
     if blocked:
         return governance_block_response(classification)

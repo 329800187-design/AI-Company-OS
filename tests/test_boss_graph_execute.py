@@ -284,7 +284,7 @@ class TestBossGraphAPI:
     """API 集成测试（mock execute_agent + bypass governance）"""
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     @patch("backend.services.agent_executor.execute_agent", side_effect=_mock_execute_agent)
     def test_single_node_execute(self, mock_exec, mock_guard, mock_rate):
         """单节点执行 ok"""
@@ -319,7 +319,7 @@ class TestBossGraphAPI:
         assert data["summary"]["failed"] == 0
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     @patch("backend.services.agent_executor.execute_agent", side_effect=_mock_execute_agent)
     def test_research_marketing_handoff(self, mock_exec, mock_guard, mock_rate):
         """research → marketing 时 marketing used_handoff=true，handoff_sources=["research"]"""
@@ -372,7 +372,7 @@ class TestBossGraphAPI:
         assert marketing_result["handoff_sources"] == ["research"]
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_invalid_graph_returns_400(self, mock_guard, mock_rate):
         """无效图（缺失节点引用）返回 HTTP 400"""
         from fastapi.testclient import TestClient
@@ -393,7 +393,7 @@ class TestBossGraphAPI:
         assert response.status_code == 400
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_self_loop_returns_400(self, mock_guard, mock_rate):
         """自环返回 HTTP 400"""
         from fastapi.testclient import TestClient
@@ -414,7 +414,7 @@ class TestBossGraphAPI:
         assert response.status_code == 400
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_cycle_returns_400(self, mock_guard, mock_rate):
         """循环依赖返回 HTTP 400"""
         from fastapi.testclient import TestClient
@@ -439,7 +439,7 @@ class TestBossGraphAPI:
         assert response.status_code == 400
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     @patch("backend.services.agent_executor.execute_agent")
     def test_upstream_fail_no_handoff(self, mock_exec, mock_guard, mock_rate):
         """research 失败时 marketing 的 handoff_sources 应为空"""
@@ -481,7 +481,7 @@ class TestBossGraphAPI:
         assert marketing_result["handoff_sources"] == []
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     @patch("backend.services.agent_executor.execute_agent", side_effect=_mock_execute_agent)
     def test_save_to_minidelivery_writes_files(self, mock_exec, mock_guard, mock_rate, tmp_path):
         """save_to_delivery=true writes artifact, raw result, and metadata files."""

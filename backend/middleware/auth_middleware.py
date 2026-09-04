@@ -5,12 +5,11 @@
 2. 头部字段模式：X-API-Key: <api_key>
 
 配置：
-- AUTH_ENABLED=true/false（.env 配置，默认 false 开发模式不启用）
-- AUTH_TOKEN=<your-api-key>（若空则自动生成一个）
+- AUTH_ENABLED=true/false（.env 配置，默认 true）
+- AUTH_TOKEN=<your-api-key>（启用认证时必须设置）
 """
 import hmac
 import os
-import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -32,21 +31,25 @@ def _load_auth_config() -> dict:
     """从环境变量 / .env 加载认证配置"""
     # 尝试直接读取 .env 文件
     env_file = Path(__file__).parent.parent.parent / ".env"
-    auth_enabled = os.getenv("AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
+    auth_enabled_from_env = "AUTH_ENABLED" in os.environ
+    auth_token_from_env = "AUTH_TOKEN" in os.environ
+    auth_enabled = os.getenv("AUTH_ENABLED", "true").lower() in ("true", "1", "yes")
     auth_token = os.getenv("AUTH_TOKEN", "")
 
     # 如果 .env 没加载到，从文件直接读
-    if not auth_token and env_file.exists():
+    if env_file.exists():
         for line in env_file.read_text(encoding="utf-8").splitlines():
             line = line.strip()
-            if line.startswith("AUTH_TOKEN="):
+            if line.startswith("AUTH_TOKEN=") and not auth_token_from_env:
                 auth_token = line.split("=", 1)[1].strip()
-            elif line.startswith("AUTH_ENABLED="):
+            elif line.startswith("AUTH_ENABLED=") and not auth_enabled_from_env:
                 auth_enabled = line.split("=", 1)[1].strip().lower() in ("true", "1", "yes")
 
-    # 如果仍为空，自动生成一个
-    if not auth_token:
-        auth_token = f"aco_{uuid.uuid4().hex[:16]}"
+    if auth_enabled and not auth_token:
+        raise RuntimeError(
+            "AUTH_TOKEN must be configured when AUTH_ENABLED=true. "
+            "Set AUTH_TOKEN in the environment or .env before starting the service."
+        )
 
     return {
         "enabled": auth_enabled,

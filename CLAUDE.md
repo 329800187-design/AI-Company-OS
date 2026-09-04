@@ -120,7 +120,7 @@ E:/AI-company-os/
 python -m venv .venv && source .venv/bin/activate (or .venv\Scripts\activate)
 pip install -r requirements.txt
 playwright install chromium
-cp .env.example .env  # edit API keys
+cp .env.example .env  # set AUTH_TOKEN and edit API keys
 uvicorn backend.app:app --reload
 
 # Docker

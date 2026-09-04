@@ -8,6 +8,10 @@
 import os
 import pytest
 
+# The production default requires a token.  Existing behavior-focused tests
+# opt out explicitly; dedicated security tests cover the enabled path.
+os.environ.setdefault("AUTH_ENABLED", "false")
+
 
 @pytest.fixture(autouse=True, scope="session")
 def _ensure_db_initialized():

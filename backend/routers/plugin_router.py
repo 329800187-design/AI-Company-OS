@@ -11,7 +11,7 @@ def list_plugins():
 @router.post("/{plugin_id}/run", summary="Run external plugin")
 def run_plugin(plugin_id: str, task: dict):
     # Governance Guard: 从 task payload 提取 goal 并检查
-    from backend.governance.guard import guard_payload, governance_block_response, extract_goal_from_payload
+    from backend.governance.scope_classifier import guard_payload, governance_block_response, extract_goal_from_payload
     from backend.governance.classifier import ClassificationResult
 
     blocked, classification = guard_payload(task)

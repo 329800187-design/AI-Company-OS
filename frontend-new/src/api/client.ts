@@ -1,6 +1,7 @@
 import type { CollaborationRunDetailView, MissionMetrics } from "@/types"
 
 const API_BASE = ""
+const ACCESS_TOKEN_STORAGE_KEY = "ai-company-os.access-token"
 
 interface RequestOptions {
   method?: string
@@ -10,6 +11,27 @@ interface RequestOptions {
 }
 
 class ApiClient {
+  getAccessToken(): string {
+    if (typeof window === "undefined") return ""
+    return window.sessionStorage.getItem(ACCESS_TOKEN_STORAGE_KEY) || ""
+  }
+
+  setAccessToken(token: string): void {
+    if (typeof window === "undefined") return
+
+    const normalizedToken = token.trim()
+    if (normalizedToken) {
+      window.sessionStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, normalizedToken)
+    } else {
+      window.sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY)
+    }
+  }
+
+  private authHeaders(): Record<string, string> {
+    const token = this.getAccessToken()
+    return token ? { Authorization: `Bearer ${token}` } : {}
+  }
+
   private async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
     const { method = "GET", body, headers = {}, signal } = options
 
@@ -17,6 +39,7 @@ class ApiClient {
       method,
       headers: {
         "Content-Type": "application/json",
+        ...this.authHeaders(),
         ...headers,
       },
       signal,
@@ -89,6 +112,10 @@ class ApiClient {
         providers: Array<{ name: string; has_key: boolean; env_var: string }>
       }
     }>("/config/providers/health")
+  }
+
+  async getCapabilities<T extends Record<string, unknown> = Record<string, unknown>>() {
+    return this.request<T>("/capabilities")
   }
 
   async saveConfig(config: Record<string, unknown>) {
@@ -706,7 +733,9 @@ class ApiClient {
 
   // Report / Export APIs
   async exportSession(sessionId: string, format: "html" | "csv" | "json" = "html") {
-    const response = await fetch(`${API_BASE}/export/session/${sessionId}?format=${format}`)
+    const response = await fetch(`${API_BASE}/export/session/${sessionId}?format=${format}`, {
+      headers: this.authHeaders(),
+    })
     if (!response.ok) {
       throw new Error(`Export failed: HTTP ${response.status}`)
     }
@@ -723,7 +752,9 @@ class ApiClient {
   }
 
   async exportMission(missionId: string, format: "json" | "markdown" = "json") {
-    const response = await fetch(`${API_BASE}/boss/missions/${missionId}/export?format=${format}`)
+    const response = await fetch(`${API_BASE}/boss/missions/${missionId}/export?format=${format}`, {
+      headers: this.authHeaders(),
+    })
     if (!response.ok) {
       throw new Error(`Export failed: HTTP ${response.status}`)
     }
@@ -1188,23 +1219,51 @@ class ApiClient {
   }
 
   async getMiniDeliveryArtifact(taskId: string) {
-    const response = await fetch(`${API_BASE}/minidelivery/tasks/${taskId}/artifact`)
+    const response = await fetch(`${API_BASE}/minidelivery/tasks/${taskId}/artifact`, {
+      headers: this.authHeaders(),
+    })
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`)
     }
     return response.text()
   }
 
-  // ── MiniDelivery 下载 URL（Phase 2B）───────────────────────────────────
+  private async downloadMiniDeliveryFile(endpoint: string, taskId: string, defaultExtension: string) {
+    const response = await fetch(`${API_BASE}${endpoint}`, {
+      headers: this.authHeaders(),
+    })
+    if (!response.ok) {
+      throw new Error(`Download failed: HTTP ${response.status}`)
+    }
 
-  getMiniDeliveryDownloadUrl(taskId: string) {
-    return `${API_BASE}/minidelivery/tasks/${taskId}/download`
+    const contentType = response.headers.get("content-type") || ""
+    const extension = defaultExtension === "pdf" && contentType.startsWith("text/html")
+      ? "html"
+      : defaultExtension
+    const url = URL.createObjectURL(await response.blob())
+    const anchor = document.createElement("a")
+    anchor.href = url
+    anchor.download = `${taskId}.${extension}`
+    document.body.appendChild(anchor)
+    anchor.click()
+    document.body.removeChild(anchor)
+    URL.revokeObjectURL(url)
   }
 
-  // ── MiniDelivery PDF 导出（Phase 5.1）───────────────────────────────────
+  async downloadMiniDeliveryArtifact(taskId: string) {
+    return this.downloadMiniDeliveryFile(
+      `/minidelivery/tasks/${taskId}/download`,
+      taskId,
+      "md",
+    )
+  }
 
-  getMiniDeliveryPdfUrl(taskId: string) {
-    return `${API_BASE}/minidelivery/tasks/${taskId}/pdf`
+  async downloadMiniDeliveryPdf(taskId: string) {
+    return this.downloadMiniDeliveryFile(
+      `/minidelivery/tasks/${taskId}/pdf`,
+      taskId,
+      "pdf",
+    )
   }
 
   // ── MiniDelivery 任务对比（Phase 5.2）─────────────────────────────────

@@ -167,7 +167,7 @@ def delete_plugin(plugin_id: str):
 def test_plugin(plugin_id: str, task: Dict[str, Any] = None):
     """测试运行指定插件"""
     # Governance Guard: 从 task payload 提取 goal 并检查
-    from backend.governance.guard import guard_payload, governance_block_response, extract_goal_from_payload
+    from backend.governance.scope_classifier import guard_payload, governance_block_response, extract_goal_from_payload
     from backend.governance.classifier import ClassificationResult
 
     check_payload = task if task else {}

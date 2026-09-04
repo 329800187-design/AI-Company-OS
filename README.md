@@ -367,7 +367,7 @@ pip install -r requirements.txt
 
 # 4. 配置环境变量
 cp .env.example .env
-# 编辑 .env 文件，填入你的 API Key
+# 编辑 .env 文件，填入 AUTH_TOKEN 和你的 API Key
 
 # 5. 启动服务
 python -m uvicorn backend.app:app --host 0.0.0.0 --port 8000

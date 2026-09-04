@@ -160,9 +160,12 @@ export default function DeliveryPage() {
     setTimeout(() => setCopiedId(null), 1500)
   }
 
-  const handleDownload = (taskId: string) => {
-    const downloadUrl = api.getMiniDeliveryDownloadUrl(taskId)
-    window.open(downloadUrl, "_blank")
+  const handleDownload = async (taskId: string) => {
+    try {
+      await api.downloadMiniDeliveryArtifact(taskId)
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "下载交付物失败")
+    }
   }
 
   const formatDate = (iso: string) => {

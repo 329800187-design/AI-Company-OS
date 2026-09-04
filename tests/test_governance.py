@@ -21,7 +21,7 @@ from backend.governance.run_record import (
     load_run_record, load_run_events, OUTPUT_ROOT,
 )
 from backend.governance.execution_plan import ExecutionPlan
-from backend.governance.guard import should_block_goal, governance_block_response, extract_goal_from_payload, guard_payload
+from backend.governance.scope_classifier import should_block_goal, governance_block_response, extract_goal_from_payload, guard_payload
 from backend.governance.route_policy import (
     list_route_policies, get_route_policy, is_route_controlled,
     routes_requiring_guard, routes_high_risk_without_guard,

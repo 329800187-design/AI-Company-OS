@@ -85,7 +85,7 @@ def execute_agent_unified(agent_id: str, task: AgentTask):
     统一执行端点：通过 agent_id 调用任意 manifest 或 registry agent。
     Governance Guard 拦截不支持目标，缺失 agent 返回 ok=false。
     """
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
     from backend.security import rate_limiter
 
     blocked, classification = guard_payload(task.model_dump())

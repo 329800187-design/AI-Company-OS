@@ -123,6 +123,8 @@ function ProviderItem({ label, isMock, icon: Icon, fixHint }: ProviderItemProps)
 
 export default function SettingsPage() {
   const [provider, setProvider] = useState("deepseek")
+  const [accessToken, setAccessToken] = useState(() => api.getAccessToken())
+  const [isAccessTokenSaved, setIsAccessTokenSaved] = useState(false)
   const [apiKey, setApiKey] = useState("")
   const [baseUrl, setBaseUrl] = useState("")
   const [model, setModel] = useState("")
@@ -278,7 +280,7 @@ export default function SettingsPage() {
       // Check capabilities for hermes
       let hermesAvailable = false
       try {
-        const caps = await fetch("/capabilities").then((r) => r.json())
+        const caps = await api.getCapabilities<{ hermes?: { available?: boolean } }>()
         hermesAvailable = caps.hermes?.available || false
       } catch {
         // ignore
@@ -343,6 +345,17 @@ export default function SettingsPage() {
     }
   }
 
+  const handleSaveAccessToken = () => {
+    api.setAccessToken(accessToken)
+    setIsAccessTokenSaved(true)
+    window.setTimeout(() => setIsAccessTokenSaved(false), 2000)
+    void loadConfig()
+    void loadHealth()
+    void loadProviders()
+    void loadBrains()
+    void loadProvidersHealth()
+  }
+
   const handleTest = async () => {
     setIsTesting(true)
     setTestResult(null)
@@ -369,6 +382,35 @@ export default function SettingsPage() {
         <div>
           <h1 className="text-2xl font-bold">设置</h1>
           <p className="text-[#8A8A8A]">配置 AI 模型和系统参数</p>
+        </div>
+      </motion.div>
+
+      {/* Service Access Token */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.08 }}
+        className="p-6 rounded-2xl border border-[#E5E5E5] bg-white"
+      >
+        <div className="flex items-center gap-2 mb-2">
+          <Shield className="w-5 h-5 text-[#0B0B0B]" />
+          <h3 className="font-semibold">服务访问令牌</h3>
+        </div>
+        <p className="text-xs text-[#8A8A8A] mb-4">
+          填入服务启动时配置的 AUTH_TOKEN。令牌只保存在当前浏览器会话，关闭浏览器后自动清除。
+        </p>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <Input
+            type="password"
+            value={accessToken}
+            onChange={(event) => setAccessToken(event.target.value)}
+            placeholder="输入服务访问令牌"
+            autoComplete="off"
+          />
+          <Button onClick={handleSaveAccessToken} variant="outline" className="sm:w-auto">
+            {isAccessTokenSaved ? <CheckCircle2 className="w-4 h-4 text-green" /> : <Key className="w-4 h-4" />}
+            {isAccessTokenSaved ? "已保存" : "保存令牌"}
+          </Button>
         </div>
       </motion.div>
 

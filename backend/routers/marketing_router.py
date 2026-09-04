@@ -30,7 +30,7 @@ def copywriting(request: MarketingRequest):
         raise HTTPException(status_code=400, detail="请提供文案需求描述")
 
     # Governance Guard: 拦截不支持的目标
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
     blocked, classification = guard_payload(request.model_dump())
     if blocked:
         return governance_block_response(classification)
@@ -48,7 +48,7 @@ def social_media(request: MarketingRequest):
         raise HTTPException(status_code=400, detail="请提供内容主题")
 
     # Governance Guard: 拦截不支持的目标
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
     blocked, classification = guard_payload(request.model_dump())
     if blocked:
         return governance_block_response(classification)
@@ -66,7 +66,7 @@ def seo_article(request: MarketingRequest):
         raise HTTPException(status_code=400, detail="请提供文章主题")
 
     # Governance Guard: 拦截不支持的目标
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
     blocked, classification = guard_payload(request.model_dump())
     if blocked:
         return governance_block_response(classification)
@@ -84,7 +84,7 @@ def email_campaign(request: MarketingRequest):
         raise HTTPException(status_code=400, detail="请提供邮件营销需求")
 
     # Governance Guard: 拦截不支持的目标
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
     blocked, classification = guard_payload(request.model_dump())
     if blocked:
         return governance_block_response(classification)
@@ -102,7 +102,7 @@ def brand_strategy(request: MarketingRequest):
         raise HTTPException(status_code=400, detail="请提供品牌背景")
 
     # Governance Guard: 拦截不支持的目标
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
     blocked, classification = guard_payload(request.model_dump())
     if blocked:
         return governance_block_response(classification)
@@ -120,7 +120,7 @@ def campaign_plan(request: MarketingRequest):
         raise HTTPException(status_code=400, detail="请提供活动目标")
 
     # Governance Guard: 拦截不支持的目标
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
     blocked, classification = guard_payload(request.model_dump())
     if blocked:
         return governance_block_response(classification)

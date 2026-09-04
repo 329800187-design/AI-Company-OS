@@ -6,6 +6,7 @@ Collaboration + MiniDelivery。旧编排路由不在此入口。
 启动命令:
     uvicorn backend.core_app:app --reload --port 8000
 """
+import os
 import sys
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.version import VERSION
+from backend.middleware.auth_middleware import AuthMiddleware
 
 # ── Core 路由 ──────────────────────────────────────────
 from backend.routers.governance_router import router as governance_router
@@ -26,10 +28,15 @@ from backend.routers.minidelivery_router import router as minidelivery_router
 from backend.routers.core_agent_router import router as core_agent_router
 from backend.routers.boss_router import router as boss_router
 
+_production = os.getenv("ENV", "development").lower() == "production"
+
 app = FastAPI(
     title="AI Company OS Core",
     description="Core 启动入口 — Governance + Boss Command Center + Agent 管理 + Collaboration + MiniDelivery",
     version=VERSION,
+    docs_url=None if _production else "/docs",
+    redoc_url=None if _production else "/redoc",
+    openapi_url=None if _production else "/openapi.json",
 )
 
 # ── CORS ───────────────────────────────────────────────
@@ -44,6 +51,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(AuthMiddleware)
 
 # ── 注册路由 ───────────────────────────────────────────
 app.include_router(governance_router)
