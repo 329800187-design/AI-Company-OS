@@ -2,6 +2,30 @@ from backend.services.capability_scanner import CapabilityScanner
 from backend.services.agent_discovery import AgentDiscovery
 
 
+def test_core_capability_facade_projects_canonical_registry(monkeypatch):
+    from core.capability_scanner import CapabilityScanner
+
+    snapshot = {
+        "ai_services": [{"id": "ollama", "status": "available"}],
+        "llm_providers": [],
+        "browsers": [],
+        "tools": [],
+        "agents": [],
+        "resources": [],
+        "summary": {"total": 1},
+        "scan": {"machine_id": "canonical-test"},
+    }
+
+    class Registry:
+        def scan_runtime_capabilities(self, force=False):
+            assert force is True
+            return snapshot
+
+    monkeypatch.setattr("backend.ai_registry.get_registry", lambda: Registry())
+
+    assert CapabilityScanner().scan_all(force=True) is snapshot
+
+
 def test_scan_exposes_one_canonical_resource_list():
     scanner = CapabilityScanner(ttl_seconds=60)
     result = scanner.scan_all(force=True)

@@ -4,8 +4,8 @@ from typing import Any, Dict, List, Optional
 
 class CapabilityScanner:
     def scan_all(self, force: bool = False) -> Dict[str, Any]:
-        from backend.services.capability_scanner import get_capability_scanner
-        return get_capability_scanner().scan_all(force=force)
+        from backend.ai_registry import get_registry
+        return get_registry().scan_runtime_capabilities(force=force)
 
     def get_available_ai_services(self) -> List[Dict[str, Any]]:
         return [x for x in self.scan_all()["ai_services"] if x["status"] == "available"]

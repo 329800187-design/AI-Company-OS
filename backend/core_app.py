@@ -31,6 +31,7 @@ from backend.routers.boss_router import router as boss_router
 from backend.routers.auth_router import router as auth_router
 from backend.routers.user_router import router as user_router
 from backend.routers.payment_router import router as payment_router
+from backend.routers.capabilities_router import router as capabilities_router
 
 _production = os.getenv("ENV", "development").lower() == "production"
 
@@ -67,6 +68,7 @@ app.include_router(core_agent_router)
 app.include_router(auth_router)
 app.include_router(user_router)
 app.include_router(payment_router)
+app.include_router(capabilities_router)
 
 
 # ── 健康检查 ───────────────────────────────────────────
