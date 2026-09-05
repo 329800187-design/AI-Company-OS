@@ -709,7 +709,7 @@ class LocalHeuristicExecutionProvider(BossExecutionProvider):
 # ── Hermes Provider（v1 实现）───────────────────────────────
 
 class HermesExecutionProvider(BossExecutionProvider):
-    """Hermes Provider — 通过 subprocess 调用 Hermes CLI
+    """Retired Hermes Provider; host-process execution is disabled.
 
     安全要求：
     - 不执行发布/付款/发消息等不可逆操作
