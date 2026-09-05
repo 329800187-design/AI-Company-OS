@@ -96,6 +96,10 @@ class PaymentService:
         """处理 Stripe Webhook 事件"""
         if not self.available:
             return {"ok": False, "error": "Stripe 未配置"}
+        if not STRIPE_WEBHOOK_SECRET:
+            return {"ok": False, "error": "Stripe webhook signing secret 未配置"}
+        if not signature:
+            return {"ok": False, "error": "缺少 Stripe-Signature 请求头"}
 
         try:
             event = stripe.Webhook.construct_event(

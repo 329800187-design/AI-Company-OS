@@ -45,6 +45,8 @@ async def stripe_webhook(request: Request):
     signature = request.headers.get("stripe-signature", "")
     payment = get_payment_service()
     result = payment.handle_webhook(payload, signature)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Webhook 验证失败"))
     return result
 
 

@@ -43,6 +43,14 @@ def me(request: Request):
     user = getattr(request.state, "user", None)
     if not user:
         raise HTTPException(status_code=401, detail="未登录")
+    if user.get("auth_method") == "api_key":
+        return {
+            "user_id": user["user_id"],
+            "username": user["username"],
+            "tier": user["tier"],
+            "tenant_id": user["tenant_id"],
+            "auth_method": "api_key",
+        }
     mgr = get_user_manager()
     u = mgr.get_user(user["user_id"])
     if not u:

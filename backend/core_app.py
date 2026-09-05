@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.version import VERSION
 from backend.middleware.auth_middleware import AuthMiddleware
+from backend.middleware.tier_limits import TierLimitMiddleware
 
 # ── Core 路由 ──────────────────────────────────────────
 from backend.routers.governance_router import router as governance_router
@@ -27,6 +28,9 @@ from backend.routers.collaboration_router import router as collaboration_router
 from backend.routers.minidelivery_router import router as minidelivery_router
 from backend.routers.core_agent_router import router as core_agent_router
 from backend.routers.boss_router import router as boss_router
+from backend.routers.auth_router import router as auth_router
+from backend.routers.user_router import router as user_router
+from backend.routers.payment_router import router as payment_router
 
 _production = os.getenv("ENV", "development").lower() == "production"
 
@@ -51,6 +55,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(TierLimitMiddleware)
 app.add_middleware(AuthMiddleware)
 
 # ── 注册路由 ───────────────────────────────────────────
@@ -59,6 +64,9 @@ app.include_router(boss_router)
 app.include_router(collaboration_router)
 app.include_router(minidelivery_router)
 app.include_router(core_agent_router)
+app.include_router(auth_router)
+app.include_router(user_router)
+app.include_router(payment_router)
 
 
 # ── 健康检查 ───────────────────────────────────────────
