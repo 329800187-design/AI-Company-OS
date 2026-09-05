@@ -728,13 +728,8 @@ class HermesExecutionProvider(BossExecutionProvider):
 
     @property
     def is_available(self) -> bool:
-        """检查 Hermes CLI 是否可用"""
-        try:
-            import shutil
-            cli_path = self._get_cli_path()
-            return shutil.which(cli_path) is not None
-        except Exception:
-            return False
+        """Hermes host-process execution is disabled by the safety baseline."""
+        return False
 
     def _get_cli_path(self) -> str:
         """获取 Hermes CLI 路径"""
@@ -758,143 +753,15 @@ class HermesExecutionProvider(BossExecutionProvider):
         return self._ecommerce_enabled
 
     def _execute_hermes_cli(self, prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """执行 Hermes CLI 调用
-
-        使用 Popen + 实时读取，在超时时尽可能保留已产生的 stdout/stderr。
-
-        Args:
-            prompt: 完整的 prompt 内容
-            context: 执行上下文（包含 mission_id, module_id 等）
-
-        Returns:
-            {
-                "ok": bool,
-                "stdout": str,
-                "stderr": str,
-                "exit_code": int,
-                "error": str,
-            }
-        """
-        import subprocess
-        import threading
-
-        context = context or {}
-        allow_from_request = bool(context.get("allow_browser_automation", False))
-        module_id = context.get("module_id", "")
-        if prompt_requests_browser_automation(prompt) and not is_browser_automation_allowed(
-            allow_from_request=allow_from_request,
-            module_id=module_id,
-        ):
-            return {
-                "ok": False,
-                "blocked": True,
-                "stdout": "",
-                "stderr": "",
-                "exit_code": -2,
-                "error": "browser_automation_approval_required",
-            }
-
-        cli_path = self._get_cli_path()
-        timeout = self._get_timeout()
-
-        # 构建命令：hermes chat -q "<prompt>"
-        # -q 表示快速问答模式，非交互
-        cmd = [cli_path, "chat", "-q", prompt]
-
-        # 使用 Popen + 线程读取，超时时保留已收集的输出
-        proc = None
-        stdout_chunks: list = []
-        stderr_chunks: list = []
-        timed_out = False
-
-        def _reader(pipe, chunks):
-            try:
-                while True:
-                    chunk = pipe.read(4096)
-                    if not chunk:
-                        break
-                    chunks.append(chunk)
-            except Exception:
-                pass
-
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-            )
-
-            # 启动读取线程
-            t_out = threading.Thread(target=_reader, args=(proc.stdout, stdout_chunks))
-            t_err = threading.Thread(target=_reader, args=(proc.stderr, stderr_chunks))
-            t_out.daemon = True
-            t_err.daemon = True
-            t_out.start()
-            t_err.start()
-
-            # 等待完成或超时
-            try:
-                proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-
-            # 等读取线程结束（最多 2 秒）
-            t_out.join(timeout=2)
-            t_err.join(timeout=2)
-
-            stdout_text = "".join(stdout_chunks)
-            stderr_text = "".join(stderr_chunks)
-
-            if timed_out:
-                # 超时：保留已收集的部分输出（最多 2000 字符）
-                partial_stdout = stdout_text[:2000] if stdout_text else ""
-                partial_stderr = stderr_text[:2000] if stderr_text else ""
-                return {
-                    "ok": False,
-                    "stdout": partial_stdout,
-                    "stderr": partial_stderr,
-                    "exit_code": -1,
-                    "error": (
-                        f"Hermes CLI 执行超时（{timeout}秒）。"
-                        f"已收集 stdout {len(stdout_text)} 字符, stderr {len(stderr_text)} 字符。"
-                        f"超时表明 Hermes 可能在尝试调用工具链（web/browser/ecommerce），"
-                        f"但任务过于复杂或网络响应慢。"
-                    ),
-                    "timeout_seconds": timeout,
-                    "partial_stdout_len": len(stdout_text),
-                    "partial_stderr_len": len(stderr_text),
-                }
-
-            return {
-                "ok": proc.returncode == 0,
-                "stdout": stdout_text,
-                "stderr": stderr_text,
-                "exit_code": proc.returncode,
-                "error": stderr_text if proc.returncode != 0 else "",
-            }
-
-        except FileNotFoundError:
-            return {
-                "ok": False,
-                "stdout": "",
-                "stderr": "",
-                "exit_code": -1,
-                "error": f"Hermes CLI 未找到: {cli_path}",
-            }
-        except Exception as e:
-            return {
-                "ok": False,
-                "stdout": "",
-                "stderr": "",
-                "exit_code": -1,
-                "error": f"Hermes CLI 执行异常: {str(e)}",
-            }
+        """Reject the retired host-process provider without side effects."""
+        return {
+            "ok": False,
+            "blocked": True,
+            "stdout": "",
+            "stderr": "",
+            "exit_code": -3,
+            "error": "Hermes host-process execution is disabled",
+        }
 
     def _parse_json_output(self, stdout: str) -> Dict[str, Any]:
         """解析 Hermes 输出的 JSON

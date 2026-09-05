@@ -1182,8 +1182,8 @@ class TestEnhancedEvents:
 class TestHermesExecutionProvider:
     """Hermes Execution Provider 测试（mock subprocess）"""
 
-    def test_hermes_provider_available_when_cli_exists(self, monkeypatch):
-        """Hermes CLI 存在时应该可用"""
+    def test_hermes_provider_is_disabled_even_when_cli_exists(self, monkeypatch):
+        """Hermes host-process execution remains disabled even if a CLI exists."""
         import shutil
         from backend.services.boss_execution_providers import HermesExecutionProvider
 
@@ -1194,7 +1194,7 @@ class TestHermesExecutionProvider:
             return "/usr/bin/hermes"
 
         monkeypatch.setattr(shutil, "which", mock_which)
-        assert provider.is_available is True
+        assert provider.is_available is False
 
     def test_hermes_provider_unavailable_when_cli_missing(self, monkeypatch):
         """Hermes CLI 不存在时应该不可用"""
@@ -1210,8 +1210,8 @@ class TestHermesExecutionProvider:
         monkeypatch.setattr(shutil, "which", mock_which)
         assert provider.is_available is False
 
-    def test_hermes_market_research_valid_json(self, monkeypatch):
-        """Hermes 返回合法 JSON 时应该成功解析"""
+    def test_hermes_market_research_is_blocked(self, monkeypatch):
+        """Hermes market research cannot invoke a host process."""
         from backend.services.boss_execution_providers import HermesExecutionProvider
         import subprocess
         import io
@@ -1238,10 +1238,8 @@ class TestHermesExecutionProvider:
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
         result = provider.execute_market_research("测试目标", allow_browser_automation=True)
-        assert result["ok"] is True
-        assert result["summary"] == "测试摘要"
-        assert len(result["evidence"]) == 1
-        assert len(result["competitors"]) == 1
+        assert result["ok"] is False
+        assert "disabled" in result["warnings"][0]
 
     def test_hermes_market_research_invalid_json(self, monkeypatch):
         """Hermes 返回非 JSON 时应该返回失败"""
@@ -1306,8 +1304,8 @@ class TestHermesExecutionProvider:
         assert result["ok"] is False
         assert len(result["warnings"]) >= 1
 
-    def test_hermes_competitor_analysis_valid_json(self, monkeypatch):
-        """Hermes 竞品分析返回合法 JSON 时应该成功解析"""
+    def test_hermes_competitor_analysis_is_blocked(self, monkeypatch):
+        """Hermes competitor analysis cannot invoke a host process."""
         from backend.services.boss_execution_providers import HermesExecutionProvider
         import subprocess
         import io
@@ -1333,12 +1331,11 @@ class TestHermesExecutionProvider:
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
         result = provider.execute_competitor_analysis("测试目标", [], allow_browser_automation=True)
-        assert result["ok"] is True
-        assert result["summary"] == "竞品分析摘要"
-        assert len(result["competitors"]) == 1
+        assert result["ok"] is False
+        assert "disabled" in result["warnings"][0]
 
-    def test_hermes_listing_pack_valid_json(self, monkeypatch):
-        """Hermes 上架物料包返回合法 JSON 时应该成功解析"""
+    def test_hermes_listing_pack_is_blocked(self, monkeypatch):
+        """Hermes listing pack cannot invoke a host process."""
         from backend.services.boss_execution_providers import HermesExecutionProvider
         import subprocess
         import io
@@ -1364,9 +1361,8 @@ class TestHermesExecutionProvider:
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
         result = provider.execute_listing_pack("测试目标", [], {}, allow_browser_automation=True)
-        assert result["ok"] is True
-        assert result["listing_copy"] == "【爆款推荐】测试产品"
-        assert len(result["next_actions"]) == 2
+        assert result["ok"] is False
+        assert "disabled" in result["warnings"][0]
 
     def test_hermes_fallback_to_local_heuristic(self, monkeypatch):
         """Hermes 失败时应该 fallback 到 local_heuristic"""
@@ -2950,4 +2946,3 @@ class TestRunMissionConcurrencyGuard:
             result = service.run_mission(mission_id)
             assert result is not None
             # 应该成功执行（cleanup 处理了 stale 模块）
-
