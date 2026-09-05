@@ -295,10 +295,12 @@ def test_action_connectors_api_exposes_safe_preflight_contract():
     response = TestClient(app).get("/boss/action-connectors")
 
     assert response.status_code == 200
-    connector = response.json()["connectors"][0]
+    connectors = response.json()["connectors"]
+    connector = next(item for item in connectors if item["connector_id"] == "local_simulation")
     assert connector["connector_id"] == "local_simulation"
     assert connector["requires_preflight"] is True
     assert connector["external_side_effects"] is False
+    assert any(item["connector_id"] == "code_execution" for item in connectors)
 
 
 def test_webhook_connector_is_disabled_without_explicit_https_allowlist(monkeypatch):
@@ -307,7 +309,9 @@ def test_webhook_connector_is_disabled_without_explicit_https_allowlist(monkeypa
     monkeypatch.setenv("ACO_WEBHOOK_ACTION_URL", "https://hooks.example.test/actions")
     monkeypatch.delenv("ACO_WEBHOOK_ACTION_ALLOWED_HOSTS", raising=False)
 
-    assert [item["connector_id"] for item in list_action_connectors()] == ["local_simulation"]
+    assert [item["connector_id"] for item in list_action_connectors()] == [
+        "code_execution", "local_simulation"
+    ]
 
 
 def test_webhook_action_requires_preflight_approval_and_records_safe_receipt(tmp_path: Path, monkeypatch):

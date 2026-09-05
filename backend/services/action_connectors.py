@@ -105,6 +105,46 @@ class LocalSimulationConnector:
         }
 
 
+class CodeExecutionConnector:
+    """Reserved capability that is deliberately registered but permanently inert."""
+
+    connector_id = "code_execution"
+    _DISABLED_REASON = "code_execution capability is not enabled"
+
+    def describe(self) -> Dict[str, Any]:
+        return {
+            "connector_id": self.connector_id,
+            "display_name": "代码执行（未开通）",
+            "mode": "disabled",
+            "configured": False,
+            "requires_human_approval": True,
+            "requires_preflight": True,
+            "external_side_effects": False,
+            "credential_requirements": [],
+            "note": "该能力尚未开通，不会执行代码、系统命令或外部操作。",
+        }
+
+    def preflight(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "connector_id": self.connector_id,
+            "ready": False,
+            "external_side_effects": False,
+            "action_type": action.get("action_type", ""),
+            "reason": self._DISABLED_REASON,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "checks": [
+                {
+                    "name": "capability_enabled",
+                    "passed": False,
+                    "detail": "Code execution is reserved but not enabled.",
+                }
+            ],
+        }
+
+    def execute(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        raise RuntimeError(self._DISABLED_REASON)
+
+
 class WebhookActionConnector:
     """Explicitly configured HTTPS webhook for one approved external action."""
 
@@ -228,6 +268,7 @@ class WebhookActionConnector:
 def _configured_connectors() -> Dict[str, ActionConnector]:
     connectors: Dict[str, ActionConnector] = {
         LocalSimulationConnector.connector_id: LocalSimulationConnector(),
+        CodeExecutionConnector.connector_id: CodeExecutionConnector(),
     }
     webhook = WebhookActionConnector.from_environment()
     if webhook:
