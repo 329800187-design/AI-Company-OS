@@ -2,6 +2,17 @@
 
 Last updated: 2026-08-29
 
+## Remediation execution record
+
+| Phase | Status | Result |
+|---|---|---|
+| R0 | Complete | Core application entrypoint promoted and retired high-risk legacy surfaces removed. |
+| R1 | Complete | Authentication defaults, production documentation exposure, and scope-classifier naming hardened. |
+| R2 | Complete | Session/API-key identity, tier enforcement, and signed Stripe webhook handling unified. |
+| R2.5 | Complete | `code_execution` remains registered but inert; host-process Hermes execution is disabled. |
+| R3 | Complete | Capability compatibility facade and `/capabilities` API project the canonical AIRegistry snapshot. |
+| R4 | In progress | Architecture inventory is generated from source and verified in CI. |
+
 ## Capability Runtime Convergence — Phase 1
 
 Status: COMPLETE for Phase 1 Closure on `codex/capability-runtime-convergence`; pending architecture acceptance.
