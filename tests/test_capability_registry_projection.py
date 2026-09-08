@@ -70,7 +70,7 @@ def test_agent_discovery_projects_machine_agents_from_canonical_snapshot(monkeyp
         }]
     }
     monkeypatch.setattr(
-        "backend.ai_registry.registry.get_registry",
+        "backend.ai_registry.get_registry",
         lambda: type("Registry", (), {
             "scan_runtime_capabilities": lambda self, force=False: canonical
         })(),
