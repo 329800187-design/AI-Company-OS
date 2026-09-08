@@ -7,7 +7,7 @@ VERSION_HISTORY = [
     ("0.6.0",  "Cache+Embedding+前端组件化"),
     ("0.7.0",  "Agent标准化+Stripe+监控面板"),
     ("0.8.0",  "Data Agent+Cron+Bus+Pydantic"),
-    ("0.9.0",  "限流+备份恢复+搜索+Swarm"),
+    ("0.9.0",  "限流+备份恢复+搜索"),
     ("1.0.0",  "Dashboard+审计+Nginx+版本化"),
     ("1.1.0",  "CLI+Plugins+Agent Stats"),
     ("1.2.0",  "单元测试+Embedding v2+5x压缩"),

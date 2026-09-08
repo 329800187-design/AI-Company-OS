@@ -99,13 +99,15 @@ if not exist ".env" (
     echo [INFO] Creating .env from template...
     copy .env.example .env >nul
     echo.
-    echo [IMPORTANT] Please edit .env file and add your API Key!
+    echo [IMPORTANT] Please edit .env and set both AUTH_TOKEN and your API Key before starting.
     echo.
     echo Supported providers:
     echo   - DeepSeek: https://platform.deepseek.com
     echo   - OpenAI:   https://platform.openai.com
     echo   - Claude:   https://console.anthropic.com
     echo.
+    echo [STOP] Authentication is enabled by default. Configure AUTH_TOKEN in .env, then run start.bat again.
+    exit /b 1
 )
 
 :: 9. Start server

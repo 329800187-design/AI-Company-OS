@@ -149,8 +149,7 @@ class AgentRouter:
 
         # 映射到已知 adapter 的 Agent
         known_adapters = {
-            "claude_code", "comfyui", "ollama", "openclaw",
-            "data_tools", "api_models", "mimo"
+            "claude_code", "comfyui", "ollama", "data_tools", "api_models", "mimo"
         }
         if agent.id in known_adapters:
             return True

@@ -6,7 +6,6 @@ import {
   BarChart3,
   Search,
   Globe,
-  MessageSquare,
   ArrowRight,
   ChevronRight,
   Clock,
@@ -61,12 +60,6 @@ const scenes = [
     desc: "从业务目标到页面结构与内容方案",
     icon: Globe,
   },
-  {
-    id: "chat",
-    title: "问问题",
-    desc: "有任何不懂的，直接问我就行",
-    icon: MessageSquare,
-  },
 ]
 
 const quickPrompts = [
@@ -92,7 +85,6 @@ const itemVariants = {
 export default function HomePage() {
   const [input, setInput] = useState("")
   const setCurrentPage = useAppStore((s) => s.setCurrentPage)
-  const setPendingMessage = useAppStore((s) => s.setPendingMessage)
   const [recentMissions, setRecentMissions] = useState<Array<{ mission_id: string; goal: string; status: string; created_at: string }>>([])
   const [recentDeliveries, setRecentDeliveries] = useState<Array<{ task_id: string; goal: string; agent_id: string; artifact_type: string; created_at: string }>>([])
   const [systemOk, setSystemOk] = useState<boolean | null>(null)
@@ -105,9 +97,8 @@ export default function HomePage() {
 
   const handleSend = () => {
     if (!input.trim()) return
-    setPendingMessage(input.trim())
     setInput("")
-    setCurrentPage("chat")
+    setCurrentPage("boss")
   }
 
   return (

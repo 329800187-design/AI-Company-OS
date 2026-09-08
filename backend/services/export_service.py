@@ -34,7 +34,7 @@ def _get_html_footer():
 
 
 def export_session_as_html(session: Dict, steps: List[Dict], summary: str) -> str:
-    """将 Commander 执行结果导出为 HTML 报告"""
+    """将执行结果导出为 HTML 报告"""
     goal = session.get("goal", "未命名任务")
     status = session.get("status", "unknown")
 
@@ -78,7 +78,7 @@ def export_session_as_html(session: Dict, steps: List[Dict], summary: str) -> st
 
 
 def export_session_as_csv(session: Dict, steps: List[Dict], summary: str) -> str:
-    """将 Commander 执行结果导出为 CSV"""
+    """将执行结果导出为 CSV"""
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["字段", "值"])
@@ -101,7 +101,7 @@ def export_session_as_csv(session: Dict, steps: List[Dict], summary: str) -> str
 
 
 def export_session_as_json(session: Dict, steps: List[Dict], summary: str) -> str:
-    """将 Commander 执行结果导出为 JSON"""
+    """将执行结果导出为 JSON"""
     return json.dumps({
         "session": {k: v for k, v in session.items() if k != "summary"},
         "summary": summary,

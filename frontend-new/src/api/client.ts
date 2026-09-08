@@ -1,6 +1,7 @@
 import type { CollaborationRunDetailView, MissionMetrics } from "@/types"
 
 const API_BASE = ""
+const ACCESS_TOKEN_STORAGE_KEY = "ai-company-os.access-token"
 
 interface RequestOptions {
   method?: string
@@ -10,6 +11,27 @@ interface RequestOptions {
 }
 
 class ApiClient {
+  getAccessToken(): string {
+    if (typeof window === "undefined") return ""
+    return window.sessionStorage.getItem(ACCESS_TOKEN_STORAGE_KEY) || ""
+  }
+
+  setAccessToken(token: string): void {
+    if (typeof window === "undefined") return
+
+    const normalizedToken = token.trim()
+    if (normalizedToken) {
+      window.sessionStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, normalizedToken)
+    } else {
+      window.sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY)
+    }
+  }
+
+  private authHeaders(): Record<string, string> {
+    const token = this.getAccessToken()
+    return token ? { Authorization: `Bearer ${token}` } : {}
+  }
+
   private async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
     const { method = "GET", body, headers = {}, signal } = options
 
@@ -17,6 +39,7 @@ class ApiClient {
       method,
       headers: {
         "Content-Type": "application/json",
+        ...this.authHeaders(),
         ...headers,
       },
       signal,
@@ -36,50 +59,14 @@ class ApiClient {
     return response.json()
   }
 
-  // Chat API
-  async chat(message: string, history: Array<{ role: string; content: string }> = []) {
-    return this.request<{ reply: string; model: string; provider: string }>("/commander/chat/send", {
-      method: "POST",
-      body: { message, history },
-    })
-  }
-
-  // Commander APIs
-  async runCommander(goal: string) {
-    return this.request<{ session_id: string; status: string; message?: string }>("/commander/run", {
-      method: "POST",
-      body: { 目标: goal },
-    })
-  }
-
-  async getCommanderStatus(sessionId: string) {
-    return this.request<{
-      session_id: string
-      status: string
-      steps: Array<{
-        name: string
-        status: string
-        result?: string
-      }>
-      final_result?: string
-    }>(`/commander/sessions/${sessionId}`)
-  }
-
   // Agent APIs
-  async runAgent(agentName: string, task: string, allowBrowserAutomation = false) {
+  async runAgent(agentName: string, task: string) {
     const body: Record<string, unknown> = { goal: task }
     if (agentName === "marketing") {
       body.prompt = task
       body.platform = "xiaohongshu"
-    } else if (agentName === "codex") {
-      body.code = task
     } else if (agentName === "image") {
       body.prompt = task
-    } else if (agentName === "video") {
-      body.prompt = task
-    }
-    if (agentName === "openclaw") {
-      body.allow_browser_automation = allowBrowserAutomation
     }
 
     return this.request<{ status: string; data?: Record<string, unknown> }>(`/agents/${agentName}/run`, {
@@ -125,6 +112,10 @@ class ApiClient {
         providers: Array<{ name: string; has_key: boolean; env_var: string }>
       }
     }>("/config/providers/health")
+  }
+
+  async getCapabilities<T extends Record<string, unknown> = Record<string, unknown>>() {
+    return this.request<T>("/capabilities")
   }
 
   async saveConfig(config: Record<string, unknown>) {
@@ -185,31 +176,6 @@ class ApiClient {
 
   async getBrowserVerificationRuns() {
     return this.request<{ runs: BrowserVerificationRun[] }>("/browser-verification/runs")
-  }
-
-  // Pipeline API - 统一任务执行
-  async executePipeline(message: string, context?: Record<string, unknown>) {
-    return this.request<{
-      ok: boolean
-      mode: string
-      task_id: string
-      task_type: string
-      used_tools: string[]
-      tool_trace: Array<{ tool: string; action: string; status: string; summary: string }>
-      used_web_search: boolean
-      search_mode: string
-      sources: Array<{ title: string; url: string; summary: string }>
-      analysis: string
-      final_answer: string
-      deliverables: Record<string, unknown>
-      qa: { passed: boolean; score: number; problems: string[]; suggestions: string[] }
-      confidence: number
-      warnings: string[]
-      error: string
-    }>("/pipeline/execute", {
-      method: "POST",
-      body: { message, context: context || {} },
-    })
   }
 
   // Boss Command Center APIs
@@ -767,7 +733,9 @@ class ApiClient {
 
   // Report / Export APIs
   async exportSession(sessionId: string, format: "html" | "csv" | "json" = "html") {
-    const response = await fetch(`${API_BASE}/export/session/${sessionId}?format=${format}`)
+    const response = await fetch(`${API_BASE}/export/session/${sessionId}?format=${format}`, {
+      headers: this.authHeaders(),
+    })
     if (!response.ok) {
       throw new Error(`Export failed: HTTP ${response.status}`)
     }
@@ -784,7 +752,9 @@ class ApiClient {
   }
 
   async exportMission(missionId: string, format: "json" | "markdown" = "json") {
-    const response = await fetch(`${API_BASE}/boss/missions/${missionId}/export?format=${format}`)
+    const response = await fetch(`${API_BASE}/boss/missions/${missionId}/export?format=${format}`, {
+      headers: this.authHeaders(),
+    })
     if (!response.ok) {
       throw new Error(`Export failed: HTTP ${response.status}`)
     }
@@ -899,42 +869,6 @@ class ApiClient {
     return this.request<{ status: string; skill: Record<string, unknown> }>("/skills/create", {
       method: "POST",
       body: skill,
-    })
-  }
-
-  // ── Workflows (DAG) ────────────────────────────────────────────────────────
-
-  async listWorkflows() {
-    return this.request<{
-      workflows: Array<{ name: string; count: number }>
-      total: number
-    }>("/workflows/dag/list")
-  }
-
-  async getWorkflow(name: string) {
-    return this.request<{
-      name: string
-      title: string
-      description: string
-      version: string
-      triggers: string[]
-      steps: Array<{
-        name: string
-        agent: string
-        task_type: string
-        depends_on: string[]
-      }>
-    }>(`/workflows/dag/${encodeURIComponent(name)}`)
-  }
-
-  async runWorkflow(name: string, variables: Record<string, string> = {}) {
-    return this.request<{
-      status: string
-      workflow: string
-      results: Record<string, unknown>
-    }>("/workflows/dag/run", {
-      method: "POST",
-      body: { workflow: name, inputs: variables },
     })
   }
 
@@ -1225,7 +1159,6 @@ class ApiClient {
         memories: Array<{ key: string; content: string; source: string }>
         skills: Array<{ name: string; title: string; score: number }>
         sessions: Array<{ goal: string; status: string; created_at: string }>
-        workflows: Array<{ name: string; description: string }>
       }
     }>(`/search?q=${encodeURIComponent(query)}&scope=${scope}&limit=${limit}`)
   }
@@ -1286,23 +1219,51 @@ class ApiClient {
   }
 
   async getMiniDeliveryArtifact(taskId: string) {
-    const response = await fetch(`${API_BASE}/minidelivery/tasks/${taskId}/artifact`)
+    const response = await fetch(`${API_BASE}/minidelivery/tasks/${taskId}/artifact`, {
+      headers: this.authHeaders(),
+    })
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`)
     }
     return response.text()
   }
 
-  // ── MiniDelivery 下载 URL（Phase 2B）───────────────────────────────────
+  private async downloadMiniDeliveryFile(endpoint: string, taskId: string, defaultExtension: string) {
+    const response = await fetch(`${API_BASE}${endpoint}`, {
+      headers: this.authHeaders(),
+    })
+    if (!response.ok) {
+      throw new Error(`Download failed: HTTP ${response.status}`)
+    }
 
-  getMiniDeliveryDownloadUrl(taskId: string) {
-    return `${API_BASE}/minidelivery/tasks/${taskId}/download`
+    const contentType = response.headers.get("content-type") || ""
+    const extension = defaultExtension === "pdf" && contentType.startsWith("text/html")
+      ? "html"
+      : defaultExtension
+    const url = URL.createObjectURL(await response.blob())
+    const anchor = document.createElement("a")
+    anchor.href = url
+    anchor.download = `${taskId}.${extension}`
+    document.body.appendChild(anchor)
+    anchor.click()
+    document.body.removeChild(anchor)
+    URL.revokeObjectURL(url)
   }
 
-  // ── MiniDelivery PDF 导出（Phase 5.1）───────────────────────────────────
+  async downloadMiniDeliveryArtifact(taskId: string) {
+    return this.downloadMiniDeliveryFile(
+      `/minidelivery/tasks/${taskId}/download`,
+      taskId,
+      "md",
+    )
+  }
 
-  getMiniDeliveryPdfUrl(taskId: string) {
-    return `${API_BASE}/minidelivery/tasks/${taskId}/pdf`
+  async downloadMiniDeliveryPdf(taskId: string) {
+    return this.downloadMiniDeliveryFile(
+      `/minidelivery/tasks/${taskId}/pdf`,
+      taskId,
+      "pdf",
+    )
   }
 
   // ── MiniDelivery 任务对比（Phase 5.2）─────────────────────────────────

@@ -5,12 +5,11 @@
 2. 头部字段模式：X-API-Key: <api_key>
 
 配置：
-- AUTH_ENABLED=true/false（.env 配置，默认 false 开发模式不启用）
-- AUTH_TOKEN=<your-api-key>（若空则自动生成一个）
+- AUTH_ENABLED=true/false（.env 配置，默认 true）
+- AUTH_TOKEN=<your-api-key>（启用认证时必须设置）
 """
 import hmac
 import os
-import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -27,26 +26,35 @@ WHITELIST_PATHS = {
     "/auth",
     "/favicon.ico",
 }
+PUBLIC_AUTH_PATHS = {
+    "/user/register",
+    "/user/login",
+    "/payment/webhook",
+}
 
 def _load_auth_config() -> dict:
     """从环境变量 / .env 加载认证配置"""
     # 尝试直接读取 .env 文件
     env_file = Path(__file__).parent.parent.parent / ".env"
-    auth_enabled = os.getenv("AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
+    auth_enabled_from_env = "AUTH_ENABLED" in os.environ
+    auth_token_from_env = "AUTH_TOKEN" in os.environ
+    auth_enabled = os.getenv("AUTH_ENABLED", "true").lower() in ("true", "1", "yes")
     auth_token = os.getenv("AUTH_TOKEN", "")
 
     # 如果 .env 没加载到，从文件直接读
-    if not auth_token and env_file.exists():
+    if env_file.exists():
         for line in env_file.read_text(encoding="utf-8").splitlines():
             line = line.strip()
-            if line.startswith("AUTH_TOKEN="):
+            if line.startswith("AUTH_TOKEN=") and not auth_token_from_env:
                 auth_token = line.split("=", 1)[1].strip()
-            elif line.startswith("AUTH_ENABLED="):
+            elif line.startswith("AUTH_ENABLED=") and not auth_enabled_from_env:
                 auth_enabled = line.split("=", 1)[1].strip().lower() in ("true", "1", "yes")
 
-    # 如果仍为空，自动生成一个
-    if not auth_token:
-        auth_token = f"aco_{uuid.uuid4().hex[:16]}"
+    if auth_enabled and not auth_token:
+        raise RuntimeError(
+            "AUTH_TOKEN must be configured when AUTH_ENABLED=true. "
+            "Set AUTH_TOKEN in the environment or .env before starting the service."
+        )
 
     return {
         "enabled": auth_enabled,
@@ -78,7 +86,7 @@ def set_auth_enabled(enabled: bool):
 def _is_whitelisted(path: str) -> bool:
     """判断路径是否在白名单中"""
     # 精确匹配
-    if path in WHITELIST_PATHS:
+    if path in WHITELIST_PATHS or path in PUBLIC_AUTH_PATHS:
         return True
     # 前缀匹配（如 /docs/xxx）
     for prefix in WHITELIST_PATHS:
@@ -104,6 +112,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         path = request.url.path
 
+        # Public login/registration endpoints still need abuse protection.
+        if path in PUBLIC_AUTH_PATHS and path != "/payment/webhook":
+            from backend.security import rate_limiter
+
+            limit = 10 if path == "/user/login" else 5
+            allowed, message = rate_limiter.check(
+                f"auth:{path}:{request.client.host if request.client else 'unknown'}",
+                max_requests=limit,
+                window_seconds=60,
+            )
+            if not allowed:
+                return JSONResponse(status_code=429, content={"ok": False, "error": message})
+
         # 白名单路径 → 直接通过
         if _is_whitelisted(path):
             return await call_next(request)
@@ -120,8 +141,29 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if not token:
             token = request.headers.get("X-API-Key", "")
 
+        # 登录 session 优先解析为用户主体，供订阅和计费路由统一使用。
+        user = None
+        if token:
+            from backend.auth.user_system import get_user_manager
+
+            user = get_user_manager().validate_token(token)
+        if user:
+            request.state.user = {**user, "auth_method": "session"}
+            return await call_next(request)
+
+        # 部署 API key 保留给自动化调用，并映射为统一的服务主体。
+        if token and hmac.compare_digest(token, AUTH_CONFIG["token"]):
+            request.state.user = {
+                "user_id": "service_api_key",
+                "username": "API Key",
+                "tenant_id": "service_api_key",
+                "tier": "enterprise",
+                "auth_method": "api_key",
+            }
+            return await call_next(request)
+
         # 验证（使用恒定时序比较防止时序攻击）
-        if not token or not hmac.compare_digest(token, AUTH_CONFIG["token"]):
+        if not token:
             return JSONResponse(
                 status_code=401,
                 content={
@@ -134,4 +176,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 },
             )
 
-        return await call_next(request)
+        return JSONResponse(
+            status_code=401,
+            content={
+                "error": "unauthorized",
+                "message": "缺少有效的登录 session 或 API Key。",
+            },
+            headers={"WWW-Authenticate": "Bearer realm=\"AI Company OS\""},
+        )

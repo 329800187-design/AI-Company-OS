@@ -4,8 +4,6 @@ import { ErrorBoundary } from "@/components/error-boundary"
 // Lazy load pages
 const HomePage = lazy(() => import("@/pages/home"))
 const BossPage = lazy(() => import("@/pages/boss"))
-const ChatPage = lazy(() => import("@/pages/chat"))
-const CommanderPage = lazy(() => import("@/pages/commander"))
 const MarketingPage = lazy(() => import("@/pages/marketing"))
 const ImagePage = lazy(() => import("@/pages/image"))
 const DataPage = lazy(() => import("@/pages/data"))
@@ -20,7 +18,6 @@ const MemoryPage = lazy(() => import("@/pages/memory"))
 const ReportsPage = lazy(() => import("@/pages/reports"))
 const UsagePage = lazy(() => import("@/pages/usage"))
 const SkillsPage = lazy(() => import("@/pages/skills"))
-const WorkflowsPage = lazy(() => import("@/pages/workflows"))
 const GovernancePage = lazy(() => import("@/pages/governance"))
 const DeliveryPage = lazy(() => import("@/pages/delivery"))
 
@@ -44,10 +41,6 @@ export function Routes({ currentPage }: RoutesProps) {
         return <HomePage />
       case "boss":
         return <BossPage />
-      case "chat":
-        return <ChatPage />
-      case "commander":
-        return <CommanderPage />
       case "marketing":
         return <MarketingPage />
       case "image":
@@ -76,8 +69,6 @@ export function Routes({ currentPage }: RoutesProps) {
         return <UsagePage />
       case "skills":
         return <SkillsPage />
-      case "workflows":
-        return <WorkflowsPage />
       case "governance":
         return <GovernancePage />
       case "delivery":

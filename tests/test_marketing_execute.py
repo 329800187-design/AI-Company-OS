@@ -96,33 +96,6 @@ class TestMarketingExecuteEndpoint:
         assert "not found" in err.lower() or "not enabled" in err.lower()
 
 
-class TestMarketingGovernanceGuard:
-    """业务 Agent execute 入口不再由旧 Governance Guard 拦截模糊目标"""
-
-    def test_vague_goal_is_handled_by_business_agent(self):
-        """模糊目标继续交由业务 Agent 处理；受控分类仍走 /governance/run。"""
-        resp = client.post("/agents/marketing/execute", json={
-            "task_id": "",
-            "goal": "帮我赚钱",
-            "task_type": "copywriting",
-            "context": {},
-            "input": {},
-        })
-        data = resp.json()
-        assert data["ok"] is True
-        assert data["agent_id"] == "marketing"
-
-    def test_vague_marketing_run_blocked(self):
-        """/agents/marketing/run 也被 guard 拦截"""
-        resp = client.post("/agents/marketing/run", json={
-            "goal": "帮我赚钱",
-            "prompt": "帮我赚钱",
-            "platform": "xiaohongshu",
-        })
-        data = resp.json()
-        assert data.get("ok") is False or data.get("status") == "blocked"
-
-
 class TestMarketingGovernanceFallback:
     """/governance/run 营销 fallback 仍然正常工作"""
 

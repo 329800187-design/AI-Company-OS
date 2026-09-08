@@ -65,7 +65,7 @@ export default function DashboardPage() {
     setIsLoading(true)
     try {
       const [capRes, metRes] = await Promise.all([
-        fetch("/capabilities").then(r => r.json()).catch(() => ({})),
+        api.getCapabilities<Capabilities>().catch(() => ({} as Capabilities)),
         api.getSystemMetrics().catch(() => null),
       ])
       setCapabilities(capRes)

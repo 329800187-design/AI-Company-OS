@@ -94,12 +94,20 @@ export default function DeliveryDetail({ taskId, onBack }: DeliveryDetailProps) 
     setTimeout(() => setCopied(false), 1500)
   }
 
-  const handleDownload = () => {
-    window.open(api.getMiniDeliveryDownloadUrl(taskId), "_blank")
+  const handleDownload = async () => {
+    try {
+      await api.downloadMiniDeliveryArtifact(taskId)
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "下载交付物失败")
+    }
   }
 
-  const handlePdfDownload = () => {
-    window.open(api.getMiniDeliveryPdfUrl(taskId), "_blank")
+  const handlePdfDownload = async () => {
+    try {
+      await api.downloadMiniDeliveryPdf(taskId)
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "导出 PDF 失败")
+    }
   }
 
   const formatDate = (iso: string) => {

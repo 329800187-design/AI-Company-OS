@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
 from backend.ai_registry.registry import (
-    AIRegistry, CCScanner, OpenClawScanner, CodexScanner, ChatGPTScanner, KimiScanner,
+    AIRegistry, AIService, CCScanner, OpenClawScanner, CodexScanner, ChatGPTScanner, KimiScanner,
     get_registry,
 )
 
@@ -95,17 +95,36 @@ def test_registry_route_by_goal():
     print(f"General task → {route['service']}")
 
 
-def test_registry_best_for():
+def test_registry_best_for(monkeypatch):
     reg = AIRegistry()
-    reg.scan_all()
+    reg._services = {
+        "chat-test": AIService(
+            service_id="chat-test",
+            name="Controlled chat service",
+            provider="test",
+            kind="test",
+            status="online",
+            capabilities=["chat"],
+        ),
+        "browser-test": AIService(
+            service_id="browser-test",
+            name="Controlled browser service",
+            provider="test",
+            kind="test",
+            status="installed",
+            capabilities=["browser"],
+        ),
+    }
+    monkeypatch.setattr(reg, "scan_all", lambda force=False: reg._services)
 
     best = reg.best_for("chat")
-    print(f"Best for chat: {best}")
-    assert best is not None
+    assert best == "chat-test"
 
     best = reg.best_for("browser")
-    print(f"Best for browser: {best}")
-    assert best is not None
+    assert best == "browser-test"
+
+    reg._services = {}
+    assert reg.best_for("chat") is None
 
 
 def test_registry_list_all():

@@ -39,11 +39,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     # 端点限流配置 (路径前缀 → (rate, burst))
     ENDPOINT_LIMITS: Dict[str, Tuple[float, int]] = {
-        "/commander/chat": (2, 5),      # 2 req/s, burst 5
-        "/commander/run": (1, 3),       # 1 req/s
         "/image/generate": (0.5, 2),    # 1 per 2s (DALL-E 贵)
         "/marketing": (2, 6),
-        "/cto": (3, 10),
         "/ai/": (5, 10),
     }
 

@@ -11,11 +11,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install -r requirements.txt pytest
+      - run: python scripts/generate_architecture_doc.py --check
+      - name: Check newly added domain-locked terms
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          base="$BASE_SHA"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            base="$(git merge-base HEAD origin/main)"
+          fi
+          python scripts/check_domain_lock_terms.py --base "$base" --head "$GITHUB_SHA"
       - run: pip install playwright && playwright install --with-deps chromium
-      - run: python -m pytest tests/test_agents_quick.py tests/test_commander.py tests/test_dag_workflow.py tests/test_security_rbac.py tests/test_boss_command_center.py tests/test_graph_template_store.py -v
+      - run: python -m pytest tests/ -q
 
   docker:
     needs: test

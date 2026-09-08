@@ -36,14 +36,6 @@ _default_enabled_config: Dict[str, bool] = {
     "research": True,
     "website": True,
     "example_echo": True,
-    # 内置 legacy agents（默认启用）
-    "ceo_agent": True,
-    "cto_agent": True,
-    "codex_agent": True,
-    "openclaw_agent": True,
-    "qa_agent": True,
-    "system_agent": True,
-    "video_agent": True,
     # 外部 CLI agents（默认禁用，需用户手动启用）
     "claude": False,
     "codex_cli": False,
@@ -792,102 +784,6 @@ class AgentDiscovery:
                 reliability_score=0.7 if status == "available" else 0.0,
                 requires_llm=manifest.id != "example_echo",
                 last_error=last_error,
-                runnable=False,
-            )
-            self._agents[agent.id] = agent
-
-        # ── Step 2: 兼容 fallback — 无 manifest 的旧 agent ──
-        agent_capabilities = {
-            "ceo_agent": {
-                "capabilities": ["reasoning", "task_decomposition"],
-                "task_types": ["planning", "decomposition"]
-            },
-            "cto_agent": {
-                "capabilities": ["reasoning", "code_review", "architecture"],
-                "task_types": ["code", "architecture"]
-            },
-            "codex_agent": {
-                "capabilities": ["code_execution", "sandbox"],
-                "task_types": ["code"],
-                "supports_code_execution": True
-            },
-            "openclaw_agent": {
-                "capabilities": ["browser", "web_read", "deep_research"],
-                "task_types": ["research", "browser"],
-                "supports_browser": True,
-                "supports_web_search": True
-            },
-            "qa_agent": {
-                "capabilities": ["qa", "verification"],
-                "task_types": ["qa", "verification"]
-            },
-            "system_agent": {
-                "capabilities": ["system_control", "file_operations"],
-                "task_types": ["system"],
-                "supports_files": True
-            },
-            "video_agent": {
-                "capabilities": ["video_script", "storyboard"],
-                "task_types": ["video"]
-            },
-        }
-
-        for agent_dir in agents_dir.iterdir():
-            if not agent_dir.is_dir() or agent_dir.name.startswith("_"):
-                continue
-            if agent_dir.name.replace("_agent", "") in self._agents:
-                continue
-
-            # 跳过已有 manifest 的 agent
-            if agent_dir.name in manifests or agent_dir.name.replace("_agent", "") in manifests or any(
-                m.id == agent_dir.name for m in manifests.values()
-            ):
-                continue
-
-            # 跳过已通过目录名匹配到 manifest id 的
-            agent_file = agent_dir / "agent.py"
-            if not agent_file.exists():
-                continue
-
-            cap_config = agent_capabilities.get(agent_dir.name, {})
-            capabilities = cap_config.get("capabilities", ["local_agent"])
-            task_types = cap_config.get("task_types", [agent_dir.name.replace("_agent", "")])
-
-            status = "available"
-            last_error = ""
-            module_name = f"agents.{agent_dir.name}.agent"
-            try:
-                import importlib
-                importlib.import_module(module_name)
-            except ImportError as e:
-                status = "unavailable"
-                last_error = f"ImportError: {str(e)}"
-            except Exception as e:
-                status = "unavailable"
-                last_error = f"Error: {str(e)}"
-
-            agent = AgentCapability(
-                id=agent_dir.name,
-                name=agent_dir.name.replace("_agent", "").title(),
-                kind="local",
-                executable=str(agent_file),
-                status=status,
-                capabilities=capabilities,
-                task_types=task_types,
-                supports_files=cap_config.get("supports_files", False),
-                supports_code_execution=cap_config.get("supports_code_execution", False),
-                supports_image_generation=cap_config.get("supports_image_generation", False),
-                supports_browser=cap_config.get("supports_browser", False),
-                supports_web_search=cap_config.get("supports_web_search", False),
-                requires_confirmation=False,
-                enabled=True,
-                source="compatibility_only",
-                health={"module": module_name, "source": "fallback", "last_error": last_error},
-                priority=40,
-                cost_level="free",
-                latency_level="fast",
-                reliability_score=0.7 if status == "available" else 0.0,
-                requires_llm=agent_dir.name not in {"system_agent", "qa_agent"},
                 runnable=False,
             )
             self._agents[agent.id] = agent

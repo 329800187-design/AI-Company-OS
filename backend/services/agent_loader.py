@@ -29,14 +29,8 @@ logger = logging.getLogger(__name__)
 # 注意：有 manifest 的 agent 仍保留在此，供旧路由的 load_agent_instance 调用使用
 AGENT_REGISTRY: Dict[str, str] = {
     "agents.ceo_agent.agent": "CEOAgent",
-    "agents.codex_agent.agent": "CodexAgent",
-    "agents.qa_agent.agent": "QAAgent",
-    "agents.system_agent.agent": "SystemAgent",
-    "agents.openclaw_agent.agent": "OpenClawAgent",
-    "agents.cto_agent.agent": "CTOAgent",
     "agents.image_agent.agent": "ImageAgent",
     "agents.marketing_agent.agent": "MarketingAgent",
-    "agents.video_agent.agent": "VideoAgent",
     "agents.data_agent.agent": "DataAgent",
     "agents.research_agent.agent": "ResearchAgent",
     "agents.website_agent.agent": "WebsiteAgent",

@@ -1,11 +1,12 @@
 """AI Company OS — Core 最小启动入口
 
-只加载 Governance + Agent 发现/启用/执行 + Collaboration + MiniDelivery，
-不加载旧 Boss/Workflow/Pipeline/Commander 等路由。
+加载 Governance + Boss Command Center + Agent 发现/启用/执行 +
+Collaboration + MiniDelivery。旧编排路由不在此入口。
 
 启动命令:
     uvicorn backend.core_app:app --reload --port 8000
 """
+import os
 import sys
 from pathlib import Path
 
@@ -18,17 +19,29 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.version import VERSION
+from backend.middleware.auth_middleware import AuthMiddleware
+from backend.middleware.tier_limits import TierLimitMiddleware
 
 # ── Core 路由 ──────────────────────────────────────────
 from backend.routers.governance_router import router as governance_router
 from backend.routers.collaboration_router import router as collaboration_router
 from backend.routers.minidelivery_router import router as minidelivery_router
 from backend.routers.core_agent_router import router as core_agent_router
+from backend.routers.boss_router import router as boss_router
+from backend.routers.auth_router import router as auth_router
+from backend.routers.user_router import router as user_router
+from backend.routers.payment_router import router as payment_router
+from backend.routers.capabilities_router import router as capabilities_router
+
+_production = os.getenv("ENV", "development").lower() == "production"
 
 app = FastAPI(
     title="AI Company OS Core",
-    description="最小 Core 启动入口 — Governance + Agent 管理 + Collaboration + MiniDelivery",
+    description="Core 启动入口 — Governance + Boss Command Center + Agent 管理 + Collaboration + MiniDelivery",
     version=VERSION,
+    docs_url=None if _production else "/docs",
+    redoc_url=None if _production else "/redoc",
+    openapi_url=None if _production else "/openapi.json",
 )
 
 # ── CORS ───────────────────────────────────────────────
@@ -43,12 +56,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(TierLimitMiddleware)
+app.add_middleware(AuthMiddleware)
 
 # ── 注册路由 ───────────────────────────────────────────
 app.include_router(governance_router)
+app.include_router(boss_router)
 app.include_router(collaboration_router)
 app.include_router(minidelivery_router)
 app.include_router(core_agent_router)
+app.include_router(auth_router)
+app.include_router(user_router)
+app.include_router(payment_router)
+app.include_router(capabilities_router)
 
 
 # ── 健康检查 ───────────────────────────────────────────

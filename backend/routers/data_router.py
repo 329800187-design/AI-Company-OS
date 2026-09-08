@@ -45,7 +45,7 @@ def has_data_intent(req: DataTask) -> bool:
 def _intent_block_response() -> dict:
     """无意图时的统一阻断响应"""
     from backend.governance.classifier import ClassificationResult
-    from backend.governance.guard import governance_block_response
+    from backend.governance.scope_classifier import governance_block_response
     no_intent = ClassificationResult(
         ok=False, confidence=0.0,
         reason="数据操作必须提供明确的分析目标（goal/prompt/message/command），不允许无目标执行",
@@ -62,7 +62,7 @@ async def upload_data(
 ):
     """上传 CSV/Excel/JSON 文件并自动分析"""
     # Governance Guard: 检查是否有明确的分析目标
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
 
     # 构造 payload 用于 guard 检查
     payload = {"goal": goal, "prompt": prompt}
@@ -144,7 +144,7 @@ async def upload_data(
 @router.post("/load", summary="加载数据")
 def load(req: DataTask):
     # Governance Guard: 必须有用户意图
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
     if not has_data_intent(req):
         return _intent_block_response()
     blocked, classification = guard_payload(req.model_dump())
@@ -158,7 +158,7 @@ def load(req: DataTask):
 
 @router.post("/explore", summary="数据探索")
 def explore(req: DataTask):
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
     if not has_data_intent(req):
         return _intent_block_response()
     blocked, classification = guard_payload(req.model_dump())
@@ -172,7 +172,7 @@ def explore(req: DataTask):
 
 @router.post("/clean", summary="数据清洗")
 def clean(req: DataTask):
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
     if not has_data_intent(req):
         return _intent_block_response()
     blocked, classification = guard_payload(req.model_dump())
@@ -186,7 +186,7 @@ def clean(req: DataTask):
 
 @router.post("/analyze", summary="统计分析")
 def analyze(req: DataTask):
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
     if not has_data_intent(req):
         return _intent_block_response()
     blocked, classification = guard_payload(req.model_dump())
@@ -200,7 +200,7 @@ def analyze(req: DataTask):
 
 @router.post("/viz", summary="可视化图表")
 def viz(req: DataTask):
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
     if not has_data_intent(req):
         return _intent_block_response()
     blocked, classification = guard_payload(req.model_dump())
@@ -214,7 +214,7 @@ def viz(req: DataTask):
 
 @router.post("/export", summary="导出数据")
 def export(req: DataTask):
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
     if not has_data_intent(req):
         return _intent_block_response()
     blocked, classification = guard_payload(req.model_dump())

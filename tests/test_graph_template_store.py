@@ -1126,7 +1126,7 @@ class TestGraphTemplateAPI:
         )
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_create_template_success(self, mock_guard, mock_rate):
         """创建模板成功"""
         from fastapi.testclient import TestClient
@@ -1150,7 +1150,7 @@ class TestGraphTemplateAPI:
         assert len(data["template"]["edges"]) == 1
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_create_template_invalid_graph_400(self, mock_guard, mock_rate):
         """无效图（缺失节点引用）返回 400"""
         from fastapi.testclient import TestClient
@@ -1170,7 +1170,7 @@ class TestGraphTemplateAPI:
         assert response.status_code == 400
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_create_template_self_loop_400(self, mock_guard, mock_rate):
         """自环返回 400"""
         from fastapi.testclient import TestClient
@@ -1190,7 +1190,7 @@ class TestGraphTemplateAPI:
         assert response.status_code == 400
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_list_templates(self, mock_guard, mock_rate):
         """列出模板"""
         from fastapi.testclient import TestClient
@@ -1213,7 +1213,7 @@ class TestGraphTemplateAPI:
         assert len(data["templates"]) == 2
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_get_single_template(self, mock_guard, mock_rate):
         """获取单个模板"""
         from fastapi.testclient import TestClient
@@ -1236,7 +1236,7 @@ class TestGraphTemplateAPI:
         assert data["template"]["template_id"] == tid
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_get_nonexistent_template_404(self, mock_guard, mock_rate):
         """不存在的模板返回 404"""
         from fastapi.testclient import TestClient
@@ -1247,7 +1247,7 @@ class TestGraphTemplateAPI:
         assert response.status_code == 404
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_delete_template(self, mock_guard, mock_rate):
         """删除模板"""
         from fastapi.testclient import TestClient
@@ -1275,7 +1275,7 @@ class TestGraphTemplateAPI:
         assert get_resp.status_code == 404
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_delete_nonexistent_template_404(self, mock_guard, mock_rate):
         """删除不存在的模板返回 404"""
         from fastapi.testclient import TestClient
@@ -1286,7 +1286,7 @@ class TestGraphTemplateAPI:
         assert response.status_code == 404
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     @patch("backend.services.agent_executor.execute_agent", side_effect=_mock_execute_agent)
     def test_execute_template(self, mock_exec, mock_guard, mock_rate):
         """按模板执行"""
@@ -1316,7 +1316,7 @@ class TestGraphTemplateAPI:
         assert len(data["results"]) == 2
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_execute_nonexistent_template_404(self, mock_guard, mock_rate):
         """执行不存在的模板返回 404"""
         from fastapi.testclient import TestClient
@@ -1329,7 +1329,7 @@ class TestGraphTemplateAPI:
         assert response.status_code == 404
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_update_template_success(self, mock_guard, mock_rate):
         """PUT 更新模板成功"""
         from fastapi.testclient import TestClient
@@ -1373,7 +1373,7 @@ class TestGraphTemplateAPI:
         assert len(data["template"]["edges"]) == 2
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_update_nonexistent_template_404(self, mock_guard, mock_rate):
         """PUT 不存在的模板返回 404"""
         from fastapi.testclient import TestClient
@@ -1387,7 +1387,7 @@ class TestGraphTemplateAPI:
         assert response.status_code == 404
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_update_template_invalid_graph_400(self, mock_guard, mock_rate):
         """PUT 无效图返回 400"""
         from fastapi.testclient import TestClient
@@ -1413,7 +1413,7 @@ class TestGraphTemplateAPI:
     # ── Phase 6.6: Version History API 测试 ─────────────────
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_list_versions_empty(self, mock_guard, mock_rate):
         """新模板版本列表为空"""
         from fastapi.testclient import TestClient
@@ -1435,7 +1435,7 @@ class TestGraphTemplateAPI:
         assert data["versions"] == []
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_update_auto_creates_version(self, mock_guard, mock_rate):
         """PUT 更新自动创建版本快照"""
         from fastapi.testclient import TestClient
@@ -1466,7 +1466,7 @@ class TestGraphTemplateAPI:
         assert data["versions"][0]["edge_count"] == 1
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_get_version_detail(self, mock_guard, mock_rate):
         """获取版本详情"""
         from fastapi.testclient import TestClient
@@ -1500,7 +1500,7 @@ class TestGraphTemplateAPI:
         assert len(data["version"]["nodes"]) == 2
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_get_version_nonexistent_404(self, mock_guard, mock_rate):
         """不存在的版本返回 404"""
         from fastapi.testclient import TestClient
@@ -1518,7 +1518,7 @@ class TestGraphTemplateAPI:
         assert response.status_code == 404
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_restore_version(self, mock_guard, mock_rate):
         """回滚到旧版本"""
         from fastapi.testclient import TestClient
@@ -1556,7 +1556,7 @@ class TestGraphTemplateAPI:
         assert versions_resp2.json()["total"] == 2
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_restore_nonexistent_version_404(self, mock_guard, mock_rate):
         """回滚不存在的版本返回 404"""
         from fastapi.testclient import TestClient
@@ -1574,7 +1574,7 @@ class TestGraphTemplateAPI:
         assert response.status_code == 404
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_restore_rejects_corrupt_version(self, mock_guard, mock_rate):
         """损坏的版本快照不能回滚，也不会额外保存当前版本"""
         from fastapi.testclient import TestClient
@@ -1608,7 +1608,7 @@ class TestGraphTemplateAPI:
         assert client.get(f"/boss/graph/templates/{tid}/versions").json()["total"] == 1
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_restore_nonexistent_template_404(self, mock_guard, mock_rate):
         """回滚不存在的模板返回 404"""
         from fastapi.testclient import TestClient
@@ -1619,7 +1619,7 @@ class TestGraphTemplateAPI:
         assert response.status_code == 404
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_list_versions_nonexistent_template_404(self, mock_guard, mock_rate):
         """列出不存在模板的版本返回 404"""
         from fastapi.testclient import TestClient
@@ -1630,7 +1630,7 @@ class TestGraphTemplateAPI:
         assert response.status_code == 404
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_delete_template_removes_versions(self, mock_guard, mock_rate):
         """删除模板时同步清理版本"""
         from fastapi.testclient import TestClient
@@ -1661,7 +1661,7 @@ class TestGraphTemplateAPI:
     # ── Phase 6.7: Version Metadata & Compare API 测试 ──────
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_update_version_metadata_success(self, mock_guard, mock_rate):
         """更新版本元数据成功"""
         from fastapi.testclient import TestClient
@@ -1693,7 +1693,7 @@ class TestGraphTemplateAPI:
         assert data["version"]["note"] == "修复了调研 prompt"
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_update_version_metadata_404(self, mock_guard, mock_rate):
         """不存在的版本返回 404"""
         from fastapi.testclient import TestClient
@@ -1712,7 +1712,7 @@ class TestGraphTemplateAPI:
         assert response.status_code == 404
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_update_version_metadata_label_too_long(self, mock_guard, mock_rate):
         """label 超长返回 422（Pydantic 校验）"""
         from fastapi.testclient import TestClient
@@ -1733,7 +1733,7 @@ class TestGraphTemplateAPI:
         assert response.status_code == 422
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_update_version_metadata_empty_body(self, mock_guard, mock_rate):
         """空请求体返回 400"""
         from fastapi.testclient import TestClient
@@ -1752,7 +1752,7 @@ class TestGraphTemplateAPI:
         assert response.status_code == 400
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_update_version_metadata_rejects_snapshot_fields(self, mock_guard, mock_rate):
         """PATCH 只允许 label/note，不能夹带快照字段"""
         from fastapi.testclient import TestClient
@@ -1782,7 +1782,7 @@ class TestGraphTemplateAPI:
         assert len(version["nodes"]) == 2
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_compare_versions_no_changes(self, mock_guard, mock_rate):
         """版本对比无变化"""
         from fastapi.testclient import TestClient
@@ -1812,7 +1812,7 @@ class TestGraphTemplateAPI:
         assert data["diff"]["edges"]["added"] == []
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_compare_versions_field_changes(self, mock_guard, mock_rate):
         """版本对比检测基础字段变化"""
         from fastapi.testclient import TestClient
@@ -1844,7 +1844,7 @@ class TestGraphTemplateAPI:
         assert fields["name"]["to"] == "V2"
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_compare_versions_node_changes(self, mock_guard, mock_rate):
         """版本对比检测节点变化"""
         from fastapi.testclient import TestClient
@@ -1878,7 +1878,7 @@ class TestGraphTemplateAPI:
         assert diff["nodes"]["modified"][0]["id"] == "research"
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_compare_versions_edge_changes(self, mock_guard, mock_rate):
         """版本对比检测边变化"""
         from fastapi.testclient import TestClient
@@ -1907,7 +1907,7 @@ class TestGraphTemplateAPI:
         assert len(diff["edges"]["removed"]) == 1
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_compare_versions_vs_current(self, mock_guard, mock_rate):
         """版本 vs current 对比"""
         from fastapi.testclient import TestClient
@@ -1933,7 +1933,7 @@ class TestGraphTemplateAPI:
         assert diff["to_version"] == "current"
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_compare_versions_nonexistent_template_404(self, mock_guard, mock_rate):
         """不存在模板的版本对比返回 404"""
         from fastapi.testclient import TestClient
@@ -1944,7 +1944,7 @@ class TestGraphTemplateAPI:
         assert response.status_code == 404
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_compare_versions_invalid_from_id(self, mock_guard, mock_rate):
         """无效的 from 版本 ID 返回 400"""
         from fastapi.testclient import TestClient
@@ -1961,7 +1961,7 @@ class TestGraphTemplateAPI:
         assert response.status_code == 400
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_compare_versions_invalid_to_id(self, mock_guard, mock_rate):
         """无效的 to 版本 ID 返回 400"""
         from fastapi.testclient import TestClient
@@ -1978,7 +1978,7 @@ class TestGraphTemplateAPI:
         assert response.status_code == 400
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_compare_versions_missing_params(self, mock_guard, mock_rate):
         """缺少参数返回 422"""
         from fastapi.testclient import TestClient
@@ -2000,7 +2000,7 @@ class TestGraphTemplateAPI:
         assert response.status_code == 422
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_compare_versions_same_version(self, mock_guard, mock_rate):
         """对比同一个版本返回 400"""
         from fastapi.testclient import TestClient
@@ -2019,7 +2019,7 @@ class TestGraphTemplateAPI:
         assert response.status_code == 400
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_compare_versions_cross_template_rejected(self, mock_guard, mock_rate):
         """跨模板版本对比返回 404"""
         from fastapi.testclient import TestClient
@@ -2044,7 +2044,7 @@ class TestGraphTemplateAPI:
     # ── Phase 6.8: Audit Log & Pin API 测试 ─────────────────
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_audit_log_created_on_create(self, mock_guard, mock_rate):
         """创建模板时自动写入审计日志"""
         from fastapi.testclient import TestClient
@@ -2065,7 +2065,7 @@ class TestGraphTemplateAPI:
         assert "审计创建测试" in events[0]["summary"]
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_audit_log_created_on_update(self, mock_guard, mock_rate):
         """更新模板时写入审计日志"""
         from fastapi.testclient import TestClient
@@ -2091,7 +2091,7 @@ class TestGraphTemplateAPI:
         assert "update" in event_types
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_audit_log_filter_by_type(self, mock_guard, mock_rate):
         """按事件类型过滤审计日志"""
         from fastapi.testclient import TestClient
@@ -2115,7 +2115,7 @@ class TestGraphTemplateAPI:
         assert all(e["event_type"] == "create" for e in events)
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_audit_log_invalid_type_400(self, mock_guard, mock_rate):
         """无效事件类型返回 400"""
         from fastapi.testclient import TestClient
@@ -2132,7 +2132,7 @@ class TestGraphTemplateAPI:
         assert audit_resp.status_code == 400
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_audit_log_nonexistent_template_404(self, mock_guard, mock_rate):
         """不存在模板的审计日志返回 404"""
         from fastapi.testclient import TestClient
@@ -2143,7 +2143,7 @@ class TestGraphTemplateAPI:
         assert audit_resp.status_code == 404
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_audit_log_no_secrets(self, mock_guard, mock_rate):
         """审计日志不包含敏感信息"""
         from fastapi.testclient import TestClient
@@ -2164,7 +2164,7 @@ class TestGraphTemplateAPI:
         assert "secret" not in full_text.lower()
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_clone_creates_clone_audit(self, mock_guard, mock_rate):
         """克隆模板写 clone 审计，不只是 create"""
         from fastapi.testclient import TestClient
@@ -2194,7 +2194,7 @@ class TestGraphTemplateAPI:
         assert "create" not in event_types  # 不应出现 create
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_clone_audit_has_source_template_id(self, mock_guard, mock_rate):
         """clone 审计 details 包含 source_template_id"""
         from fastapi.testclient import TestClient
@@ -2224,7 +2224,7 @@ class TestGraphTemplateAPI:
         assert details["node_count"] == 2
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_create_without_source_still_creates_create_audit(self, mock_guard, mock_rate):
         """普通创建（无 source_template_id）仍写 create 审计"""
         from fastapi.testclient import TestClient
@@ -2243,7 +2243,7 @@ class TestGraphTemplateAPI:
         assert events[0]["event_type"] == "create"
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_pin_version_success(self, mock_guard, mock_rate):
         """固定版本成功"""
         from fastapi.testclient import TestClient
@@ -2268,7 +2268,7 @@ class TestGraphTemplateAPI:
         assert pinned_ver["pinned"] is True
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_unpin_version_success(self, mock_guard, mock_rate):
         """取消固定版本成功"""
         from fastapi.testclient import TestClient
@@ -2291,7 +2291,7 @@ class TestGraphTemplateAPI:
         assert unpin_resp.json()["version"]["pinned"] is False
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_pin_nonexistent_version_404(self, mock_guard, mock_rate):
         """固定不存在的版本返回 404"""
         from fastapi.testclient import TestClient
@@ -2308,7 +2308,7 @@ class TestGraphTemplateAPI:
         assert pin_resp.status_code == 404
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_pin_version_survives_trim(self, mock_guard, mock_rate):
         """固定版本不被自动裁剪"""
         from fastapi.testclient import TestClient
@@ -2339,7 +2339,7 @@ class TestGraphTemplateAPI:
         assert vid_first in pinned_ids
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_audit_log_created_on_restore(self, mock_guard, mock_rate):
         """回滚版本时写入审计日志"""
         from fastapi.testclient import TestClient
@@ -2362,7 +2362,7 @@ class TestGraphTemplateAPI:
         assert vid in events[0]["summary"]
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_audit_log_created_on_metadata_update(self, mock_guard, mock_rate):
         """更新版本元数据时写入审计日志"""
         from fastapi.testclient import TestClient
@@ -2385,7 +2385,7 @@ class TestGraphTemplateAPI:
         assert events[0]["details"]["version_id"] == vid
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_audit_log_created_on_pin(self, mock_guard, mock_rate):
         """固定版本时写入审计日志"""
         from fastapi.testclient import TestClient
@@ -2408,7 +2408,7 @@ class TestGraphTemplateAPI:
         assert vid in events[0]["summary"]
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_delete_template_audit_retained(self, mock_guard, mock_rate):
         """删除模板后审计日志仍可查询"""
         from fastapi.testclient import TestClient
@@ -2440,7 +2440,7 @@ class TestGraphTemplateAPI:
         assert "delete" in event_types
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_delete_event_has_details(self, mock_guard, mock_rate):
         """delete 事件 details 包含 template_name / node_count / edge_count / deleted_at"""
         from fastapi.testclient import TestClient
@@ -2467,7 +2467,7 @@ class TestGraphTemplateAPI:
         assert "deleted_at" in details
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_audit_nonexistent_no_file_404(self, mock_guard, mock_rate):
         """不存在且无审计文件的模板仍返回 404"""
         from fastapi.testclient import TestClient
@@ -2480,7 +2480,7 @@ class TestGraphTemplateAPI:
     # ── Phase 6.11: Canvas Layout API 测试 ──────────────────────
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_patch_layout_updates_canvas(self, mock_guard, mock_rate):
         """PATCH /layout 更新 canvas_layout 并返回完整模板"""
         from fastapi.testclient import TestClient
@@ -2504,7 +2504,7 @@ class TestGraphTemplateAPI:
         assert data["template"]["canvas_layout"] == layout
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_patch_layout_nonexistent_404(self, mock_guard, mock_rate):
         """PATCH /layout 对不存在的模板返回 404"""
         from fastapi.testclient import TestClient
@@ -2517,7 +2517,7 @@ class TestGraphTemplateAPI:
         assert resp.status_code == 404
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_get_template_includes_canvas_layout(self, mock_guard, mock_rate):
         """GET 模板包含 canvas_layout 字段"""
         from fastapi.testclient import TestClient
@@ -2538,7 +2538,7 @@ class TestGraphTemplateAPI:
         assert get_resp.json()["template"]["canvas_layout"] == layout
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_patch_layout_does_not_create_version(self, mock_guard, mock_rate):
         """PATCH /layout 不创建版本快照"""
         from fastapi.testclient import TestClient
@@ -2561,7 +2561,7 @@ class TestGraphTemplateAPI:
         assert len(ver_resp.json()["versions"]) == 0
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_list_templates_includes_canvas_layout(self, mock_guard, mock_rate):
         """列表接口也包含 canvas_layout"""
         from fastapi.testclient import TestClient
@@ -2584,7 +2584,7 @@ class TestGraphTemplateAPI:
         assert found[0]["canvas_layout"] == layout
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_patch_layout_clear_with_empty_object(self, mock_guard, mock_rate):
         """PATCH /layout 传空对象清除布局"""
         from fastapi.testclient import TestClient
@@ -2608,7 +2608,7 @@ class TestGraphTemplateAPI:
         assert patch_resp.json()["template"]["canvas_layout"] == {}
 
     @patch("backend.security.rate_limiter.check", side_effect=_bypass_rate_limit)
-    @patch("backend.governance.guard.guard_payload", side_effect=_bypass_governance)
+    @patch("backend.governance.scope_classifier.guard_payload", side_effect=_bypass_governance)
     def test_patch_layout_null_rejects_422(self, mock_guard, mock_rate):
         """PATCH /layout 传 null 返回 422"""
         from fastapi.testclient import TestClient

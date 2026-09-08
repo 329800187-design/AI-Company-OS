@@ -227,23 +227,6 @@ class TestResearchExecuteEndpoint:
         ), f"未知的 search_provider: {meta['search_provider']}"
 
 
-class TestResearchGovernanceGuard:
-    """业务 Agent execute 入口不再由旧 Governance Guard 拦截模糊目标"""
-
-    def test_vague_goal_is_handled_by_business_agent(self):
-        """模糊目标继续交由业务 Agent 处理；受控分类仍走 /governance/run。"""
-        resp = client.post("/agents/research/execute", json={
-            "task_id": "",
-            "goal": "帮我赚钱",
-            "task_type": "research_brief",
-            "context": {},
-            "input": {},
-        })
-        data = resp.json()
-        assert data["ok"] is True
-        assert data["agent_id"] == "research"
-
-
 class TestResearchGovernanceFallback:
     """/governance/run 调研 fallback 仍然正常工作"""
 

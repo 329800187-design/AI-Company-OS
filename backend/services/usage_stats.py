@@ -94,7 +94,7 @@ def record_usage(
         model: 模型名
         prompt_tokens: 输入 tokens
         completion_tokens: 输出 tokens
-        source: 调用来源（commander/ceo）
+        source: 调用来源
         duration_ms: 耗时
         success: 是否成功
     """

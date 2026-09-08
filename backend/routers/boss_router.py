@@ -122,7 +122,7 @@ def list_templates():
 def create_mission_from_template(request: MissionFromTemplateRequest):
     """根据模板创建 Mission"""
     # Governance Guard: 有 goal 时检查，只有 template_id 无 goal 时不 block
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
     blocked, classification = guard_payload(request.model_dump())
     if blocked:
         return governance_block_response(classification)
@@ -149,7 +149,7 @@ def create_mission_from_template(request: MissionFromTemplateRequest):
 def create_mission(request: MissionCreateRequest):
     """创建一个新 Mission，拆成模块（默认 5 个，可选部分）"""
     # Governance Guard: 拦截不支持的目标
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
     blocked, classification = guard_payload(request.model_dump())
     if blocked:
         return governance_block_response(classification)
@@ -265,7 +265,7 @@ def run_mission(mission_id: str, request: MissionRunRequest = MissionRunRequest(
         raise HTTPException(status_code=404, detail=f"Mission {mission_id} 不存在")
 
     # Governance Guard: 读取 mission goal 后检查
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
     mission_goal = mission.get("goal", "")
     if mission_goal:
         blocked, classification = guard_payload({"goal": mission_goal})
@@ -288,7 +288,7 @@ def run_module(mission_id: str, module_id: str, request: ModuleRunRequest = Modu
         raise HTTPException(status_code=404, detail=f"Mission {mission_id} 不存在")
 
     # Governance Guard: 读取 mission goal 后检查
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
     mission_goal = mission.get("goal", "")
     if mission_goal:
         blocked, classification = guard_payload({"goal": mission_goal})
@@ -1271,7 +1271,7 @@ def boss_graph_execute(request: BossGraphExecuteRequest):
     5. 保存到 MiniDelivery（可选）
     """
     # Governance Guard
-    from backend.governance.guard import guard_payload, governance_block_response
+    from backend.governance.scope_classifier import guard_payload, governance_block_response
     blocked, classification = guard_payload({"goal": request.goal})
     if blocked:
         return governance_block_response(classification)

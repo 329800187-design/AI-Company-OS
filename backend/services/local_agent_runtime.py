@@ -35,7 +35,6 @@ class LocalAgentRuntime:
                 ClaudeCodeAdapter,
                 ComfyUIAdapter,
                 OllamaAdapter,
-                OpenClawAdapter,
                 DataAdapter,
                 ApiModelAdapter,
                 MiMoAdapter,
@@ -47,7 +46,6 @@ class LocalAgentRuntime:
                 "claude_code": ClaudeCodeAdapter(),
                 "comfyui": ComfyUIAdapter(),
                 "ollama": OllamaAdapter(),
-                "openclaw": OpenClawAdapter(),
                 "data_tools": DataAdapter(),
                 "api_models": ApiModelAdapter(),
                 "mimo": MiMoAdapter(),
@@ -55,9 +53,8 @@ class LocalAgentRuntime:
 
             # 为项目本地 Agent 注册 LocalModuleAdapter
             local_agent_ids = [
-                "ceo_agent", "cto_agent", "codex_agent", "data_agent",
-                "image_agent", "marketing_agent", "openclaw_agent",
-                "qa_agent", "system_agent", "video_agent"
+                "data_agent", "image_agent", "marketing_agent",
+                "research_agent", "website_agent"
             ]
             for agent_id in local_agent_ids:
                 adapter = create_local_adapter(agent_id)
@@ -336,22 +333,16 @@ class LocalAgentRuntime:
             "claude_api": "api_models",
 
             # Local Agent — 通过 LocalModuleAdapter 执行
-            "openclaw_agent": "openclaw_agent",
             "data_agent": "data_agent",
-            "codex_agent": "codex_agent",
             "image_agent": "image_agent",
             "marketing_agent": "marketing_agent",
-            "ceo_agent": "ceo_agent",
-            "cto_agent": "cto_agent",
-            "qa_agent": "qa_agent",
-            "system_agent": "system_agent",
-            "video_agent": "video_agent",
+            "research_agent": "research_agent",
+            "website_agent": "website_agent",
 
             # 兼容短名（AgentRouter 可能返回不带 _agent 后缀的 id）
             "image": "image_agent",
             "data": "data_tools",
             "marketing": "marketing_agent",
-            "openclaw": "openclaw",
         }
         return mapping.get(agent_id)
 
@@ -371,25 +362,15 @@ class LocalAgentRuntime:
                 return self._adapters["data_tools"]
             return None
 
-        # 代码任务：优先 codex_agent（本地沙箱），再 Claude Code
+        # 代码任务只使用显式的 Claude Code 适配器，不提供本地代码执行。
         if task_type == "code":
-            if "codex_agent" in self._adapters:
-                return self._adapters["codex_agent"]
             if "claude_code" in self._adapters:
                 adapter = self._adapters["claude_code"]
                 if adapter.health_check().get("available"):
                     return adapter
 
-        # 调研任务：优先 openclaw_agent（有浏览器），再 openclaw（HTTP），再 MiMo
+        # 调研任务使用无浏览器的模型或 API 适配器。
         if task_type in {"research", "competitor_analysis", "market_analysis"}:
-            if "openclaw_agent" in self._adapters:
-                adapter = self._adapters["openclaw_agent"]
-                if adapter.health_check().get("available"):
-                    return adapter
-            if "openclaw" in self._adapters:
-                adapter = self._adapters["openclaw"]
-                if adapter.health_check().get("available"):
-                    return adapter
             if "mimo" in self._adapters:
                 adapter = self._adapters["mimo"]
                 if adapter.health_check().get("available"):

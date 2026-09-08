@@ -34,13 +34,9 @@ class LocalModuleAdapter(BaseAdapter):
         agent_task_types = {
             "data_agent": ["data"],
             "marketing_agent": ["marketing"],
-            "qa_agent": ["qa", "verification"],
-            "codex_agent": ["code"],
             "image_agent": ["image"],
-            "video_agent": ["video"],
-            "ceo_agent": ["planning"],
-            "cto_agent": ["code", "architecture"],
-            "system_agent": ["system"],
+            "research_agent": ["research", "market_analysis", "competitor_analysis"],
+            "website_agent": ["website"],
         }
         return task_type in agent_task_types.get(self.agent_id, [])
 
